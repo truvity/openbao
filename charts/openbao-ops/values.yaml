@@ -97,7 +97,7 @@ snapshot:
   upload:
     image:
       repository: amazon/aws-cli
-      tag: "2.32.7"
+      tag: "2.36.44"
       digest: ""
       pullPolicy: IfNotPresent
     command: []
@@ -166,7 +166,7 @@ restoreCheck:
   fetch:
     image:
       repository: amazon/aws-cli
-      tag: "2.32.7"
+      tag: "2.36.44"
       digest: ""
       pullPolicy: IfNotPresent
     command: []
