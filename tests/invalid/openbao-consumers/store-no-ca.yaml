@@ -1,0 +1,4 @@
+server: https://openbao.example.internal:8200
+stores:
+  - name: app
+    conditions: [{namespaces: [app]}]

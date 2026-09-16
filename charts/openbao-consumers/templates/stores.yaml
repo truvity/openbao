@@ -1,0 +1,83 @@
+{{- $registry := dict }}
+{{- if .Values.stores }}
+{{- if not .Values.server }}
+{{- fail "server is required before any store renders — a store that cannot reach OpenBAO is noise, and one that cannot verify it is worse" }}
+{{- end }}
+{{- if not .Values.caBundle }}
+{{- fail "caBundle is required — without it External Secrets cannot verify the server it is about to send a token to" }}
+{{- end }}
+{{- end }}
+{{- range $store := .Values.stores }}
+{{- if not $store.name }}{{- fail "every entry of stores needs a name" }}{{- end }}
+{{- $role := $store.role | default $store.name }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "ClusterSecretStore" "name" (printf "%s-%s" $store.name $.Values.storeSuffix) "by" (printf "stores.%s" $store.name)) }}
+{{- if not $store.conditions }}
+{{- fail (printf "stores.%s has no conditions — a ClusterSecretStore without them is readable from every namespace on the cluster" $store.name) }}
+{{- end }}
+---
+{{- /* One store per kind. The store's OpenBAO role carries the same name,
+       so the policy that bounds what this store may read is findable from
+       the store and nowhere else. */}}
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ printf "%s-%s" $store.name $.Values.storeSuffix }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $store.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  conditions:
+    {{- toYaml $store.conditions | nindent 4 }}
+  provider:
+    {{- include "consumers.vaultProvider" (dict
+          "root" $
+          "namespace" ($store.vaultNamespace | default $.Values.vaultNamespace)
+          "mount" (include "consumers.authMount" $)
+          "role" $role
+          "sa" $.Values.auth.serviceAccount.name
+          "saNamespace" $.Values.auth.serviceAccount.namespace) | nindent 4 }}
+{{- end }}
+{{- range $writer := .Values.writers }}
+{{- if not $writer.name }}{{- fail "every entry of writers needs a name" }}{{- end }}
+{{- if not $writer.serviceAccount }}
+{{- fail (printf "writers.%s needs serviceAccount — a writer store presents the WRITER's own token, never the shared one" $writer.name) }}
+{{- end }}
+{{- if not $writer.namespace }}
+{{- fail (printf "writers.%s needs namespace — the Kubernetes namespace its ServiceAccount lives in" $writer.name) }}
+{{- end }}
+{{- if not $writer.environments }}
+{{- fail (printf "writers.%s has no environments — a writer that writes nowhere should not be declared" $writer.name) }}
+{{- end }}
+{{- range $env := $writer.environments }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "ClusterSecretStore" "name" (printf "%s-%s" $writer.name $env) "by" (printf "writers.%s" $writer.name)) }}
+---
+{{- /* A writer store is for PushSecrets, never ExternalSecrets, and it
+       presents the writer's OWN ServiceAccount token — so no other store
+       on this cluster can write through it.
+
+       Note the asymmetry, which is the whole design: the auth mount is
+       the HOSTING cluster's, while the Vault namespace is the TARGET
+       environment's. One identity, minted here, admitted there. */}}
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ printf "%s-%s" $writer.name $env }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $writer.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  conditions:
+    - namespaces:
+        - {{ $writer.namespace | quote }}
+  provider:
+    {{- include "consumers.vaultProvider" (dict
+          "root" $
+          "namespace" $env
+          "mount" ($.Values.writerAuthMount | default (include "consumers.authMount" $))
+          "role" $writer.name
+          "sa" $writer.serviceAccount
+          "saNamespace" $writer.namespace) | nindent 4 }}
+{{- end }}
+{{- end }}

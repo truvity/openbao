@@ -1,0 +1,5 @@
+# A ClusterSecretStore without conditions is readable from every namespace.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+stores:
+  - name: app

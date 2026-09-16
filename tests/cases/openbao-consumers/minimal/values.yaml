@@ -1,0 +1,9 @@
+# One reader store: a cluster that consumes secrets and nothing else.
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+auth:
+  mountPath: jwt-example
+stores:
+  - name: example-app
+    conditions:
+      - namespaces: [example-app]

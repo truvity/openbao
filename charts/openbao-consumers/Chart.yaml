@@ -1,0 +1,24 @@
+apiVersion: v2
+name: openbao-consumers
+description: >-
+  The cluster side of an OpenBAO install: External Secrets
+  ClusterSecretStores on the Vault provider (readers, and writers that
+  present their own ServiceAccount token), a cert-manager issuer backed by
+  OpenBAO's PKI, the trust bundle that makes what it issues verifiable, and
+  workload certificates. The server itself is elsewhere.
+type: application
+# Placeholder: the git tag is the sole version authority. The release
+# workflow stamps both fields from the tag (truvity/ci-workflows
+# release-public.yaml).
+version: 0.0.0
+appVersion: 0.0.0
+home: https://github.com/truvity/openbao
+sources:
+  - https://github.com/truvity/openbao
+keywords:
+  - openbao
+  - external-secrets
+  - cert-manager
+maintainers:
+  - name: Truvity
+    url: https://github.com/truvity

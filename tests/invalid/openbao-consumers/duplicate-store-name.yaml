@@ -1,0 +1,7 @@
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+stores:
+  - name: app
+    conditions: [{namespaces: [a]}]
+  - name: app
+    conditions: [{namespaces: [b]}]

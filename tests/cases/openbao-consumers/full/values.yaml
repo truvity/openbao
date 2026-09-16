@@ -1,0 +1,43 @@
+# A cluster that reads, writes back, and trusts what OpenBAO issues.
+commonAnnotations:
+  example.com/sync-wave: "70"
+
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+vaultNamespace: devel
+auth:
+  mountPath: jwt-devel
+
+stores:
+  - name: example-app
+    conditions:
+      - namespaces: [example-app]
+  - name: example-runner
+    role: example-runner
+    conditions:
+      - namespaces: [example-ci]
+      - namespaces: [example-ci-partner]
+
+# The asymmetry: this identity is minted on THIS cluster and admitted in
+# each target environment, which is what lets one cluster write secrets
+# another one reads.
+writers:
+  - name: example-writer
+    namespace: example-system
+    serviceAccount: openbao-writer
+    environments: [devel, prod]
+
+pki:
+  enabled: true
+  trustRootCaBundle: ZXhhbXBsZS1yb290
+  bundle:
+    # Both roots during a migration: leaves can then be reissued in any
+    # order instead of on a flag day.
+    extraSources:
+      - secret:
+          name: legacy-internal-ca
+          key: ca.crt
+
+certificates:
+  - name: smoke
+    commonName: smoke.example.internal

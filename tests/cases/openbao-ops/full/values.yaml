@@ -1,0 +1,36 @@
+# Everything on: two snapshot tiers, a weekly restore that reads canaries
+# back, policies that keep the jobs unreachable, and a serving certificate
+# with the sidecar that reloads it.
+auth:
+  mountPath: jwt-example
+snapshot:
+  enabled: true
+  upload:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
+restoreCheck:
+  enabled: true
+  fetch:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
+  canary:
+    namespaces: [devel, prod]
+  sealConfig: |
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+networkPolicy:
+  enabled: true
+  clientCidrs: ["10.0.0.0/8"]
+serverCertificate:
+  enabled: true
+  externalDnsName: openbao.example.internal
+  issuerRef:
+    name: example-ca
+    kind: ClusterIssuer
+    group: cert-manager.io

@@ -1,0 +1,4 @@
+# A store that cannot reach OpenBAO is noise.
+stores:
+  - name: app
+    conditions: [{namespaces: [app]}]

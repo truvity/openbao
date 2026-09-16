@@ -1,0 +1,274 @@
+# openbao-ops — the operational half of an OpenBAO install.
+#
+# The upstream chart (openbao/openbao) installs the server. This one runs
+# beside it and owns what an install is actually judged on when it fails:
+#
+#   snapshot        backups, verified before they are stored — an archive
+#                   nobody has opened is a guess, not a backup.
+#   restoreCheck    a weekly restore into a throwaway server that reads the
+#                   data back. It is the only evidence the backups work.
+#   networkPolicy   the server reachable from clients and peers, the jobs
+#                   from nothing at all.
+#   serverCertificate + tlsReload
+#                   a serving certificate, and the sidecar that makes a
+#                   renewal take effect without a restart.
+#
+# Nothing here names a cloud, a bucket, a key or a region. Object storage
+# is a container you supply with a documented contract, and an AWS S3
+# preset ships as one implementation of it.
+
+commonAnnotations: {}
+
+# Where the server and these jobs live. Empty: the release namespace.
+namespace: ""
+
+server:
+  # The API address the jobs talk to. Empty: derived from activeService.
+  address: ""
+  # The Service that resolves to whichever pod is active. Writes must not
+  # land on a standby.
+  activeService: openbao-active
+  service: openbao
+  # The headless Service peers dial each other through.
+  headlessService: openbao-internal
+  apiPort: 8200
+  clusterPort: 8201
+  # The Secret holding the serving certificate, and the key inside it that
+  # a client uses to verify the server.
+  tlsSecretName: openbao-tls
+  caKey: ca.crt
+  # How the server's pods are labelled, for the network policies.
+  podLabels:
+    app.kubernetes.io/name: openbao
+    component: server
+
+auth:
+  # The JWT auth mount the jobs log in to.
+  mountPath: jwt
+  # The audience the mount requires. A token minted for this audience
+  # cannot be replayed against the Kubernetes API.
+  audience: openbao
+  expirationSeconds: 600
+
+# ---------------------------------------------------------------------------
+snapshot:
+  enabled: false
+  serviceAccountName: openbao-snapshot
+  serviceAccountAnnotations: {}
+  annotations: {}
+  # The OpenBAO role the job logs in as. It should be able to read
+  # sys/storage/raft/snapshot and nothing else.
+  baoRole: openbao-snapshot
+
+  # One entry per retention tier. `prefix` is where its objects go, so a
+  # lifecycle rule on the store can expire tiers differently.
+  jobs:
+    - name: openbao-snapshot
+      schedule: "17 */6 * * *"
+      prefix: raft/
+    - name: openbao-snapshot-weekly
+      schedule: "47 3 * * 0"
+      prefix: weekly/
+
+  timeZone: Etc/UTC
+  startingDeadlineSeconds: 3600
+  activeDeadlineSeconds: 900
+  backoffLimit: 2
+  workSizeLimit: 2Gi
+  nodeSelector: {}
+  tolerations: []
+
+  image:
+    repository: openbao/openbao
+    tag: "2.6.2"
+    digest: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+  # Where a verified snapshot goes. The container's contract: read
+  # /work/openbao.snap and /work/taken-at, store the bytes under
+  # <SNAPSHOT_PREFIX><taken-at>.snap. Supply `command` for any store, or
+  # turn on the s3 preset below.
+  upload:
+    image:
+      repository: amazon/aws-cli
+      tag: "2.32.7"
+      digest: ""
+      pullPolicy: IfNotPresent
+    command: []
+    args: []
+    env: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+    s3:
+      enabled: false
+      bucket: ""
+      region: ""
+      checksumAlgorithm: SHA256
+
+# ---------------------------------------------------------------------------
+restoreCheck:
+  enabled: false
+  serviceAccountName: openbao-restore-check
+  serviceAccountAnnotations: {}
+  annotations: {}
+  baoRole: openbao-restore-check
+
+  schedule: "37 5 * * 0"
+  timeZone: Etc/UTC
+  activeDeadlineSeconds: 1200
+  workSizeLimit: 2Gi
+  nodeId: restore-check
+  nodeSelector: {}
+  tolerations: []
+
+  # Twelve hours. A newest snapshot older than this means the snapshot job
+  # stopped and nobody noticed — which is the failure this check exists to
+  # find, so it fails rather than passing on old data.
+  maxSnapshotAgeSeconds: 43200
+
+  image:
+    repository: openbao/openbao
+    tag: "2.6.2"
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # Raw HCL for the scratch server's seal stanza. Empty: no seal, which
+  # works for an unsealed test but not for a snapshot from an auto-unsealed
+  # cluster — that needs the same seal, or a replica of its key.
+  sealConfig: ""
+  serverEnv: []
+  serverResources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  # Where the newest snapshot comes from. The container's contract: write
+  # it to /work/openbao.snap and its name to /work/key, and FAIL if the
+  # newest is older than maxSnapshotAgeSeconds.
+  fetch:
+    image:
+      repository: amazon/aws-cli
+      tag: "2.32.7"
+      digest: ""
+      pullPolicy: IfNotPresent
+    command: []
+    args: []
+    env: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+    s3:
+      enabled: false
+      bucket: ""
+      region: ""
+      prefix: raft/
+
+  # Read a known value back per namespace. Judging a restore on the process
+  # exiting zero proves only that a process ran.
+  verifyCanary: true
+  canary:
+    kvMount: kv
+    path: restore-canary
+    field: data
+    namespaces: []
+
+  # Issue a certificate from the restored PKI. This proves it survived as
+  # an authority — keys, issuers and roles — not merely as bytes.
+  verifyIssue: false
+  issue:
+    namespaces: []
+    path: pki/issue/restore-check
+    commonNamePrefix: restore-check
+    domain: ""
+    ttl: 1h
+
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  annotations: {}
+  names:
+    serverIngress: openbao-ingress
+    restoreCheckIngress: openbao-restore-check-ingress
+  # Where clients live. Required when enabled.
+  clientCidrs: []
+  # Anything else that may reach the API, as raw NetworkPolicyPeer entries.
+  extraClientSelectors: []
+  # Egress is CIDR-based: naming hostnames needs a CNI extension whose
+  # shape differs by provider. Supply what this estate's CNI can express.
+  egress:
+    enabled: false
+    rules: []
+    #  - name: openbao-egress
+    #    podSelector:
+    #      app.kubernetes.io/name: openbao
+    #      component: server
+    #    egress:
+    #      - to: [{ipBlock: {cidr: 10.0.0.0/16}}]
+    #        ports: [{port: 443, protocol: TCP}]
+
+# ---------------------------------------------------------------------------
+serverCertificate:
+  enabled: false
+  # The name a client outside the cluster uses. Prepended to the SAN list.
+  externalDnsName: ""
+  commonName: ""
+  extraDnsNames: []
+  ipAddresses:
+    - 127.0.0.1
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: ""
+    kind: ClusterIssuer
+    group: cert-manager.io
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# A fragment for the UPSTREAM server chart's server.extraContainers, not an
+# object of its own. Splice it in with:
+#
+#   extraContainers: |
+#     {{- include "ops.tlsReloadContainer" . | nindent 2 }}
+#
+# It needs shareProcessNamespace: true on the server pod.
+tlsReload:
+  intervalSeconds: 60
+  certPath: /openbao/userconfig/openbao-tls/tls.crt
+  volumeName: userconfig-openbao-tls
+  mountPath: /openbao/userconfig/openbao-tls
+  image:
+    repository: openbao/openbao
+    tag: "2.6.2"
+    digest: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 5m
+      memory: 8Mi
+    limits:
+      memory: 32Mi

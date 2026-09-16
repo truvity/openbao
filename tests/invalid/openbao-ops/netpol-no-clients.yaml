@@ -1,0 +1,4 @@
+# An ingress policy with no client range admits nobody.
+networkPolicy:
+  enabled: true
+  clientCidrs: []

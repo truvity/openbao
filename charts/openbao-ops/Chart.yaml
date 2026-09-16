@@ -1,0 +1,24 @@
+apiVersion: v2
+name: openbao-ops
+description: >-
+  The operational half of an OpenBAO install, beside the upstream server
+  chart: snapshots that are verified before they are stored, a weekly
+  restore that opens one and proves the data is still there, network
+  policies that keep the server and its jobs reachable only from what
+  should, a serving certificate, and the sidecar that reloads it when it
+  is renewed.
+type: application
+# Placeholder: the git tag is the sole version authority. The release
+# workflow stamps both fields from the tag (truvity/ci-workflows
+# release-public.yaml).
+version: 0.0.0
+appVersion: 0.0.0
+home: https://github.com/truvity/openbao
+sources:
+  - https://github.com/truvity/openbao
+keywords:
+  - openbao
+  - backup
+maintainers:
+  - name: Truvity
+    url: https://github.com/truvity

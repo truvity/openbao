@@ -1,0 +1,44 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>truvity/ci-workflows"
+  ],
+  "osvVulnerabilityAlerts": true,
+  "labels": [
+    "dependencies"
+  ],
+  "automerge": true,
+  "automergeType": "pr",
+  "automergeStrategy": "rebase",
+  "platformAutomerge": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am"
+    ]
+  },
+  "ignorePaths": [
+    "devbox.json",
+    "devbox.lock",
+    "tests/**"
+  ],
+  "packageRules": [
+    {
+      "description": "The go directive is OWNED by devbox-update (ci-workflows v2.10.0): it aligns go.mod to the toolchain triple in the same PR as devbox.lock. Renovate leaves `go` alone so the three can never disagree.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "enabled": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": [
+      "security"
+    ],
+    "automerge": true
+  },
+  "constraintsFiltering": "strict"
+}

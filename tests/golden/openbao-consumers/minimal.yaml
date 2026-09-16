@@ -1,0 +1,27 @@
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-app-openbao
+spec:
+  conditions:
+    - namespaces:
+      - example-app
+  provider:
+    vault:
+      server: "https://openbao.example.internal:8200"
+      path: "kv"
+      version: v2
+      caBundle: "ZXhhbXBsZS1jYQ=="
+      auth:
+        jwt:
+          path: "jwt-example"
+          role: "example-app"
+          kubernetesServiceAccountToken:
+            serviceAccountRef:
+              name: "external-secrets"
+              namespace: "external-secrets"
+            audiences:
+              - "openbao"
+            expirationSeconds: 600

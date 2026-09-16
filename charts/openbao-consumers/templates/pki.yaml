@@ -1,0 +1,127 @@
+{{- if .Values.pki.enabled }}
+{{- $pki := .Values.pki }}
+{{- if not .Values.server }}
+{{- fail "server is required when pki.enabled — cert-manager has nowhere to ask for a certificate" }}
+{{- end }}
+{{- if not $pki.trustRootCaBundle }}
+{{- fail "pki.trustRootCaBundle is required when pki.enabled — an issuer whose chain nothing trusts issues certificates nobody accepts" }}
+{{- end }}
+{{- $ns := $pki.certManager.namespace }}
+---
+{{- /* The root, as material cert-manager and trust-manager can both read.
+       Public certificate only: the key never leaves OpenBAO. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $pki.rootConfigMapName }}
+  namespace: {{ $ns }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $pki.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{ $pki.rootKey }}: |
+{{ $pki.trustRootCaBundle | b64dec | indent 4 }}
+---
+{{- /* cert-manager authenticates to OpenBAO as this ServiceAccount. It
+       never holds a token: cert-manager mints one per request through the
+       Role below, so there is no credential to rotate or leak. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $pki.issuerServiceAccount }}
+  namespace: {{ $ns }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $pki.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-token" $pki.issuerServiceAccount }}
+  namespace: {{ $ns }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: [{{ $pki.issuerServiceAccount | quote }}]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-token" $pki.issuerServiceAccount }}
+  namespace: {{ $ns }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $pki.certManager.serviceAccountName }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-token" $pki.issuerServiceAccount }}
+---
+{{- /* Two different CAs appear below and confusing them is the classic
+       mistake: `caBundle` verifies OpenBAO's own HTTPS serving certificate
+       — the server cert-manager is talking TO — while the root in the
+       ConfigMap above is what verifies the certificates OpenBAO ISSUES.
+       They are usually signed by different authorities and there is no
+       reason for them to agree. */}}
+apiVersion: cert-manager.io/v1
+kind: {{ $pki.issuerKind }}
+metadata:
+  name: {{ $pki.issuerName }}
+  {{- if eq $pki.issuerKind "Issuer" }}
+  namespace: {{ $ns }}
+  {{- end }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $pki.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  vault:
+    server: {{ $.Values.server | quote }}
+    {{- with ($pki.vaultNamespace | default $.Values.vaultNamespace) }}
+    namespace: {{ . | quote }}
+    {{- end }}
+    path: {{ $pki.signPath | quote }}
+    {{- with $.Values.caBundle }}
+    caBundle: {{ . | quote }}
+    {{- end }}
+    auth:
+      kubernetes:
+        role: {{ $pki.role | quote }}
+        {{- /* The /v1/ prefix is required here and nowhere else:
+               cert-manager passes this path through verbatim. */}}
+        mountPath: {{ printf "/v1/auth/%s" (include "consumers.authMount" $) | quote }}
+        serviceAccountRef:
+          name: {{ $pki.issuerServiceAccount | quote }}
+{{- if $pki.bundle.enabled }}
+---
+{{- /* Distributing BOTH roots is what makes a root migration possible at
+       all: every workload trusts the old and the new, so leaves can be
+       reissued in any order and the old root is removed only once nothing
+       presents it. A single-source bundle is a flag day. */}}
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ $pki.bundle.name }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $pki.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  sources:
+    - configMap:
+        name: {{ $pki.rootConfigMapName }}
+        key: {{ $pki.rootKey }}
+    {{- with $pki.bundle.extraSources }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  target:
+    configMap:
+      key: {{ $pki.bundle.target.key }}
+    namespaceSelector:
+      {{- toYaml $pki.bundle.target.namespaceSelector | nindent 6 }}
+{{- end }}
+{{- end }}

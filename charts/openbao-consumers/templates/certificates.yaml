@@ -1,0 +1,58 @@
+{{- $registry := dict }}
+{{- range $cert := .Values.certificates }}
+{{- if not $cert.name }}{{- fail "every entry of certificates needs a name" }}{{- end }}
+{{- $ns := $cert.namespace | default $.Values.pki.certManager.namespace }}
+{{- $issuerRef := $cert.issuerRef | default (dict "name" $.Values.pki.issuerName "kind" $.Values.pki.issuerKind "group" "cert-manager.io") }}
+{{- if not ($issuerRef.name | default "") }}
+{{- fail (printf "certificates.%s has no issuer — set pki.issuerName or the entry's own issuerRef" $cert.name) }}
+{{- end }}
+{{- $hosts := $cert.dnsNames | default list }}
+{{- if and (not $hosts) (not ($cert.commonName | default "")) }}
+{{- fail (printf "certificates.%s names no host — a certificate with neither commonName nor dnsNames identifies nothing" $cert.name) }}
+{{- end }}
+{{- if and (not $hosts) $cert.commonName }}{{- $hosts = list $cert.commonName }}{{- end }}
+{{- $secretName := $cert.secretName | default (printf "%s-tls" $cert.name) }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "Certificate" "namespace" $ns "name" $cert.name "by" (printf "certificates.%s" $cert.name)) }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "Secret" "namespace" $ns "name" $secretName "by" (printf "certificates.%s" $cert.name)) }}
+---
+{{- /* A workload certificate from the OpenBAO-backed issuer. The defaults
+       are a short life with renewal at a third of it: renewal has two
+       chances to succeed before anything expires, which is what makes an
+       outage in the issuer survivable rather than immediate. */}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $cert.name }}
+  namespace: {{ $ns }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $cert.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $cert.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ $secretName }}
+  {{- with $cert.commonName }}
+  commonName: {{ . | quote }}
+  {{- end }}
+  dnsNames:
+    {{- range $h := $hosts }}
+    - {{ $h | quote }}
+    {{- end }}
+  {{- with $cert.uris }}
+  uris:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $cert.usages }}
+  usages:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  duration: {{ $cert.duration | default $.Values.certificateDefaults.duration }}
+  renewBefore: {{ $cert.renewBefore | default $.Values.certificateDefaults.renewBefore }}
+  privateKey:
+    {{- toYaml ($cert.privateKey | default $.Values.certificateDefaults.privateKey) | nindent 4 }}
+  issuerRef:
+    {{- toYaml $issuerRef | nindent 4 }}
+{{- end }}

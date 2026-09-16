@@ -1,0 +1,6 @@
+# An enabled snapshot that runs on no schedule takes no backups.
+snapshot:
+  enabled: true
+  jobs: []
+  upload:
+    s3: {enabled: true, bucket: b, region: r}

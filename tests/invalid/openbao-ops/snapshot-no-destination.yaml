@@ -1,0 +1,3 @@
+# An enabled snapshot with nowhere to put the bytes.
+snapshot:
+  enabled: true

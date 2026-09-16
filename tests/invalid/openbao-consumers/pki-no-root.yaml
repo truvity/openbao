@@ -1,0 +1,4 @@
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true

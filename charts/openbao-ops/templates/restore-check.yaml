@@ -1,0 +1,309 @@
+{{- if .Values.restoreCheck.enabled }}
+{{- $rc := .Values.restoreCheck }}
+{{- $ns := include "ops.namespace" . }}
+{{- $fetch := $rc.fetch }}
+{{- if and (not $fetch.s3.enabled) (not $fetch.command) }}
+{{- fail "restoreCheck.fetch needs either s3.enabled or an explicit command — the chart will not guess where your backups are" }}
+{{- end }}
+{{- if and $fetch.s3.enabled (not $fetch.s3.bucket) }}
+{{- fail "restoreCheck.fetch.s3.bucket is required when the s3 preset is on" }}
+{{- end }}
+{{- if and $rc.verifyCanary (not $rc.canary.namespaces) }}
+{{- fail "restoreCheck.canary.namespaces is empty — name the OpenBAO namespaces whose canary must survive a restore, or set verifyCanary: false" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $rc.serviceAccountName }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $rc.serviceAccountAnnotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ $rc.serviceAccountName }}
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $rc.serviceAccountName }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $rc.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{- /* A scratch server, not a replica: loopback only, TLS off, storage on
+         an emptyDir that dies with the pod. It is deliberately unreachable
+         from anywhere — it holds a full plaintext copy of production. */}}
+  scratch.hcl: |
+    ui = false
+    disable_mlock = true
+    api_addr     = "http://127.0.0.1:8200"
+    cluster_addr = "http://127.0.0.1:8201"
+
+    listener "tcp" {
+      address     = "127.0.0.1:8200"
+      tls_disable = true
+    }
+
+    storage "raft" {
+      path    = "/data"
+      node_id = {{ $rc.nodeId | quote }}
+    }
+{{ if $rc.sealConfig }}{{ $rc.sealConfig | indent 4 }}{{ end }}
+    # Declared, not created through the API: OpenBAO refuses API-created
+    # audit devices, so a restored copy with no device in its config would
+    # have an audit table production does not have.
+    audit "file" "to-stdout" {
+      options {
+        file_path = "stdout"
+      }
+    }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $rc.serviceAccountName }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $rc.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ $rc.serviceAccountName }}
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: {{ $rc.schedule | quote }}
+  timeZone: {{ $rc.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ $rc.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ $rc.serviceAccountName }}
+        spec:
+          serviceAccountName: {{ $rc.serviceAccountName }}
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          {{- with $rc.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $rc.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ops.podSecurityContext" $ | nindent 12 }}
+          initContainers:
+            - name: fetch
+              image: {{ include "ops.image" (dict "image" $fetch.image) | quote }}
+              imagePullPolicy: {{ $fetch.image.pullPolicy }}
+              {{- if $fetch.s3.enabled }}
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  newest=$(aws s3api list-objects-v2 \
+                    --bucket {{ $fetch.s3.bucket }} --prefix {{ $fetch.s3.prefix }} \
+                    --query 'sort_by(Contents,&LastModified)[-1].[Key,LastModified]' \
+                    --output text)
+                  set -- $newest
+                  key=$1
+                  age=$(( $(date +%s) - $(date -d "$2" +%s) ))
+                  echo "newest snapshot: $key, $((age/60)) minutes old"
+
+                  # A stale newest object means the snapshot job stopped and
+                  # nobody noticed. That is the failure this check exists to
+                  # find, so it fails here rather than passing on old data.
+                  if [ "$age" -gt {{ $rc.maxSnapshotAgeSeconds }} ]; then
+                    echo "no snapshot within {{ $rc.maxSnapshotAgeSeconds }}s: the snapshot job is not running" >&2
+                    exit 1
+                  fi
+
+                  aws s3 cp "s3://{{ $fetch.s3.bucket }}/$key" /work/openbao.snap --no-progress
+                  echo "$key" > /work/key
+              {{- else }}
+              {{- /* The contract for a replacement: write the newest
+                     snapshot to /work/openbao.snap and its name to
+                     /work/key, and FAIL if the newest is older than
+                     restoreCheck.maxSnapshotAgeSeconds. */}}
+              command:
+                {{- toYaml $fetch.command | nindent 16 }}
+              {{- with $fetch.args }}
+              args:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              {{- end }}
+              env:
+                - name: MAX_SNAPSHOT_AGE_SECONDS
+                  value: {{ $rc.maxSnapshotAgeSeconds | quote }}
+                - name: HOME
+                  value: /tmp
+                {{- if $fetch.s3.enabled }}
+                - name: AWS_REGION
+                  value: {{ $fetch.s3.region | quote }}
+                {{- end }}
+                {{- with $fetch.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml $fetch.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+            {{- /* A native sidecar: it starts before `check` and Kubernetes
+                   stops it when `check` exits, so the scratch server's life
+                   is exactly the life of the test. */}}
+            - name: server
+              restartPolicy: Always
+              image: {{ include "ops.image" (dict "image" $rc.image) | quote }}
+              imagePullPolicy: {{ $rc.image.pullPolicy }}
+              command: ["bao", "server", "-config=/etc/openbao/scratch.hcl"]
+              {{- with $rc.serverEnv }}
+              env:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/openbao
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                - name: server-tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml $rc.serverResources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          containers:
+            - name: check
+              image: {{ include "ops.image" (dict "image" $rc.image) | quote }}
+              imagePullPolicy: {{ $rc.image.pullPolicy }}
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  # `bao status` exits 0 unsealed, 2 sealed or uninitialised,
+                  # 1 unreachable. Waiting on the right one of those is the
+                  # difference between a flaky check and a real one.
+                  wait_for() {
+                    want=$1
+                    i=0
+                    while [ $i -lt 90 ]; do
+                      bao status >/dev/null 2>&1 && return 0
+                      rc=$?
+                      [ "$want" = any ] && [ "$rc" = 2 ] && return 0
+                      i=$((i+1))
+                      sleep 2
+                    done
+                    echo "timed out waiting for the scratch server ($want)" >&2
+                    exit 1
+                  }
+
+                  wait_for any
+
+                  # Throwaway recovery shares: this server exists for the
+                  # next ninety seconds and its keys are never printed.
+                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json \
+                    | sed -n 's/.*"root_token"[^"]*"\([^"]*\)".*/\1/p')
+                  [ -n "$BAO_TOKEN" ] || { echo "scratch init produced no token" >&2; exit 1; }
+                  export BAO_TOKEN
+                  wait_for unsealed
+
+                  # -force: the snapshot carries production's own keyring.
+                  # Judge by exit code — 2.x prints a spurious "Error
+                  # properly closing policy file" on success.
+                  bao operator raft snapshot restore -force /work/openbao.snap
+
+                  # The scratch root token died with the restore. From here
+                  # the only way in is what the SNAPSHOT grants, which is
+                  # the point: this proves the restored copy is usable, not
+                  # that a fresh server is.
+                  unset BAO_TOKEN
+                  wait_for unsealed
+
+                  i=0
+                  while [ $i -lt 30 ]; do
+                    BAO_TOKEN=$(bao write -field=token \
+                      auth/{{ $.Values.auth.mountPath }}/login \
+                      role={{ $rc.baoRole }} \
+                      jwt=@/var/run/openbao/token 2>/dev/null) && break
+                    i=$((i+1))
+                    sleep 2
+                  done
+                  [ -n "${BAO_TOKEN:-}" ] || { echo "cannot log in to the restored copy" >&2; exit 1; }
+                  export BAO_TOKEN
+                  {{- if $rc.verifyCanary }}
+
+                  # A canary read per namespace: the restore is judged on
+                  # data being there, not on the process exiting zero.
+                  {{- range $cns := $rc.canary.namespaces }}
+                  got=$(bao read -namespace={{ $cns }} -field={{ $rc.canary.field }} {{ $rc.canary.kvMount }}/data/{{ $rc.canary.path }})
+                  echo "canary {{ $cns }}: $got"
+                  [ -n "$got" ] || { echo "canary missing in {{ $cns }}" >&2; exit 1; }
+                  {{- end }}
+                  {{- end }}
+                  {{- if $rc.verifyIssue }}
+
+                  # Issuing proves the PKI survived as an authority, not
+                  # merely as bytes: keys, issuers and roles all restored.
+                  {{- range $ins := $rc.issue.namespaces }}
+                  serial=$(bao write -namespace={{ $ins }} -format=json {{ $rc.issue.path }} \
+                    common_name="{{ $rc.issue.commonNamePrefix }}.{{ $ins }}.{{ $rc.issue.domain }}" ttl={{ $rc.issue.ttl }} \
+                    | sed -n 's/.*"serial_number"[^"]*"\([^"]*\)".*/\1/p')
+                  [ -n "$serial" ] || { echo "the restored PKI in {{ $ins }} issued nothing" >&2; exit 1; }
+                  echo "issued in {{ $ins }}: $serial"
+                  {{- end }}
+                  {{- end }}
+
+                  bao token revoke -self
+                  echo "restore check passed: $(cat /work/key)"
+              env:
+                - name: BAO_ADDR
+                  value: http://127.0.0.1:8200
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+              resources:
+                {{- toYaml $rc.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: {{ $rc.workSizeLimit }}
+            - name: data
+              emptyDir:
+                sizeLimit: {{ $rc.workSizeLimit }}
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: server-tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: config
+              configMap:
+                name: {{ $rc.serviceAccountName }}
+            - {{- include "ops.loginVolume" $ | nindent 14 }}
+{{- end }}

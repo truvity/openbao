@@ -1,0 +1,7 @@
+# Verifying a canary in no namespace verifies nothing.
+restoreCheck:
+  enabled: true
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  canary:
+    namespaces: []

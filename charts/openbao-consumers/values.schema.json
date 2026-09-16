@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "openbao-consumers values",
+  "description": "An unknown key is an error, not a silent no-op: a typo in a store's values would otherwise render a store that quietly reads somewhere else.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": { "type": "object" },
+    "commonAnnotations": { "$ref": "#/definitions/stringMap" },
+    "server": { "type": "string" },
+    "caBundle": { "type": "string" },
+    "vaultNamespace": { "type": "string" },
+    "kvMount": { "type": "string", "minLength": 1 },
+    "storeSuffix": { "type": "string", "minLength": 1 },
+    "writerAuthMount": { "type": "string" },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mountPath": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "expirationSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+        "serviceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "stores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "role": { "type": "string" },
+          "vaultNamespace": { "type": "string" },
+          "annotations": { "$ref": "#/definitions/stringMap" },
+          "conditions": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    },
+    "writers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "namespace": { "type": "string" },
+          "serviceAccount": { "type": "string" },
+          "environments": { "type": "array", "items": { "type": "string" } },
+          "annotations": { "$ref": "#/definitions/stringMap" }
+        }
+      }
+    },
+    "pki": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "trustRootCaBundle": { "type": "string" },
+        "rootConfigMapName": { "type": "string", "minLength": 1 },
+        "rootKey": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "certManager": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespace": { "type": "string", "minLength": 1 },
+            "serviceAccountName": { "type": "string", "minLength": 1 }
+          }
+        },
+        "issuerServiceAccount": { "type": "string", "minLength": 1 },
+        "issuerName": { "type": "string", "minLength": 1 },
+        "issuerKind": { "type": "string", "enum": ["ClusterIssuer", "Issuer"] },
+        "signPath": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "vaultNamespace": { "type": "string" },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": { "type": "string", "minLength": 1 },
+            "extraSources": { "type": "array", "items": { "type": "object" } },
+            "target": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "key": { "type": "string", "minLength": 1 },
+                "namespaceSelector": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "certificateDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration": { "type": "string" },
+        "renewBefore": { "type": "string" },
+        "privateKey": { "type": "object" }
+      }
+    },
+    "certificates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "namespace": { "type": "string" },
+          "secretName": { "type": "string" },
+          "commonName": { "type": "string" },
+          "dnsNames": { "type": "array", "items": { "type": "string" } },
+          "uris": { "type": "array", "items": { "type": "string" } },
+          "usages": { "type": "array", "items": { "type": "string" } },
+          "duration": { "type": "string" },
+          "renewBefore": { "type": "string" },
+          "privateKey": { "type": "object" },
+          "issuerRef": { "type": "object" },
+          "annotations": { "$ref": "#/definitions/stringMap" },
+          "labels": { "$ref": "#/definitions/stringMap" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,245 @@
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-issuer
+  namespace: cert-manager
+  annotations:
+    example.com/sync-wave: "70"
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-private-root
+  namespace: cert-manager
+  annotations:
+    example.com/sync-wave: "70"
+data:
+  ca.crt: |
+    example-root
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["openbao-issuer"]
+    verbs: ["create"]
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-issuer-token
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: openbao-private-ca
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  sources:
+    - configMap:
+        name: openbao-private-root
+        key: ca.crt
+    - secret:
+        key: ca.crt
+        name: legacy-internal-ca
+  target:
+    configMap:
+      key: ca-certificates.crt
+    namespaceSelector:
+      {}
+
+---
+# Source: openbao-consumers/templates/certificates.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: smoke
+  namespace: cert-manager
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  secretName: smoke-tls
+  commonName: "smoke.example.internal"
+  dnsNames:
+    - "smoke.example.internal"
+  duration: 720h
+  renewBefore: 240h
+  privateKey:
+    algorithm: ECDSA
+    rotationPolicy: Always
+    size: 256
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: openbao-private
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: openbao-private
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  vault:
+    server: "https://openbao.example.internal:8200"
+    namespace: "devel"
+    path: "pki/sign/cert-manager"
+    caBundle: "ZXhhbXBsZS1jYQ=="
+    auth:
+      kubernetes:
+        role: "cert-manager"
+        mountPath: "/v1/auth/jwt-devel"
+        serviceAccountRef:
+          name: "openbao-issuer"
+
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-app-openbao
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  conditions:
+    - namespaces:
+      - example-app
+  provider:
+    vault:
+      server: "https://openbao.example.internal:8200"
+      namespace: "devel"
+      path: "kv"
+      version: v2
+      caBundle: "ZXhhbXBsZS1jYQ=="
+      auth:
+        jwt:
+          path: "jwt-devel"
+          role: "example-app"
+          kubernetesServiceAccountToken:
+            serviceAccountRef:
+              name: "external-secrets"
+              namespace: "external-secrets"
+            audiences:
+              - "openbao"
+            expirationSeconds: 600
+
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-runner-openbao
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  conditions:
+    - namespaces:
+      - example-ci
+    - namespaces:
+      - example-ci-partner
+  provider:
+    vault:
+      server: "https://openbao.example.internal:8200"
+      namespace: "devel"
+      path: "kv"
+      version: v2
+      caBundle: "ZXhhbXBsZS1jYQ=="
+      auth:
+        jwt:
+          path: "jwt-devel"
+          role: "example-runner"
+          kubernetesServiceAccountToken:
+            serviceAccountRef:
+              name: "external-secrets"
+              namespace: "external-secrets"
+            audiences:
+              - "openbao"
+            expirationSeconds: 600
+
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-writer-devel
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  conditions:
+    - namespaces:
+        - "example-system"
+  provider:
+    vault:
+      server: "https://openbao.example.internal:8200"
+      namespace: "devel"
+      path: "kv"
+      version: v2
+      caBundle: "ZXhhbXBsZS1jYQ=="
+      auth:
+        jwt:
+          path: "jwt-devel"
+          role: "example-writer"
+          kubernetesServiceAccountToken:
+            serviceAccountRef:
+              name: "openbao-writer"
+              namespace: "example-system"
+            audiences:
+              - "openbao"
+            expirationSeconds: 600
+
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-writer-prod
+  annotations:
+    example.com/sync-wave: "70"
+spec:
+  conditions:
+    - namespaces:
+        - "example-system"
+  provider:
+    vault:
+      server: "https://openbao.example.internal:8200"
+      namespace: "prod"
+      path: "kv"
+      version: v2
+      caBundle: "ZXhhbXBsZS1jYQ=="
+      auth:
+        jwt:
+          path: "jwt-devel"
+          role: "example-writer"
+          kubernetesServiceAccountToken:
+            serviceAccountRef:
+              name: "openbao-writer"
+              namespace: "example-system"
+            audiences:
+              - "openbao"
+            expirationSeconds: 600

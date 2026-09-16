@@ -1,0 +1,52 @@
+{{- if .Values.serverCertificate.enabled }}
+{{- $c := .Values.serverCertificate }}
+{{- $ns := include "ops.namespace" . }}
+{{- if not ($c.issuerRef.name | default "") }}
+{{- fail "serverCertificate.issuerRef.name is required — the issuer is the estate's, never the chart's" }}
+{{- end }}
+{{- $svc := .Values.server.service }}
+{{- $active := .Values.server.activeService }}
+{{- $peers := .Values.server.headlessService }}
+{{- $names := list }}
+{{- range $n := (list $svc (printf "%s.%s.svc" $svc $ns) $active (printf "%s.%s.svc" $active $ns) (printf "*.%s" $peers) (printf "*.%s.%s.svc" $peers $ns)) }}
+{{- $names = append $names $n }}
+{{- end }}
+{{- with $c.externalDnsName }}{{- $names = prepend $names . }}{{- end }}
+{{- range $n := $c.extraDnsNames }}{{- $names = append $names $n }}{{- end }}
+---
+{{- /* The SAN set is generated, not listed: the Service, the active-only
+       Service, and a wildcard over the headless peer names — a Raft peer
+       dials another peer by its pod DNS name, so a certificate that names
+       only the Service cannot form a cluster.
+
+       It deliberately does NOT name a load balancer's own hostname. A
+       replaced load balancer then needs no reissue. */}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.server.tlsSecretName }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $c.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ .Values.server.tlsSecretName }}
+  {{- with $c.commonName }}
+  commonName: {{ . | quote }}
+  {{- end }}
+  dnsNames:
+    {{- range $n := $names }}
+    - {{ $n | quote }}
+    {{- end }}
+  {{- with $c.ipAddresses }}
+  ipAddresses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  duration: {{ $c.duration }}
+  renewBefore: {{ $c.renewBefore }}
+  privateKey:
+    {{- toYaml $c.privateKey | nindent 4 }}
+  issuerRef:
+    {{- toYaml $c.issuerRef | nindent 4 }}
+{{- end }}

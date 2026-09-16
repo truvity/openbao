@@ -1,0 +1,104 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $ns := include "ops.namespace" . }}
+{{- if not $np.clientCidrs }}
+{{- fail "networkPolicy.clientCidrs is empty — an ingress policy with no client range admits nobody, which is not what enabling it means" }}
+{{- end }}
+---
+{{- /* Ingress to the server. Two rules, and both matter: clients reach the
+       API port only, and peers reach the cluster port only from each
+       other — a Raft peer port open to clients is a second, unauthenticated
+       way into the same data. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $np.names.serverIngress }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $np.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $.Values.server.podLabels | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range $cidr := $np.clientCidrs }}
+        - ipBlock:
+            cidr: {{ $cidr }}
+        {{- end }}
+        {{- with $np.extraClientSelectors }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ $.Values.server.apiPort }}
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $.Values.server.podLabels | nindent 14 }}
+      ports:
+        - port: {{ $.Values.server.apiPort }}
+          protocol: TCP
+        - port: {{ $.Values.server.clusterPort }}
+          protocol: TCP
+    {{- if $.Values.snapshot.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Values.snapshot.serviceAccountName }}
+      ports:
+        - port: {{ $.Values.server.apiPort }}
+          protocol: TCP
+    {{- end }}
+{{- if $.Values.restoreCheck.enabled }}
+---
+{{- /* The restore check holds a full plaintext copy of production for the
+       life of one pod. Nothing may connect to it — not a probe, not a
+       scraper, not another job. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $np.names.restoreCheckIngress }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $np.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Values.restoreCheck.serviceAccountName }}
+  policyTypes:
+    - Ingress
+{{- end }}
+{{- if $np.egress.enabled }}
+{{- range $rule := $np.egress.rules }}
+---
+{{- /* Egress is CIDR-based here on purpose: a policy that names hostnames
+       needs a CNI extension, and the shape of that extension differs by
+       provider. Set networkPolicy.egress.rules for what this estate's CNI
+       can express, or render provider-specific policies alongside. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $rule.name }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $np.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $rule.podSelector | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- toYaml $rule.egress | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

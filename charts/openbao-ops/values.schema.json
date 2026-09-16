@@ -1,0 +1,222 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "openbao-ops values",
+  "description": "An unknown key is an error, not a silent no-op: a typo in a snapshot's values would otherwise render a job that quietly backs up nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": { "type": "object" },
+    "commonAnnotations": { "$ref": "#/definitions/stringMap" },
+    "namespace": { "type": "string" },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "type": "string" },
+        "activeService": { "type": "string", "minLength": 1 },
+        "service": { "type": "string", "minLength": 1 },
+        "headlessService": { "type": "string", "minLength": 1 },
+        "apiPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "clusterPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "tlsSecretName": { "type": "string", "minLength": 1 },
+        "caKey": { "type": "string", "minLength": 1 },
+        "podLabels": { "$ref": "#/definitions/stringMap" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mountPath": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "expirationSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceAccountName": { "type": "string", "minLength": 1 },
+        "serviceAccountAnnotations": { "$ref": "#/definitions/stringMap" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "baoRole": { "type": "string", "minLength": 1 },
+        "jobs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "schedule", "prefix"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "schedule": { "type": "string", "minLength": 1 },
+              "prefix": { "type": "string" }
+            }
+          }
+        },
+        "timeZone": { "type": "string" },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "workSizeLimit": { "type": "string" },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "image": { "$ref": "#/definitions/image" },
+        "resources": { "type": "object" },
+        "upload": { "$ref": "#/definitions/sidecarJob" }
+      }
+    },
+    "restoreCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceAccountName": { "type": "string", "minLength": 1 },
+        "serviceAccountAnnotations": { "$ref": "#/definitions/stringMap" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "baoRole": { "type": "string", "minLength": 1 },
+        "schedule": { "type": "string", "minLength": 1 },
+        "timeZone": { "type": "string" },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "workSizeLimit": { "type": "string" },
+        "nodeId": { "type": "string", "minLength": 1 },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "maxSnapshotAgeSeconds": { "type": "integer", "minimum": 60 },
+        "image": { "$ref": "#/definitions/image" },
+        "sealConfig": { "type": "string" },
+        "serverEnv": { "type": "array", "items": { "type": "object" } },
+        "serverResources": { "type": "object" },
+        "resources": { "type": "object" },
+        "fetch": { "$ref": "#/definitions/sidecarJob" },
+        "verifyCanary": { "type": "boolean" },
+        "canary": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kvMount": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "field": { "type": "string", "minLength": 1 },
+            "namespaces": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "verifyIssue": { "type": "boolean" },
+        "issue": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespaces": { "type": "array", "items": { "type": "string" } },
+            "path": { "type": "string", "minLength": 1 },
+            "commonNamePrefix": { "type": "string", "minLength": 1 },
+            "domain": { "type": "string" },
+            "ttl": { "type": "string" }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "names": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "serverIngress": { "type": "string", "minLength": 1 },
+            "restoreCheckIngress": { "type": "string", "minLength": 1 }
+          }
+        },
+        "clientCidrs": { "type": "array", "items": { "type": "string" } },
+        "extraClientSelectors": { "type": "array", "items": { "type": "object" } },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "podSelector", "egress"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "podSelector": { "$ref": "#/definitions/stringMap" },
+                  "egress": { "type": "array", "items": { "type": "object" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "serverCertificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "externalDnsName": { "type": "string" },
+        "commonName": { "type": "string" },
+        "extraDnsNames": { "type": "array", "items": { "type": "string" } },
+        "ipAddresses": { "type": "array", "items": { "type": "string" } },
+        "duration": { "type": "string" },
+        "renewBefore": { "type": "string" },
+        "privateKey": { "type": "object" },
+        "issuerRef": { "type": "object" },
+        "annotations": { "$ref": "#/definitions/stringMap" }
+      }
+    },
+    "tlsReload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "intervalSeconds": { "type": "integer", "minimum": 1 },
+        "certPath": { "type": "string", "minLength": 1 },
+        "volumeName": { "type": "string", "minLength": 1 },
+        "mountPath": { "type": "string", "minLength": 1 },
+        "image": { "$ref": "#/definitions/image" },
+        "resources": { "type": "object" }
+      }
+    }
+  },
+  "definitions": {
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "sidecarJob": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "array", "items": { "type": "object" } },
+        "resources": { "type": "object" },
+        "s3": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "bucket": { "type": "string" },
+            "region": { "type": "string" },
+            "prefix": { "type": "string" },
+            "checksumAlgorithm": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# Backups and nothing else: the smallest install that can prove it has one.
+snapshot:
+  enabled: true
+  upload:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
