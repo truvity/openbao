@@ -4,6 +4,19 @@
 {{- if not $np.clientCidrs }}
 {{- fail "networkPolicy.clientCidrs is empty — an ingress policy with no client range admits nobody, which is not what enabling it means" }}
 {{- end }}
+{{- $isolated := list }}
+{{- if $.Values.restoreCheck.enabled }}
+{{- $isolated = append $isolated (dict "name" $np.names.restoreCheckIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.restoreCheck.serviceAccountName)) }}
+{{- end }}
+{{- if $.Values.certificateExpiry.enabled }}
+{{- $isolated = append $isolated (dict "name" $np.names.certificateExpiryIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.certificateExpiry.name)) }}
+{{- end }}
+{{- range $i := $np.isolated }}
+{{- if not (and $i.name $i.podSelector) }}
+{{- fail "every entry of networkPolicy.isolated needs a name and a podSelector — an empty selector would isolate every pod in the namespace" }}
+{{- end }}
+{{- $isolated = append $isolated $i }}
+{{- end }}
 ---
 {{- /* Ingress to the server. Two rules, and both matter: clients reach the
        API port only, and peers reach the cluster port only from each
@@ -54,15 +67,16 @@ spec:
         - port: {{ $.Values.server.apiPort }}
           protocol: TCP
     {{- end }}
-{{- if $.Values.restoreCheck.enabled }}
+{{- range $i := $isolated }}
 ---
-{{- /* The restore check holds a full plaintext copy of production for the
-       life of one pod. Nothing may connect to it — not a probe, not a
-       scraper, not another job. */}}
+{{- /* Nothing may connect to this pod. The restore check and anything like
+       it holds a full plaintext copy of production for the life of one pod;
+       the expiry check serves nothing. Not a probe, not a scraper, not
+       another job. */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ $np.names.restoreCheckIngress }}
+  name: {{ $i.name }}
   namespace: {{ $ns }}
   {{- with include "ops.annotations" (dict "root" $ "extra" $np.annotations) | fromYaml }}
   annotations:
@@ -71,19 +85,22 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: {{ $.Values.restoreCheck.serviceAccountName }}
+      {{- toYaml $i.podSelector | nindent 6 }}
   policyTypes:
     - Ingress
 {{- end }}
 {{- if $np.egress.enabled }}
 {{- range $rule := $np.egress.rules }}
+{{- if not (and $rule.name $rule.podSelector) }}
+{{- fail "every entry of networkPolicy.egress.rules needs a name and a podSelector" }}
+{{- end }}
 ---
-{{- /* Egress is CIDR-based here on purpose: a policy that names hostnames
-       needs a CNI extension, and the shape of that extension differs by
-       provider. Set networkPolicy.egress.rules for what this estate's CNI
-       can express, or render provider-specific policies alongside. */}}
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
+{{- /* Egress as whole policies. A standard NetworkPolicy is CIDR-based, and
+       a policy that names hostnames needs a CNI extension whose shape
+       differs by provider — so a rule may set its own apiVersion and kind,
+       and its egress entries are passed through as written. */}}
+apiVersion: {{ $rule.apiVersion | default "networking.k8s.io/v1" }}
+kind: {{ $rule.kind | default "NetworkPolicy" }}
 metadata:
   name: {{ $rule.name }}
   namespace: {{ $ns }}

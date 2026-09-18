@@ -1,0 +1,6 @@
+restoreCheck:
+  enabled: true
+  fetch:
+    s3: {enabled: true, bucket: b}
+  sealConfig: |
+    seal "awskms" {}

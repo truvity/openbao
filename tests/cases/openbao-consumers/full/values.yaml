@@ -1,6 +1,7 @@
-# A cluster that reads, writes back, and trusts what OpenBAO issues.
+# A cluster that reads, writes back, and trusts what OpenBAO issues —
+# through two issuers on two chains, during a root migration.
 commonAnnotations:
-  example.com/sync-wave: "70"
+  example.com/owner: platform
 
 server: https://openbao.example.internal:8200
 caBundle: ZXhhbXBsZS1jYQ==
@@ -10,17 +11,22 @@ auth:
 
 stores:
   - name: example-app
+    annotations:
+      example.com/sync-wave: "55"
     conditions:
       - namespaces: [example-app]
   - name: example-runner
     role: example-runner
     conditions:
       - namespaces: [example-ci]
-      - namespaces: [example-ci-partner]
+      - namespaceSelector:
+          matchLabels:
+            example.com/ci: "true"
 
 # The asymmetry: this identity is minted on THIS cluster and admitted in
 # each target environment, which is what lets one cluster write secrets
 # another one reads.
+writerAuthMount: jwt-devel
 writers:
   - name: example-writer
     namespace: example-system
@@ -29,15 +35,53 @@ writers:
 
 pki:
   enabled: true
-  trustRootCaBundle: ZXhhbXBsZS1yb290
+  annotations:
+    example.com/sync-wave: "32"
+  trustAnchors:
+    # The old root keeps its place until nothing presents it.
+    - name: example-root-2025
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmIyeGtMWEp2YjNRPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+      labels:
+        example.com/root-generation: example-root-2026
+  issuers:
+    - name: example-private
+      signPath: pki/sign/private
+      role: example-private
+      annotations:
+        example.com/sync-wave: "33"
+    # A second role on the same login: one more token audience reaches it.
+    - name: example-workload
+      signPath: pki/sign/workload
+      role: example-private
+      audiences: [vault://example-private]
+    - name: example-team
+      kind: Issuer
+      signPath: pki-team/sign/team
+      role: example-team
+      vaultNamespace: team
   bundle:
-    # Both roots during a migration: leaves can then be reissued in any
-    # order instead of on a flag day.
+    name: example-private-ca
+    annotations:
+      example.com/sync-wave: "33"
     extraSources:
       - secret:
           name: legacy-internal-ca
           key: ca.crt
 
 certificates:
-  - name: smoke
-    commonName: smoke.example.internal
+  - name: example-private-smoke
+    commonName: smoke.devel.example.internal
+    annotations:
+      example.com/sync-wave: "34"
+  - name: example-workload-smoke
+    dnsNames: [workload-smoke.cert-manager.svc]
+    issuerRef:
+      name: example-workload
+      kind: ClusterIssuer
+      group: cert-manager.io
+    privateKey:
+      algorithm: ECDSA
+      size: 384
+      rotationPolicy: Always

@@ -2,9 +2,10 @@
 {{- range $cert := .Values.certificates }}
 {{- if not $cert.name }}{{- fail "every entry of certificates needs a name" }}{{- end }}
 {{- $ns := $cert.namespace | default $.Values.pki.certManager.namespace }}
-{{- $issuerRef := $cert.issuerRef | default (dict "name" $.Values.pki.issuerName "kind" $.Values.pki.issuerKind "group" "cert-manager.io") }}
+{{- $first := first ($.Values.pki.issuers | default (list dict)) }}
+{{- $issuerRef := $cert.issuerRef | default (dict "name" ($first.name | default "") "kind" ($first.kind | default "ClusterIssuer") "group" "cert-manager.io") }}
 {{- if not ($issuerRef.name | default "") }}
-{{- fail (printf "certificates.%s has no issuer — set pki.issuerName or the entry's own issuerRef" $cert.name) }}
+{{- fail (printf "certificates.%s has no issuer — set pki.issuers or the entry's own issuerRef" $cert.name) }}
 {{- end }}
 {{- $hosts := $cert.dnsNames | default list }}
 {{- if and (not $hosts) (not ($cert.commonName | default "")) }}

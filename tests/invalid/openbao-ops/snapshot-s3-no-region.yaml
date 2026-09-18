@@ -1,0 +1,4 @@
+snapshot:
+  enabled: true
+  upload:
+    s3: {enabled: true, bucket: b}

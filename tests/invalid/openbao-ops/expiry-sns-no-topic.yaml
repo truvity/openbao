@@ -1,0 +1,4 @@
+certificateExpiry:
+  enabled: true
+  alert:
+    sns: {enabled: true, region: r}

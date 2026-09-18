@@ -1,6 +1,7 @@
+# A certificate with no issuer to ask.
 pki:
   enabled: true
   trustAnchors: [{name: root, certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=}]
 certificates:
-  - name: nowhere
-    issuerRef: {name: example-private}
+  - name: smoke
+    commonName: smoke.example.internal

@@ -11,19 +11,21 @@
 {{- if and $upload.s3.enabled (not $upload.s3.bucket) }}
 {{- fail "snapshot.upload.s3.bucket is required when the s3 preset is on" }}
 {{- end }}
+{{- if and $upload.s3.enabled (not $upload.s3.region) }}
+{{- fail "snapshot.upload.s3.region is required when the s3 preset is on" }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ $s.serviceAccountName }}
   namespace: {{ $ns }}
-  {{- with include "ops.annotations" (dict "root" $ "extra" $s.serviceAccountAnnotations) | fromYaml }}
+  labels:
+    {{- include "ops.labels" $s.serviceAccountName | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" (mergeOverwrite (deepCopy ($s.annotations | default dict)) ($s.serviceAccountAnnotations | default dict))) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  labels:
-    app.kubernetes.io/name: {{ $s.serviceAccountName }}
-    app.kubernetes.io/part-of: openbao
 {{- /* The default token is neither audience-scoped nor short-lived. The
        job projects its own instead (see the login volume). */}}
 automountServiceAccountToken: false
@@ -34,16 +36,15 @@ kind: CronJob
 metadata:
   name: {{ $job.name }}
   namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $s.serviceAccountName | nindent 4 }}
   {{- with include "ops.annotations" (dict "root" $ "extra" $s.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  labels:
-    app.kubernetes.io/name: {{ $s.serviceAccountName }}
-    app.kubernetes.io/part-of: openbao
 spec:
   schedule: {{ $job.schedule | quote }}
-  timeZone: {{ $s.timeZone | quote }}
+  timeZone: {{ $s.timeZone }}
   {{- /* Two snapshots at once would race for the same object name, and a
          run that starts late is still worth taking. */}}
   concurrencyPolicy: Forbid
@@ -74,48 +75,44 @@ spec:
             {{- include "ops.podSecurityContext" $ | nindent 12 }}
           {{- /* Taking and VERIFYING the snapshot is an initContainer and
                  uploading is the main container, so nothing can be stored
-                 that was not first proven to be a readable archive. A
-                 backup nobody has opened is a guess. */}}
+                 that was not first proven to be a readable archive: the
+                 archive carries its own SHA256SUMS over meta.json and
+                 state.bin. A backup nobody has opened is a guess. */}}
           initContainers:
             - name: snapshot
-              image: {{ include "ops.image" (dict "image" $s.image) | quote }}
-              imagePullPolicy: {{ $s.image.pullPolicy }}
-              command: ["/bin/sh", "-ec"]
-              args:
+              {{- include "ops.imageLines" $s.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   date -u +%Y%m%dT%H%M%SZ > /work/taken-at
-
-                  BAO_TOKEN=$(bao write -field=token \
-                    auth/{{ $.Values.auth.mountPath }}/login \
-                    role={{ $s.baoRole }} \
-                    jwt=@/var/run/openbao/token)
+                  BAO_TOKEN="$(bao write -field=token auth/{{ $.Values.auth.mountPath }}/login role={{ $s.baoRole }} jwt=@{{ include "ops.tokenPath" $ }})"
                   export BAO_TOKEN
-
                   bao operator raft snapshot save /work/openbao.snap
-                  # The token dies with the step that needed it.
                   bao token revoke -self
-
-                  # The archive carries its own SHA256SUMS. Verify here, so
-                  # a truncated or corrupt snapshot never reaches the store
-                  # and never counts as a backup.
                   mkdir /work/check
                   tar -xzf /work/openbao.snap -C /work/check
                   (cd /work/check && sha256sum -c SHA256SUMS)
                   rm -rf /work/check
-
                   echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
               env:
                 - name: BAO_ADDR
-                  value: {{ include "ops.serverAddress" $ | quote }}
+                  value: {{ include "ops.serverAddress" $ }}
                 - name: BAO_CACERT
                   value: /tls/{{ $.Values.server.caKey }}
+                {{- with $.Values.server.tlsServerName }}
+                {{- /* Dial the active pod, verify the name the serving
+                       certificate carries. */}}
+                - name: BAO_TLS_SERVER_NAME
+                  value: {{ . | quote }}
+                {{- end }}
                 - name: HOME
                   value: /work
               volumeMounts:
                 - name: work
                   mountPath: /work
                 - name: login
-                  mountPath: /var/run/openbao
+                  mountPath: {{ $.Values.auth.tokenMountPath }}
                   readOnly: true
                 - name: ca
                   mountPath: /tls
@@ -126,37 +123,41 @@ spec:
                 {{- include "ops.containerSecurityContext" $ | nindent 16 }}
           containers:
             - name: upload
-              image: {{ include "ops.image" (dict "image" $upload.image) | quote }}
-              imagePullPolicy: {{ $upload.image.pullPolicy }}
+              {{- include "ops.imageLines" $upload.image | nindent 14 }}
               {{- if $upload.s3.enabled }}
-              command: ["/bin/sh", "-ec"]
-              args:
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   key="{{ $job.prefix }}$(cat /work/taken-at).snap"
-                  aws s3 cp /work/openbao.snap "s3://{{ $upload.s3.bucket }}/${key}" \
-                    --checksum-algorithm {{ $upload.s3.checksumAlgorithm }} --no-progress
+                  aws s3 cp /work/openbao.snap "s3://{{ $upload.s3.bucket }}/${key}" --checksum-algorithm {{ $upload.s3.checksumAlgorithm }} --no-progress
+              env:
+                - name: AWS_REGION
+                  value: {{ $upload.s3.region }}
+                - name: HOME
+                  value: /tmp
+                {{- with $upload.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
               {{- else }}
               {{- /* The contract for a replacement: read /work/openbao.snap
-                     and /work/taken-at, store it under <prefix><taken-at>.snap. */}}
+                     and /work/taken-at, store the bytes under
+                     $SNAPSHOT_PREFIX<taken-at>.snap. */}}
               command:
                 {{- toYaml $upload.command | nindent 16 }}
               {{- with $upload.args }}
               args:
                 {{- toYaml . | nindent 16 }}
               {{- end }}
-              {{- end }}
               env:
                 - name: SNAPSHOT_PREFIX
                   value: {{ $job.prefix | quote }}
                 - name: HOME
                   value: /tmp
-                {{- if $upload.s3.enabled }}
-                - name: AWS_REGION
-                  value: {{ $upload.s3.region | quote }}
-                {{- end }}
                 {{- with $upload.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
+              {{- end }}
               volumeMounts:
                 - name: work
                   mountPath: /work

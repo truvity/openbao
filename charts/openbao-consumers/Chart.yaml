@@ -3,9 +3,9 @@ name: openbao-consumers
 description: >-
   The cluster side of an OpenBAO install: External Secrets
   ClusterSecretStores on the Vault provider (readers, and writers that
-  present their own ServiceAccount token), a cert-manager issuer backed by
-  OpenBAO's PKI, the trust bundle that makes what it issues verifiable, and
-  workload certificates. The server itself is elsewhere.
+  present their own ServiceAccount token), cert-manager issuers backed by
+  OpenBAO's PKI, the trust anchors and bundle that make what they issue
+  verifiable, and certificates. The server itself is elsewhere.
 type: application
 # Placeholder: the git tag is the sole version authority. The release
 # workflow stamps both fields from the tag (truvity/ci-workflows

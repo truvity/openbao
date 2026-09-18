@@ -1,0 +1,4 @@
+# Kubernetes refuses a projected token shorter than ten minutes, and a
+# day is the most a login token should live.
+auth:
+  expirationSeconds: 172800

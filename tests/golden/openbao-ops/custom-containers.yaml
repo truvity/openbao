@@ -1,0 +1,544 @@
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-restore-check
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-snapshot
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-restore-check
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+data:
+  scratch.hcl: |
+    ui            = false
+    disable_mlock = true
+    api_addr      = "http://127.0.0.1:8200"
+    cluster_addr  = "http://127.0.0.1:8201"
+    listener "tcp" {
+      address     = "127.0.0.1:8200"
+      tls_disable = true
+    }
+    storage "raft" {
+      path    = "/data"
+      node_id = "restore-check"
+    }
+    seal "transit" {
+      address    = "https://unseal.example.internal:8200"
+      key_name   = "openbao-unseal"
+      mount_path = "transit/"
+    }
+    # As production declares it, so the restored audit table finds its device.
+    audit "file" "to-stdout" {
+      options {
+        file_path = "stdout"
+      }
+    }
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    resourceNames: ["openbao-serving"]
+    verbs: ["get"]
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+subjects:
+  - kind: ServiceAccount
+    name: openbao-tls-expiry
+    namespace: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-tls-expiry
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "23 7 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-tls-expiry
+        spec:
+          serviceAccountName: openbao-tls-expiry
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: read
+              image: alpine/kubectl:1.34.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n openbao get certificate openbao-serving \
+                    -o jsonpath='{.status.notAfter}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{.status.conditions[?(@.type=="Ready")].message}{"\n"}' \
+                    > /work/status
+                  cat /work/status
+              env:
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                limits:
+                  memory: 128Mi
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: alert
+              image: registry.example.internal/pager:2.0.0
+              command:
+                - /usr/local/bin/page-if-expiring
+              env:
+                - name: ALERT_BEFORE_SECONDS
+                  value: "604800"
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-restore-check
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "37 5 * * 0"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-restore-check
+        spec:
+          serviceAccountName: openbao-restore-check
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: fetch
+              image: registry.example.internal/object-store-cli:1.0.0
+              command:
+                - /usr/local/bin/get-newest-snapshot
+              args:
+                - --prefix
+                - hourly/
+              env:
+                - name: MAX_SNAPSHOT_AGE_SECONDS
+                  value: "5400"
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+            - name: server
+              restartPolicy: Always
+              image: openbao/openbao:2.6.2
+              command: [bao, server, -config=/etc/openbao/scratch.hcl]
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/openbao
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                - name: server-tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: check
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # bao status: 0 unsealed, 2 sealed or uninitialized, 1 unreachable.
+                  wait_for() {
+                    i=0
+                    while [ "$i" -lt 90 ]; do
+                      rc=0
+                      bao status >/dev/null 2>&1 || rc=$?
+                      case "$1:$rc" in any:0|any:2|unsealed:0) return 0 ;; esac
+                      i=$((i + 1))
+                      sleep 2
+                    done
+                    echo "the scratch server never became $1 (bao status exit $rc)"
+                    bao status || true
+                    return 1
+                  }
+
+                  wait_for any
+                  # Recovery shares of a throwaway install: never printed, gone with the pod.
+                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json |
+                    sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p')
+                  [ -n "$BAO_TOKEN" ] || { echo "initializing the scratch server returned no root token"; exit 1; }
+                  export BAO_TOKEN
+                  wait_for unsealed
+
+                  # -force: the snapshot carries production's keyring, not the scratch's.
+                  # Judge by exit code; 2.x prints "Error properly closing policy file" on success.
+                  bao operator raft snapshot restore -force /work/openbao.snap
+                  unset BAO_TOKEN
+                  wait_for unsealed
+
+                  # The scratch root token died with the restore; from here on only what the
+                  # snapshot itself grants.
+                  i=0
+                  until BAO_TOKEN=$(bao write -field=token auth/jwt-example/login role=openbao-restore-check \
+                    jwt=@/var/run/example/openbao/token 2>/tmp/login.err); do
+                    i=$((i + 1))
+                    if [ "$i" -ge 30 ]; then
+                      echo "cannot log in to the restored copy:"
+                      cat /tmp/login.err
+                      exit 1
+                    fi
+                    sleep 2
+                  done
+                  export BAO_TOKEN
+
+                  namespaces="team-a team-b"
+                  for ns in $namespaces; do
+                    got=$(bao read -namespace="$ns" -field=data secret/data/canary)
+                    if [ "$got" != "map[namespace:$ns]" ]; then
+                      echo "namespace $ns: restore canary reads '$got'"
+                      exit 1
+                    fi
+                  done
+                  bao token revoke -self >/dev/null
+
+                  echo "restore check passed: $(cat /work/key) opened; canaries read, in:" $namespaces
+              env:
+                - name: BAO_ADDR
+                  value: http://127.0.0.1:8200
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: login
+                  mountPath: /var/run/example/openbao
+                  readOnly: true
+                - name: config
+                  mountPath: /etc/restore-check
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: data
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: server-tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: config
+              configMap:
+                name: openbao-restore-check
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-snapshot
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "5 * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-snapshot
+        spec:
+          serviceAccountName: openbao-snapshot
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: snapshot
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  date -u +%Y%m%dT%H%M%SZ > /work/taken-at
+                  BAO_TOKEN="$(bao write -field=token auth/jwt-example/login role=openbao-snapshot jwt=@/var/run/example/openbao/token)"
+                  export BAO_TOKEN
+                  bao operator raft snapshot save /work/openbao.snap
+                  bao token revoke -self
+                  mkdir /work/check
+                  tar -xzf /work/openbao.snap -C /work/check
+                  (cd /work/check && sha256sum -c SHA256SUMS)
+                  rm -rf /work/check
+                  echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
+              env:
+                - name: BAO_ADDR
+                  value: https://openbao-active.openbao.svc:8200
+                - name: BAO_CACERT
+                  value: /tls/ca.crt
+                - name: BAO_TLS_SERVER_NAME
+                  value: "openbao.example.internal"
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: /var/run/example/openbao
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: upload
+              image: registry.example.internal/object-store-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command:
+                - /usr/local/bin/put-snapshot
+              args:
+                - --bucket
+                - example-openbao-backups
+              env:
+                - name: SNAPSHOT_PREFIX
+                  value: "hourly/"
+                - name: HOME
+                  value: /tmp
+                - name: STORE_ENDPOINT
+                  value: https://objects.example.internal
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt

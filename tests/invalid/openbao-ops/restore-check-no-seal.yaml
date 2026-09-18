@@ -1,7 +1,5 @@
-# Verifying a canary in no namespace verifies nothing.
+# A snapshot opens only under the seal that wrapped its keyring.
 restoreCheck:
   enabled: true
   fetch:
     s3: {enabled: true, bucket: b, region: r}
-  canary:
-    namespaces: []

@@ -1,0 +1,19 @@
+# The issuers and trust alone, for an install that renders them apart from
+# the stores (its own deployment, its own ordering).
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+vaultNamespace: prod
+auth:
+  mountPath: jwt-prod
+pki:
+  enabled: true
+  trustAnchors:
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  issuers:
+    - name: example-private
+      signPath: pki/sign/private
+      role: example-private
+certificates:
+  - name: example-private-smoke
+    commonName: smoke.prod.example.internal

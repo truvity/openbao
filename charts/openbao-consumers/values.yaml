@@ -2,13 +2,18 @@
 #
 # Runs on every cluster that CONSUMES an OpenBAO: the stores that read
 # secrets from it, the stores that write back to it, and the cert-manager
-# issuer, trust bundle and certificates that make its PKI usable. The
-# server is elsewhere (openbao-ops, beside it).
+# issuers, trust anchors, bundle and certificates that make its PKI usable.
+# The server is elsewhere (openbao-ops, beside it).
 #
 # Everything particular — the endpoint, the CA, namespaces, role names,
 # which workloads may read what — is an input. The chart supplies the
 # shapes that are easy to get subtly wrong and hard to notice when you do.
+#
+# Stores and PKI are independent: an install may render either or both,
+# which lets them sit in different deployments with their own ordering.
 
+# Added to every object this chart renders. Per-object `annotations` are
+# merged over it.
 commonAnnotations: {}
 
 # The OpenBAO endpoint, e.g. https://openbao.example.internal:8200
@@ -17,14 +22,14 @@ server: ""
 # Base64 PEM of the CA that signed the SERVER's certificate. This verifies
 # the endpoint a client is about to send a token to — it is not the root
 # that verifies certificates OpenBAO issues, and the two are usually
-# different authorities. Required whenever a store or the issuer renders.
+# different authorities. Required whenever a store or an issuer renders.
 caBundle: ""
 
 # The OpenBAO namespace these objects address. Empty on an install with no
-# namespaces, which is the common case.
+# namespaces.
 vaultNamespace: ""
 
-# The KV v2 mount every reader store reads from.
+# The KV v2 mount every store reads from and writes to.
 kvMount: kv
 
 # Appended to a reader store's name, so a store on the Vault provider is
@@ -48,7 +53,8 @@ auth:
 
 # A writer store presents its OWN ServiceAccount token instead, so nothing
 # else on the cluster can write through it. The auth mount is this
-# cluster's; the Vault namespace is the target environment's.
+# cluster's (empty: auth.mountPath); the Vault namespace is the target
+# environment's.
 writerAuthMount: ""
 
 # Reader stores, one per kind. `role` defaults to the name, so the OpenBAO
@@ -56,6 +62,7 @@ writerAuthMount: ""
 stores: []
 #  - name: example-app
 #    role: example-app
+#    vaultNamespace: ""          # default: the top-level vaultNamespace
 #    annotations: {}
 #    conditions:                 # required: without it every namespace can read
 #      - namespaces: [example-app]
@@ -69,33 +76,50 @@ writers: []
 
 pki:
   enabled: false
-  # Base64 PEM of the ROOT that signs what OpenBAO issues. Distributed to
-  # workloads through the bundle below.
-  trustRootCaBundle: ""
-  rootConfigMapName: openbao-private-root
-  rootKey: ca.crt
+  # On the objects cert-manager's login is made of (the ServiceAccount, its
+  # token Role and RoleBinding) and on the trust anchors.
   annotations: {}
 
   certManager:
     namespace: cert-manager
-    # cert-manager's own identity, which mints the issuer's tokens.
+    # cert-manager's own identity, which mints the issuers' tokens.
     serviceAccountName: cert-manager
   # The identity cert-manager presents to OpenBAO. It holds no token:
   # cert-manager mints one per request, so there is none to rotate.
   issuerServiceAccount: openbao-issuer
+  # Default for every issuer: the top-level vaultNamespace when empty.
+  vaultNamespace: ""
 
-  issuerName: openbao-private
-  issuerKind: ClusterIssuer       # ClusterIssuer | Issuer
-  # The signing endpoint and the OpenBAO role that bounds what it may sign.
-  signPath: pki/sign/cert-manager
-  role: cert-manager
-  vaultNamespace: ""              # default: the top-level vaultNamespace
+  # The ROOTS that verify what OpenBAO issues, one ConfigMap each in
+  # certManager.namespace, and every one of them in the bundle. Public
+  # certificates only: the keys never leave their custody.
+  trustAnchors: []
+  #  - name: example-root-2026
+  #    certificate: <base64 PEM>
+  #    labels: {}
+  #    annotations: {}
+  # The key each anchor's ConfigMap holds its certificate under.
+  rootKey: ca.crt
+
+  # cert-manager issuers backed by OpenBAO: one per signing path. A Vault
+  # issuer's path is fixed, so a second chain or a second role is a second
+  # issuer, not a change to the first.
+  issuers: []
+  #  - name: example-private
+  #    kind: ClusterIssuer          # ClusterIssuer | Issuer
+  #    signPath: pki/sign/example   # the OpenBAO role that bounds what it signs
+  #    role: example-private        # the auth role cert-manager logs in as
+  #    audiences: []                # extra token audiences for that login
+  #    vaultNamespace: ""           # default: pki.vaultNamespace
+  #    annotations: {}
 
   bundle:
     enabled: true
     name: openbao-private-ca
-    # During a root migration add the OLD root here too. Trusting both is
-    # what lets leaves be reissued in any order instead of on a flag day.
+    annotations: {}
+    # Sources placed BEFORE the trust anchors — during a root migration,
+    # the OLD root. Trusting both is what lets leaves be reissued in any
+    # order instead of on a flag day.
     extraSources: []
     target:
       key: ca-certificates.crt
@@ -111,10 +135,16 @@ certificateDefaults:
     size: 256
     rotationPolicy: Always
 
+# Certificates from an OpenBAO-backed issuer — typically one disposable
+# smoke certificate per issuer, which proves the login, the chain and the
+# renewal path before any workload changes its issuerRef.
 certificates: []
 #  - name: smoke
-#    namespace: cert-manager
+#    namespace: cert-manager      # default: pki.certManager.namespace
 #    commonName: smoke.example.internal
-#    # One deliberately disposable certificate proves the issuer, the chain
-#    # and the renewal path work before any existing workload changes its
-#    # issuerRef. Delete it once that is established.
+#    dnsNames: []                 # default: [commonName]
+#    secretName: ""               # default: <name>-tls
+#    issuerRef: {}                # default: the first of pki.issuers
+#    duration / renewBefore / privateKey: default certificateDefaults
+#    annotations: {}
+#    labels: {}

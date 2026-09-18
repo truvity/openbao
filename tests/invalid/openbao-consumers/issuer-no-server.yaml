@@ -1,6 +1,6 @@
+caBundle: Zm9v
 pki:
   enabled: true
   trustAnchors: [{name: root, certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=}]
-certificates:
-  - name: nowhere
-    issuerRef: {name: example-private}
+  issuers:
+    - {name: example-private, signPath: pki/sign/private, role: example-private}

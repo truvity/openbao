@@ -20,6 +20,7 @@
         "clusterPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "tlsSecretName": { "type": "string", "minLength": 1 },
         "caKey": { "type": "string", "minLength": 1 },
+        "tlsServerName": { "type": "string" },
         "podLabels": { "$ref": "#/definitions/stringMap" }
       }
     },
@@ -29,7 +30,8 @@
       "properties": {
         "mountPath": { "type": "string", "minLength": 1 },
         "audience": { "type": "string", "minLength": 1 },
-        "expirationSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 }
+        "expirationSeconds": { "type": "integer", "minimum": 600, "maximum": 86400 },
+        "tokenMountPath": { "type": "string", "pattern": "^/" }
       }
     },
     "snapshot": {
@@ -54,7 +56,7 @@
             }
           }
         },
-        "timeZone": { "type": "string" },
+        "timeZone": { "type": "string", "minLength": 1 },
         "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
         "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
         "backoffLimit": { "type": "integer", "minimum": 0 },
@@ -63,7 +65,7 @@
         "tolerations": { "type": "array", "items": { "type": "object" } },
         "image": { "$ref": "#/definitions/image" },
         "resources": { "type": "object" },
-        "upload": { "$ref": "#/definitions/sidecarJob" }
+        "upload": { "$ref": "#/definitions/containerContract" }
       }
     },
     "restoreCheck": {
@@ -76,8 +78,10 @@
         "annotations": { "$ref": "#/definitions/stringMap" },
         "baoRole": { "type": "string", "minLength": 1 },
         "schedule": { "type": "string", "minLength": 1 },
-        "timeZone": { "type": "string" },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
         "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
         "workSizeLimit": { "type": "string" },
         "nodeId": { "type": "string", "minLength": 1 },
         "nodeSelector": { "$ref": "#/definitions/stringMap" },
@@ -85,31 +89,113 @@
         "maxSnapshotAgeSeconds": { "type": "integer", "minimum": 60 },
         "image": { "$ref": "#/definitions/image" },
         "sealConfig": { "type": "string" },
+        "sealDescription": { "type": "string" },
+        "auditConfig": { "type": "string" },
         "serverEnv": { "type": "array", "items": { "type": "object" } },
         "serverResources": { "type": "object" },
         "resources": { "type": "object" },
-        "fetch": { "$ref": "#/definitions/sidecarJob" },
-        "verifyCanary": { "type": "boolean" },
+        "fetch": { "$ref": "#/definitions/containerContract" },
         "canary": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "enabled": { "type": "boolean" },
             "kvMount": { "type": "string", "minLength": 1 },
             "path": { "type": "string", "minLength": 1 },
-            "field": { "type": "string", "minLength": 1 },
-            "namespaces": { "type": "array", "items": { "type": "string" } }
+            "namespaces": { "type": "array", "items": { "$ref": "#/definitions/name" } }
           }
         },
-        "verifyIssue": { "type": "boolean" },
-        "issue": {
+        "pki": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "namespaces": { "type": "array", "items": { "type": "string" } },
-            "path": { "type": "string", "minLength": 1 },
-            "commonNamePrefix": { "type": "string", "minLength": 1 },
+            "enabled": { "type": "boolean" },
+            "trustAnchor": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "certificate": { "type": "string", "description": "base64 PEM" }
+              }
+            },
+            "intermediate": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mount": { "type": "string", "minLength": 1 },
+                "issuer": { "type": "string" }
+              }
+            },
+            "issuing": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mount": { "type": "string", "minLength": 1 },
+                "issuerPrefix": { "type": "string" }
+              }
+            },
+            "namespaces": { "type": "array", "items": { "$ref": "#/definitions/name" } },
+            "role": { "type": "string", "minLength": 1 },
             "domain": { "type": "string" },
-            "ttl": { "type": "string" }
+            "ttl": { "type": "string", "minLength": 1 },
+            "refusals": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "namespace": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "certificateExpiry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "certificateName": { "type": "string" },
+        "clusterName": { "type": "string" },
+        "certManagerNamespace": { "type": "string", "minLength": 1 },
+        "schedule": { "type": "string", "minLength": 1 },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "alertBeforeSeconds": { "type": "integer", "minimum": 86400 },
+        "renewBeforeSeconds": { "type": "integer", "minimum": 0 },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "read": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": { "$ref": "#/definitions/image" },
+            "resources": { "type": "object" }
+          }
+        },
+        "alert": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": { "$ref": "#/definitions/image" },
+            "command": { "type": "array", "items": { "type": "string" } },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "env": { "type": "array", "items": { "type": "object" } },
+            "resources": { "type": "object" },
+            "sns": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "topicArn": { "type": "string" },
+                "region": { "type": "string" },
+                "runbook": { "type": "string" }
+              }
+            }
           }
         }
       }
@@ -125,11 +211,24 @@
           "additionalProperties": false,
           "properties": {
             "serverIngress": { "type": "string", "minLength": 1 },
-            "restoreCheckIngress": { "type": "string", "minLength": 1 }
+            "restoreCheckIngress": { "type": "string", "minLength": 1 },
+            "certificateExpiryIngress": { "type": "string", "minLength": 1 }
           }
         },
         "clientCidrs": { "type": "array", "items": { "type": "string" } },
         "extraClientSelectors": { "type": "array", "items": { "type": "object" } },
+        "isolated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "podSelector"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "podSelector": { "$ref": "#/definitions/stringMap" }
+            }
+          }
+        },
         "egress": {
           "type": "object",
           "additionalProperties": false,
@@ -143,6 +242,8 @@
                 "required": ["name", "podSelector", "egress"],
                 "properties": {
                   "name": { "type": "string", "minLength": 1 },
+                  "apiVersion": { "type": "string", "minLength": 1 },
+                  "kind": { "type": "string", "minLength": 1 },
                   "podSelector": { "$ref": "#/definitions/stringMap" },
                   "egress": { "type": "array", "items": { "type": "object" } }
                 }
@@ -159,6 +260,7 @@
         "enabled": { "type": "boolean" },
         "externalDnsName": { "type": "string" },
         "commonName": { "type": "string" },
+        "serviceDnsNames": { "type": "boolean" },
         "extraDnsNames": { "type": "array", "items": { "type": "string" } },
         "ipAddresses": { "type": "array", "items": { "type": "string" } },
         "duration": { "type": "string" },
@@ -186,6 +288,10 @@
       "type": "object",
       "additionalProperties": { "type": "string" }
     },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
@@ -193,10 +299,10 @@
         "repository": { "type": "string", "minLength": 1 },
         "tag": { "type": "string" },
         "digest": { "type": "string" },
-        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+        "pullPolicy": { "type": "string", "enum": ["", "Always", "IfNotPresent", "Never"] }
       }
     },
-    "sidecarJob": {
+    "containerContract": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
