@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # This repository is public and its history cannot be unpublished — a
 # rewrite changes the SHAs but not what was already fetched. So the rule
-# ("mechanism only; particulars are caller inputs") is enforced
-# mechanically rather than remembered.
+# ("mechanism only; particulars are caller inputs or org variables") is
+# enforced mechanically rather than remembered.
 #
-# Every chart value that names a cluster, an account, a hostname or a
-# secret path is an INPUT with a neutral default. The consuming estate
-# supplies the particulars from its own (private) repository.
+# Vendored from truvity/ci-workflows (hack/leak-canary.sh), which is public
+# for the same reason. Keep it in step with that copy.
+# There are no deltas: this copy differs from that one only in this
+# paragraph and the next.
 #
-# Copied from truvity/ci-workflows, which is public for the same reason.
+# Every chart value or module input that names a cluster, an account, a
+# hostname or a secret path is an INPUT with a neutral default; the
+# consuming estate supplies the particulars from its own repository.
+#
 # Add a pattern here the first time something new turns out to be a
 # particular. Never add an exception without one.
 set -uo pipefail
@@ -26,21 +30,33 @@ patterns=(
   'arn:aws'                            # any ARN
   '\b[0-9]{12}\.dkr\.ecr\.'              # ECR registry host
   '\.svc\.cluster\.local'              # in-cluster DNS
-  '/secrets/[a-z0-9-]+/'               # SSM parameter paths (/secrets/<system>/<name>; a bare
-                                       # /secrets/<key> mount path is the chart's own mechanism)
+  '/secrets/'                          # SSM parameter paths
   'truvity-[a-z0-9-]*-(ci-cache|artifacts|state)'   # S3 buckets
   '\.truvity\.(xyz|com|co)'            # internal hostnames
   'glpat-|ghp_|github_pat_'            # tokens, in case of an accident
 )
 
 fail=0
+
+# Scan TRACKED FILES ONLY. The point of this canary is to stop particulars
+# being committed, so git's index is exactly the right scope -- and a
+# recursive walk of the working tree is not. It descended into generated,
+# gitignored directories: .devbox/state.json carries a
+# `nix_print_dev_env_hash` whose hex contains a 12-digit run, which matched
+# the AWS-account-id pattern. That made the canary fail on a clean checkout
+# for a value that is neither committed nor secret.
+#
+# This matters more than a nuisance: a canary that cries wolf is one people
+# learn to skip, and this one is what stands between us and publishing
+# particulars from a public repo.
+mapfile -d '' tracked < <(git ls-files -z)
+
 for p in "${patterns[@]}"; do
   # Exclude this script: it necessarily contains the patterns it bans.
-  if hits=$(grep -rInE "$p" . \
-              --exclude-dir=.git \
-              --exclude-dir=.devbox \
-              --exclude="leak-canary.sh" 2>/dev/null); then
-    echo "LEAK: pattern /$p/ matched — particulars belong in caller inputs:"
+  if hits=$(printf '%s\0' "${tracked[@]}" \
+              | grep -zZv '^hack/leak-canary\.sh$' \
+              | xargs -0 -r grep -InE "$p" 2>/dev/null); then
+    echo "LEAK: pattern /$p/ matched — particulars belong in caller inputs or org variables:"
     echo "$hits" | head -5 | sed 's/^/    /'
     fail=1
   fi
