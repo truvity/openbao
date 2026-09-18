@@ -1,3 +1,4 @@
+# cert-manager would have nowhere to ask for a certificate.
 caBundle: Zm9v
 pki:
   enabled: true

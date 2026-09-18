@@ -3,39 +3,39 @@
 OpenBAO for Kubernetes estates, as reusable mechanism: the two halves the
 upstream server chart leaves out.
 
-| Artifact | What | Reference |
+| Artifact | What | Status |
 |---|---|---|
-| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, a serving-certificate expiry alert, network policies, a serving certificate, and the sidecar that reloads it | [docs/openbao-ops.md](docs/openbao-ops.md) |
-| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | [docs/openbao-consumers.md](docs/openbao-consumers.md) |
+| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
+| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | unreleased |
 
-Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag.
+Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
+from the first release on.
 
-The **server** is not here: install it from upstream's `openbao/openbao`
-chart. [docs/server.md](docs/server.md) describes the shape these charts
-assume of it — HA Raft, auto-unseal, one verified endpoint name, a declared
-audit device, and a certificate reloaded without a restart. These charts
-are what an install is judged on when it fails.
+## Who it is for
 
-## The rule that makes this repository public
+A platform team running OpenBAO on Kubernetes from upstream's
+`openbao/openbao` chart, with cert-manager, trust-manager and External
+Secrets, that wants backups it has seen restored, a serving certificate
+that reloads itself and is noticed before it ends, and clusters that read,
+write and issue through OpenBAO without a stored token. The **server** is
+not here: [docs/server.md](docs/server.md) describes the shape these charts
+assume of it. These charts are what an install is judged on when it fails.
 
-**Mechanism only.** Nothing here names a cloud account, a bucket, a key, a
-region, a cluster, a hostname or a secret path. Every such thing is an
-input with a neutral default, and the consuming estate supplies it from its
-own (private) repository. `hack/leak-canary.sh` enforces this in CI, and
-public history cannot be unpublished — so the rule is mechanical, not
-remembered.
+## The model
 
-Object storage and alerting are the sharpest cases. The chart does not
-know S3 or SNS: it knows a **container with a contract**, and ships an AWS
-preset as one implementation of each.
+Two halves. **openbao-ops** sits beside the server and owns its
+operational life: a snapshot is taken, verified and only then stored; a
+weekly restore opens the newest one in a throwaway server, reads a canary
+back in every namespace and walks the restored PKI from a root you
+committed; a daily check alerts weeks before the serving certificate ends;
+the server is reachable from its clients and the jobs from nothing.
+**openbao-consumers** sits on every cluster that uses the server: reader
+stores bounded by namespace conditions, writer stores that present the
+writer's own token, and cert-manager issuers whose roots are distributed as
+a trust bundle. Object storage and alerting are containers with a
+contract, with S3 and SNS as presets; see [docs/doctrine.md](docs/doctrine.md).
 
-| Container | Reads | Must produce |
-|---|---|---|
-| `snapshot.upload` | `/work/openbao.snap`, `/work/taken-at` | the object stored at `$SNAPSHOT_PREFIX<taken-at>.snap` |
-| `restoreCheck.fetch` | the store | `/work/openbao.snap` and `/work/key`, failing if the newest is older than `$MAX_SNAPSHOT_AGE_SECONDS` |
-| `certificateExpiry.alert` | `/work/status` | an alert and a non-zero exit when fewer than `$ALERT_BEFORE_SECONDS` are left |
-
-## charts/openbao-ops
+## Install and a worked example
 
 ```sh
 helm install openbao-ops oci://ghcr.io/truvity/charts/openbao-ops \
@@ -61,32 +61,23 @@ restoreCheck:
 certificateExpiry:
   enabled: true
   alert:
-    sns: { enabled: true, topicArn: <topic>, region: eu-example-1 }
+    sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }
 ```
 
-Five decisions are worth stating, because each is the difference between a
-backup regime and the appearance of one:
+The serving-certificate reload is a fragment for the upstream chart
+([docs/safety.md](docs/safety.md#a-renewed-certificate-that-nothing-loads)
+says why, [docs/server.md](docs/server.md) shows the rest of the server's
+values):
 
-- **A snapshot is verified before it is stored.** Taking it is an
-  initContainer, uploading is the main container, and between them the
-  archive is extracted and checked against the `SHA256SUMS` it carries. A
-  truncated snapshot therefore never becomes an object, and never counts.
-- **The restore check reads data back.** It restores the newest snapshot
-  into a throwaway loopback-only server, then logs in **as the snapshot's
-  own identity** — the scratch root token dies with the restore — and
-  reads a canary in every namespace. Judging a restore on the process
-  exiting zero proves only that a process ran.
-- **The restored PKI is walked from the root you hold.** Optionally, the
-  check verifies the restored hierarchy link by link from a committed root
-  certificate — never the restored copy's own — proves the role refuses
-  what it must, and issues a fresh leaf in every namespace.
-- **A stale newest snapshot fails the check.** If the snapshot job stopped
-  three days ago, nothing else notices; the restore would happily pass on
-  old data. That is exactly the failure this is for.
-- **The restore-check pod admits no ingress at all.** For the life of one
-  pod it holds a full plaintext copy of production.
+```yaml
+# in the upstream openbao chart's values
+server:
+  shareProcessNamespace: true
+  extraContainers: |
+    {{- include "ops.tlsReloadContainer" . | nindent 2 }}
+```
 
-## charts/openbao-consumers
+On each consuming cluster:
 
 ```sh
 helm install openbao-consumers oci://ghcr.io/truvity/charts/openbao-consumers \
@@ -120,29 +111,34 @@ pki:
       role: example-private
 ```
 
-## Ownership contract
+## Documentation
 
-| This repository | The consuming estate |
-|---|---|
-| the jobs, their order, and what counts as a pass | where backups live, which key seals them, which region |
-| the auth shape: audience-scoped, short-lived, projected tokens | mounts, roles, policies, namespaces |
-| that a snapshot is verified before it is stored and read back after | the schedule and retention that suit its risk |
-| the object and container contracts | the images, the CNI, the issuers, the trust roots |
+- [docs/adoption.md](docs/adoption.md) — prerequisites, install order,
+  adopting objects that already run, the zero-diff gate
+- [docs/safety.md](docs/safety.md) — the backup regime, the traps, and
+  every render-time refusal
+- [docs/reference.md](docs/reference.md) — every value of both charts
+- [docs/doctrine.md](docs/doctrine.md) — the two halves, the container
+  contracts, and the ownership contract
+- [docs/server.md](docs/server.md) — the upstream server's values these
+  charts assume
+- [CHANGELOG.md](CHANGELOG.md) — what changed for a consumer, per version
 
-The chart assumes, and does not create, a least-privilege split: the
-snapshot identity can write to the store but not list or read it back; the
-restore identity can read but not write. Both are the estate's to grant
-([docs/openbao-ops.md](docs/openbao-ops.md#contracts)).
+## The rule that makes this repository public
 
-## Adopting objects you already run
+**Mechanism only.** Nothing here names a cloud, a bucket, a key, a region,
+a cluster, a hostname or a secret path. Every such thing is an input with a
+neutral default, and the consuming estate supplies it from its own
+(private) repository. `hack/leak-canary.sh` enforces this in CI, and public
+history cannot be unpublished — so the rule is mechanical, not remembered.
 
-Every object name is a value and none carries the release name or Helm's
-own labels, so an estate that renders these objects from its own templates
-can switch to the charts without a rename. Render both, compare them
-object by object, and move them in ONE deployment change — with Argo CD,
-add the chart as a source of the same Application that renders them today,
-in the same revision that stops rendering them: a source in a second
-Application prunes the objects before recreating them.
+This repository follows the shared
+[component contract](https://github.com/truvity/ci-workflows/blob/master/docs/component-contract.md).
+
+## Status
+
+Extracted from a production estate, where the same mechanism runs. The
+charts themselves are not yet released; the first release is v0.1.0.
 
 ## Development
 
@@ -159,8 +155,14 @@ that will quietly stop working.
 ## Releasing
 
 Push a tag `vX.Y.Z`. The shared release workflow creates the GitHub Release
-and pushes every chart at that version — a chart's own `version` field is a
+and pushes both charts at that version — a chart's own `version` field is a
 placeholder that never moves.
+
+The first release is a manual tag: auto-release never cuts one. It is
+present but not armed (`vars.AUTO_RELEASE` is unset); when armed it cuts
+**patches only** — at once for a merged `security`-labelled pull request,
+weekly for dependency bumps. Minors and majors are always manual, tagged
+when the change merges and after its CHANGELOG heading.
 
 ## Licence
 

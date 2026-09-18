@@ -1,0 +1,8 @@
+restoreCheck:
+  enabled: true
+  sealConfig: |
+    seal "awskms" {}
+  fetch:
+    s3:
+      enabled: true
+      region: r

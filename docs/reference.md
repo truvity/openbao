@@ -1,82 +1,27 @@
-# openbao-ops
+# Reference
 
-The operational half of an OpenBAO install, beside the upstream server
-chart. Every part is off until enabled, so one install can carry any subset
-— including a second install that renders only the serving certificate,
-when the certificate belongs to a different deployment than the jobs.
+Every value of both charts. `charts/<chart>/values.yaml` carries the same
+keys with their defaults and a comment each, and `values.schema.json` is
+the authority on types: an unknown key fails the render.
 
-| Part | Objects | What it proves or prevents |
-|---|---|---|
-| `snapshot` | ServiceAccount, one CronJob per tier | a backup exists, and it opened before it was stored |
-| `restoreCheck` | ServiceAccount, ConfigMap, CronJob | the newest backup restores, its data reads back, and its PKI still issues on the chain you trust |
-| `certificateExpiry` | ServiceAccount, Role, RoleBinding, CronJob | a serving certificate that stopped renewing is noticed weeks before it ends |
-| `networkPolicy` | NetworkPolicies, egress policies | clients reach the API only, peers reach Raft only, the jobs are reachable by nothing |
-| `serverCertificate` | Certificate | the serving certificate, with the names clients verify |
-| `tlsReload` | *(a fragment for the upstream chart)* | a renewed certificate is served without a restart — see [server.md](server.md) |
+Every object name is a value, and none carries the release name or Helm's
+own labels — the names below are what an existing install adopts
+([adoption.md](adoption.md#adopting-objects-that-already-run)).
 
-Object names are values, never derived from the release name, so an estate
-that already runs these objects can adopt the chart without renaming —
-and without a delete and recreate — anything.
+## openbao-ops
 
-## Contracts
+Every part is off until enabled, so one install can carry any subset.
 
-Object storage and alerting are containers with a contract. Each has a
-preset (S3, SNS) and takes any image that honours the contract instead.
+| Part | Objects |
+|---|---|
+| `snapshot` | ServiceAccount, one CronJob per tier |
+| `restoreCheck` | ServiceAccount, ConfigMap, CronJob |
+| `certificateExpiry` | ServiceAccount, Role, RoleBinding, CronJob |
+| `networkPolicy` | the server's ingress, an ingress deny per job pod and per `isolated` entry, `egress.rules` |
+| `serverCertificate` | Certificate |
+| `tlsReload` | nothing: a fragment for the upstream chart |
 
-| Container | Reads | Environment | Must |
-|---|---|---|---|
-| `snapshot.upload` | `/work/openbao.snap`, `/work/taken-at` | `SNAPSHOT_PREFIX`, `HOME` | store the bytes at `$SNAPSHOT_PREFIX<taken-at>.snap` |
-| `restoreCheck.fetch` | the store | `MAX_SNAPSHOT_AGE_SECONDS`, `HOME` | write the newest snapshot to `/work/openbao.snap` and its name to `/work/key`, and **fail** when it is older than the limit |
-| `certificateExpiry.alert` | `/work/status`: notAfter, the Ready status, its message, one per line | `ALERT_BEFORE_SECONDS`, `HOME` | alert and exit non-zero when fewer seconds than that are left |
-
-Identities are the estate's to grant, least privilege each:
-
-| Identity | OpenBAO | Object storage / alerting | Kubernetes |
-|---|---|---|---|
-| `snapshot` | read `sys/storage/raft/snapshot` | write under the prefixes; no list, no read | none (no token automounted) |
-| `restoreCheck` | on the RESTORED copy: read the canaries, issue from `pki.role` | read the newest snapshot; decrypt with the seal's key | none |
-| `certificateExpiry` | none | publish to one topic | `get` on one Certificate (the chart's Role) |
-
-The jobs log in with a projected ServiceAccount token for `auth.audience`,
-at most `auth.expirationSeconds` old, on the JWT mount `auth.mountPath`.
-
-## The restore check
-
-One pod, three containers:
-
-1. `fetch` (init) — the newest snapshot, refused when older than
-   `maxSnapshotAgeSeconds`: a stale newest snapshot means the snapshot job
-   stopped, which is the failure this check exists to find.
-2. `server` (native sidecar) — a scratch OpenBAO on `127.0.0.1` only, TLS
-   off, storage on an emptyDir, under `sealConfig`. It holds a full
-   plaintext copy of production for the life of the pod, so it admits no
-   ingress (`networkPolicy`) and dies with the check.
-3. `check` — initialises the scratch, restores the snapshot over it, and
-   logs in **as the snapshot's own identity** (the scratch root token dies
-   with the restore). Then:
-   - **canary**: in every namespace (listed, or every one the restored copy
-     lists), `<kvMount>/<path>` must read exactly
-     `{namespace: <that namespace>}`;
-   - **pki** (optional): stages your committed root in the token's
-     cubbyhole and walks `bao pki verify-sign` from it to the domain
-     intermediate and to every namespace's issuing CA — signature, path,
-     key id, subject and trust, which also checks path length and name
-     constraints. It proves the restricted role refuses a wildcard, a
-     subdomain, IP, URI and e-mail SANs, then issues one leaf per namespace,
-     checks the issuer stored it, and walks it to its issuing CA.
-
-The PKI walk expects a two-tier hierarchy under an offline root:
-
-```
-<trustAnchor>                                  your committed root (never the restored copy's)
-└── <intermediate.mount>/issuer/<intermediate.issuer>          root namespace
-    └── <ns>/<issuing.mount>/issuer/<issuing.issuerPrefix>-<ns>  one per namespace
-        └── <role>.<ns>.<domain>                                 a fresh leaf, from <ns>/<issuing.mount>/issue/<role>
-```
-
-## Values
-
-### Common
+### Top level, `server`, `auth`
 
 | Value | Default | Description |
 |---|---|---|
@@ -210,7 +155,7 @@ API port, the server's own pods to the API and Raft ports, and — with
 | `enabled` | `false` | Render the Certificate (named `server.tlsSecretName`). |
 | `externalDnsName` | `""` | The endpoint clients outside the cluster use; first in the SAN list. |
 | `commonName` | `""` | Empty: `externalDnsName`. |
-| `serviceDnsNames` | `true` | Add the Services' in-cluster names and a wildcard over the peers. Turn it off for a name-constrained chain that cannot carry them; clients then verify the endpoint (see [server.md](server.md)). |
+| `serviceDnsNames` | `true` | Add the Services' in-cluster names and a wildcard over the peers. Turn it off for a name-constrained chain that cannot carry them; clients then verify the endpoint (see [server.md](server.md#verifying-one-name)). |
 | `extraDnsNames` | `[]` | More names. The chart deliberately never names a load balancer, so a replaced one needs no reissue. |
 | `ipAddresses` | `[127.0.0.1]` | IP SANs, for the in-pod CLI. `[]` with a name-constrained chain. |
 | `duration`, `renewBefore` | `2160h`, `720h` | 90 days, renewed a month before the end. |
@@ -221,7 +166,7 @@ API port, the server's own pods to the API and Raft ports, and — with
 ### tlsReload
 
 The sidecar fragment `ops.tlsReloadContainer`, for the upstream chart —
-see [server.md](server.md).
+see [server.md](server.md#reloading-a-renewed-certificate).
 
 | Value | Default | Description |
 |---|---|---|
@@ -230,3 +175,69 @@ see [server.md](server.md).
 | `volumeName`, `mountPath` | `userconfig-openbao-tls`, `/openbao/userconfig/openbao-tls` | The upstream chart's volume for the TLS Secret. |
 | `image` | `openbao/openbao:2.6.2` | Needs `sh`, `cksum`, `tr` and `kill`: the server image has them. |
 | `resources` | 5m / 8Mi, limit 32Mi | |
+
+## openbao-consumers
+
+Stores and PKI are independent: an install may render either or both.
+
+| Part | Objects |
+|---|---|
+| `stores` | one ClusterSecretStore per kind, `<name>-<storeSuffix>` |
+| `writers` | one ClusterSecretStore per (writer, environment), `<name>-<environment>` |
+| `pki.trustAnchors` | one ConfigMap per root, in `pki.certManager.namespace` |
+| `pki.issuers` | the login's ServiceAccount, Role and RoleBinding (`<issuerServiceAccount>-token`), and one issuer per entry |
+| `pki.bundle` | a trust-manager Bundle |
+| `certificates` | one Certificate per entry |
+
+| Value | Default | Description |
+|---|---|---|
+| `commonAnnotations` | `{}` | Added to every object; per-object `annotations` are merged over it. |
+| `server` | `""` | The OpenBAO endpoint. Required when a store or an issuer renders. |
+| `caBundle` | `""` | Base64 PEM of the CA that signed the server's certificate. Required when a store or an issuer renders. |
+| `vaultNamespace` | `""` | The OpenBAO namespace stores and issuers address. Empty on an install without namespaces. |
+| `kvMount` | `kv` | The KV v2 mount every store reads and writes. |
+| `storeSuffix` | `openbao` | A reader store is `<name>-<storeSuffix>`, distinguishable from a same-named store on another provider during a migration. |
+| `auth.mountPath` | `jwt` | This cluster's JWT auth mount — usually named after the cluster. Issuers log in on it as `/v1/auth/<mountPath>`. |
+| `auth.audience` | `openbao` | The stores' token audience. |
+| `auth.expirationSeconds` | `600` | The stores' token lifetime (600–86400). |
+| `auth.serviceAccount.name`, `.namespace` | `external-secrets`, `external-secrets` | The identity reader stores present. |
+| `writerAuthMount` | `""` | The mount writer stores log in on. Empty: `auth.mountPath`. |
+| `stores[].name` | *required* | The kind. The store is `<name>-<storeSuffix>`. |
+| `stores[].role` | the name | The OpenBAO role, so the policy that bounds a store is findable from the store. |
+| `stores[].vaultNamespace` | `vaultNamespace` | |
+| `stores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. |
+| `stores[].annotations` | `{}` | |
+| `writers[].name` | *required* | The writer; also its OpenBAO role. |
+| `writers[].namespace` | *required* | Where its ServiceAccount lives — the one namespace the store admits. |
+| `writers[].serviceAccount` | *required* | The identity the store presents. |
+| `writers[].environments` | *required* | One store `<name>-<environment>` per entry, addressing that OpenBAO namespace. |
+| `writers[].annotations` | `{}` | |
+| `pki.enabled` | `false` | Render the anchors, the issuers and the bundle. |
+| `pki.annotations` | `{}` | On the anchors and on the login's ServiceAccount, Role and RoleBinding. |
+| `pki.certManager.namespace` | `cert-manager` | Where the anchors, the login and namespaced issuers live; the default namespace of `certificates`. |
+| `pki.certManager.serviceAccountName` | `cert-manager` | cert-manager's own identity, bound to mint the login's tokens. |
+| `pki.issuerServiceAccount` | `openbao-issuer` | The identity issuers log in as; its Role and RoleBinding are `<name>-token`. |
+| `pki.vaultNamespace` | `""` | Default for every issuer; empty: `vaultNamespace`. |
+| `pki.trustAnchors` | *required* | Each: `name` (the ConfigMap), `certificate` (base64 PEM), optional `labels`, `annotations`. Public certificates only. |
+| `pki.rootKey` | `ca.crt` | The key each anchor's ConfigMap holds its certificate under. |
+| `pki.issuers` | `[]` | Each: `name`, `signPath` (the role that bounds what it signs), `role` (the auth role), optional `kind` (`ClusterIssuer` or `Issuer`), `audiences`, `vaultNamespace`, `annotations`. A Vault issuer's path is fixed, so a second chain or role is a second issuer. |
+| `pki.bundle.enabled` | `true` | Render the Bundle. |
+| `pki.bundle.name` | `openbao-private-ca` | |
+| `pki.bundle.annotations` | `{}` | |
+| `pki.bundle.extraSources` | `[]` | Sources placed BEFORE the anchors — during a migration, the old root or a Secret-held CA. |
+| `pki.bundle.target.key` | `ca-certificates.crt` | The key of the ConfigMap trust-manager writes in each namespace. |
+| `pki.bundle.target.namespaceSelector` | `{}` | Where it writes; `{}` is every namespace. |
+| `certificateDefaults.duration`, `.renewBefore` | `720h`, `240h` | Renewal at a third of the lifetime: two chances before anything expires. |
+| `certificateDefaults.privateKey` | ECDSA 256, rotation Always | Must match what the role signs. |
+| `certificates[].name` | *required* | |
+| `certificates[].namespace` | `pki.certManager.namespace` | |
+| `certificates[].commonName`, `.dnsNames` | one required | `dnsNames` defaults to `[commonName]`. |
+| `certificates[].secretName` | `<name>-tls` | |
+| `certificates[].issuerRef` | the first of `pki.issuers` | |
+| `certificates[].uris`, `.usages` | none | |
+| `certificates[].duration`, `.renewBefore`, `.privateKey` | `certificateDefaults` | |
+| `certificates[].annotations`, `.labels` | `{}` | |
+
+Two entries that would render the same object — two stores, a store and a
+writer, two anchors, two issuers, two certificates or their Secrets — fail
+the render instead of overwriting each other.
