@@ -2,28 +2,62 @@
 {{- $rc := .Values.restoreCheck }}
 {{- $ns := include "ops.namespace" . }}
 {{- $fetch := $rc.fetch }}
+{{- $canary := $rc.canary }}
+{{- $pki := $rc.pki }}
 {{- if and (not $fetch.s3.enabled) (not $fetch.command) }}
 {{- fail "restoreCheck.fetch needs either s3.enabled or an explicit command — the chart will not guess where your backups are" }}
 {{- end }}
 {{- if and $fetch.s3.enabled (not $fetch.s3.bucket) }}
 {{- fail "restoreCheck.fetch.s3.bucket is required when the s3 preset is on" }}
 {{- end }}
-{{- if and $rc.verifyCanary (not $rc.canary.namespaces) }}
-{{- fail "restoreCheck.canary.namespaces is empty — name the OpenBAO namespaces whose canary must survive a restore, or set verifyCanary: false" }}
+{{- if and $fetch.s3.enabled (not $fetch.s3.region) }}
+{{- fail "restoreCheck.fetch.s3.region is required when the s3 preset is on" }}
 {{- end }}
+{{- if not $rc.sealConfig }}
+{{- fail "restoreCheck.sealConfig is required — a snapshot opens only under the seal that wrapped its keyring (the same key, or a replica of it)" }}
+{{- end }}
+{{- if and (not $canary.enabled) (not $pki.enabled) }}
+{{- fail "restoreCheck needs canary.enabled or pki.enabled — a restore judged on nothing but the process exiting zero proves only that a process ran" }}
+{{- end }}
+{{- if $pki.enabled }}
+{{- if not $pki.trustAnchor.certificate }}
+{{- fail "restoreCheck.pki.trustAnchor.certificate is required — the walk starts from the root you hold, never from whatever the restored copy holds" }}
+{{- end }}
+{{- if not $pki.intermediate.issuer }}
+{{- fail "restoreCheck.pki.intermediate.issuer is required — the issuer the trust anchor signed" }}
+{{- end }}
+{{- if not $pki.issuing.issuerPrefix }}
+{{- fail "restoreCheck.pki.issuing.issuerPrefix is required — each namespace's issuing CA is <issuerPrefix>-<namespace>" }}
+{{- end }}
+{{- if not $pki.namespaces }}
+{{- fail "restoreCheck.pki.namespaces is empty — name the namespaces whose issuing CA must survive a restore" }}
+{{- end }}
+{{- if not $pki.domain }}
+{{- fail "restoreCheck.pki.domain is required — each leaf is issued for <role>.<namespace>.<domain>" }}
+{{- end }}
+{{- end }}
+{{- $maxAge := int $rc.maxSnapshotAgeSeconds }}
+{{- $maxAgeText := printf "%d seconds" $maxAge }}
+{{- if eq (mod $maxAge 3600) 0 }}
+{{- $maxAgeText = printf "%d hours" (div $maxAge 3600) }}
+{{- end }}
+{{- $anchorName := $pki.trustAnchor.name | default "the trust anchor" }}
+{{- $intermediate := printf "%s/issuer/%s/json" $pki.intermediate.mount $pki.intermediate.issuer }}
+{{- $issuing := printf "$env/%s/issuer/%s-$env/json" $pki.issuing.mount $pki.issuing.issuerPrefix }}
+{{- $refusalNs := $pki.refusals.namespace | default (first ($pki.namespaces | default (list ""))) }}
+{{- $refusalName := printf "%s.%s.%s" $pki.role $refusalNs $pki.domain }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ $rc.serviceAccountName }}
   namespace: {{ $ns }}
-  {{- with include "ops.annotations" (dict "root" $ "extra" $rc.serviceAccountAnnotations) | fromYaml }}
+  labels:
+    {{- include "ops.labels" $rc.serviceAccountName | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" (mergeOverwrite (deepCopy ($rc.annotations | default dict)) ($rc.serviceAccountAnnotations | default dict))) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  labels:
-    app.kubernetes.io/name: {{ $rc.serviceAccountName }}
-    app.kubernetes.io/part-of: openbao
 automountServiceAccountToken: false
 ---
 apiVersion: v1
@@ -31,6 +65,8 @@ kind: ConfigMap
 metadata:
   name: {{ $rc.serviceAccountName }}
   namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $rc.serviceAccountName | nindent 4 }}
   {{- with include "ops.annotations" (dict "root" $ "extra" $rc.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -40,52 +76,52 @@ data:
          an emptyDir that dies with the pod. It is deliberately unreachable
          from anywhere — it holds a full plaintext copy of production. */}}
   scratch.hcl: |
-    ui = false
+    ui            = false
     disable_mlock = true
-    api_addr     = "http://127.0.0.1:8200"
-    cluster_addr = "http://127.0.0.1:8201"
-
+    api_addr      = "http://127.0.0.1:8200"
+    cluster_addr  = "http://127.0.0.1:8201"
     listener "tcp" {
       address     = "127.0.0.1:8200"
       tls_disable = true
     }
-
     storage "raft" {
       path    = "/data"
       node_id = {{ $rc.nodeId | quote }}
     }
-{{ if $rc.sealConfig }}{{ $rc.sealConfig | indent 4 }}{{ end }}
-    # Declared, not created through the API: OpenBAO refuses API-created
-    # audit devices, so a restored copy with no device in its config would
-    # have an audit table production does not have.
-    audit "file" "to-stdout" {
-      options {
-        file_path = "stdout"
-      }
-    }
+    {{- $rc.sealConfig | trimSuffix "\n" | nindent 4 }}
+    {{- with $rc.auditConfig }}
+    # As production declares it, so the restored audit table finds its device.
+    {{- . | trimSuffix "\n" | nindent 4 }}
+    {{- end }}
+  {{- if $pki.enabled }}
+  {{- $anchorPEM := $pki.trustAnchor.certificate | b64dec }}
+  {{- /* The root, in the shape `bao pki verify-sign` reads an issuer in:
+         certificate and ca_chain. */}}
+  trust-anchor.json: |
+    {{ dict "certificate" $anchorPEM "ca_chain" (list $anchorPEM) | toJson }}
+  {{- end }}
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: {{ $rc.serviceAccountName }}
   namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $rc.serviceAccountName | nindent 4 }}
   {{- with include "ops.annotations" (dict "root" $ "extra" $rc.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  labels:
-    app.kubernetes.io/name: {{ $rc.serviceAccountName }}
-    app.kubernetes.io/part-of: openbao
 spec:
   schedule: {{ $rc.schedule | quote }}
-  timeZone: {{ $rc.timeZone | quote }}
+  timeZone: {{ $rc.timeZone }}
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 3600
+  startingDeadlineSeconds: {{ $rc.startingDeadlineSeconds }}
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 1
+      backoffLimit: {{ $rc.backoffLimit }}
       activeDeadlineSeconds: {{ $rc.activeDeadlineSeconds }}
       template:
         metadata:
@@ -106,56 +142,55 @@ spec:
           securityContext:
             {{- include "ops.podSecurityContext" $ | nindent 12 }}
           initContainers:
+            {{- /* The newest snapshot, refused when it is older than
+                   maxSnapshotAgeSeconds. */}}
             - name: fetch
-              image: {{ include "ops.image" (dict "image" $fetch.image) | quote }}
-              imagePullPolicy: {{ $fetch.image.pullPolicy }}
+              {{- include "ops.imageLines" $fetch.image | nindent 14 }}
               {{- if $fetch.s3.enabled }}
-              command: ["/bin/sh", "-ec"]
-              args:
+              command:
+                - /bin/sh
+                - -ec
                 - |
-                  newest=$(aws s3api list-objects-v2 \
-                    --bucket {{ $fetch.s3.bucket }} --prefix {{ $fetch.s3.prefix }} \
-                    --query 'sort_by(Contents,&LastModified)[-1].[Key,LastModified]' \
-                    --output text)
+                  newest=$(aws s3api list-objects-v2 --bucket {{ $fetch.s3.bucket }} --prefix {{ $fetch.s3.prefix }} \
+                    --query 'sort_by(Contents, &LastModified)[-1].[Key, LastModified]' --output text)
                   set -- $newest
                   key=$1
                   age=$(( $(date +%s) - $(date -d "$2" +%s) ))
-                  echo "newest snapshot: $key, $((age/60)) minutes old"
-
-                  # A stale newest object means the snapshot job stopped and
-                  # nobody noticed. That is the failure this check exists to
-                  # find, so it fails here rather than passing on old data.
-                  if [ "$age" -gt {{ $rc.maxSnapshotAgeSeconds }} ]; then
-                    echo "no snapshot within {{ $rc.maxSnapshotAgeSeconds }}s: the snapshot job is not running" >&2
+                  echo "newest snapshot: $key, $((age / 60)) minutes old"
+                  if [ "$age" -gt {{ $maxAge }} ]; then
+                    echo "the newest snapshot is older than {{ $maxAgeText }}: the snapshot job is not running"
                     exit 1
                   fi
-
                   aws s3 cp "s3://{{ $fetch.s3.bucket }}/$key" /work/openbao.snap --no-progress
                   echo "$key" > /work/key
+              env:
+                - name: AWS_REGION
+                  value: {{ $fetch.s3.region }}
+                - name: HOME
+                  value: /tmp
+                {{- with $fetch.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
               {{- else }}
               {{- /* The contract for a replacement: write the newest
                      snapshot to /work/openbao.snap and its name to
                      /work/key, and FAIL if the newest is older than
-                     restoreCheck.maxSnapshotAgeSeconds. */}}
+                     $MAX_SNAPSHOT_AGE_SECONDS. */}}
               command:
                 {{- toYaml $fetch.command | nindent 16 }}
               {{- with $fetch.args }}
               args:
                 {{- toYaml . | nindent 16 }}
               {{- end }}
-              {{- end }}
               env:
                 - name: MAX_SNAPSHOT_AGE_SECONDS
-                  value: {{ $rc.maxSnapshotAgeSeconds | quote }}
+                  value: {{ $maxAge | quote }}
                 - name: HOME
                   value: /tmp
-                {{- if $fetch.s3.enabled }}
-                - name: AWS_REGION
-                  value: {{ $fetch.s3.region | quote }}
-                {{- end }}
                 {{- with $fetch.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
+              {{- end }}
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -165,14 +200,13 @@ spec:
                 {{- toYaml $fetch.resources | nindent 16 }}
               securityContext:
                 {{- include "ops.containerSecurityContext" $ | nindent 16 }}
-            {{- /* A native sidecar: it starts before `check` and Kubernetes
-                   stops it when `check` exits, so the scratch server's life
-                   is exactly the life of the test. */}}
+            {{- /* The scratch server: a native sidecar. It starts before
+                   `check` and Kubernetes stops it when `check` exits, so its
+                   life is exactly the life of the test. */}}
             - name: server
               restartPolicy: Always
-              image: {{ include "ops.image" (dict "image" $rc.image) | quote }}
-              imagePullPolicy: {{ $rc.image.pullPolicy }}
-              command: ["bao", "server", "-config=/etc/openbao/scratch.hcl"]
+              {{- include "ops.imageLines" $rc.image | nindent 14 }}
+              command: [bao, server, -config=/etc/openbao/scratch.hcl]
               {{- with $rc.serverEnv }}
               env:
                 {{- toYaml . | nindent 16 }}
@@ -191,86 +225,149 @@ spec:
                 {{- include "ops.containerSecurityContext" $ | nindent 16 }}
           containers:
             - name: check
-              image: {{ include "ops.image" (dict "image" $rc.image) | quote }}
-              imagePullPolicy: {{ $rc.image.pullPolicy }}
-              command: ["/bin/sh", "-ec"]
-              args:
+              {{- include "ops.imageLines" $rc.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
                 - |
-                  # `bao status` exits 0 unsealed, 2 sealed or uninitialised,
-                  # 1 unreachable. Waiting on the right one of those is the
-                  # difference between a flaky check and a real one.
+                  # bao status: 0 unsealed, 2 sealed or uninitialized, 1 unreachable.
                   wait_for() {
-                    want=$1
                     i=0
-                    while [ $i -lt 90 ]; do
-                      bao status >/dev/null 2>&1 && return 0
-                      rc=$?
-                      [ "$want" = any ] && [ "$rc" = 2 ] && return 0
-                      i=$((i+1))
+                    while [ "$i" -lt 90 ]; do
+                      rc=0
+                      bao status >/dev/null 2>&1 || rc=$?
+                      case "$1:$rc" in any:0|any:2|unsealed:0) return 0 ;; esac
+                      i=$((i + 1))
                       sleep 2
                     done
-                    echo "timed out waiting for the scratch server ($want)" >&2
-                    exit 1
+                    echo "the scratch server never became $1 (bao status exit $rc)"
+                    bao status || true
+                    return 1
                   }
 
                   wait_for any
-
-                  # Throwaway recovery shares: this server exists for the
-                  # next ninety seconds and its keys are never printed.
-                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json \
-                    | sed -n 's/.*"root_token"[^"]*"\([^"]*\)".*/\1/p')
-                  [ -n "$BAO_TOKEN" ] || { echo "scratch init produced no token" >&2; exit 1; }
+                  # Recovery shares of a throwaway install: never printed, gone with the pod.
+                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json |
+                    sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p')
+                  [ -n "$BAO_TOKEN" ] || { echo "initializing the scratch server returned no root token"; exit 1; }
                   export BAO_TOKEN
                   wait_for unsealed
 
-                  # -force: the snapshot carries production's own keyring.
-                  # Judge by exit code — 2.x prints a spurious "Error
-                  # properly closing policy file" on success.
+                  # -force: the snapshot carries production's keyring, not the scratch's.
+                  # Judge by exit code; 2.x prints "Error properly closing policy file" on success.
                   bao operator raft snapshot restore -force /work/openbao.snap
-
-                  # The scratch root token died with the restore. From here
-                  # the only way in is what the SNAPSHOT grants, which is
-                  # the point: this proves the restored copy is usable, not
-                  # that a fresh server is.
                   unset BAO_TOKEN
                   wait_for unsealed
 
+                  # The scratch root token died with the restore; from here on only what the
+                  # snapshot itself grants.
                   i=0
-                  while [ $i -lt 30 ]; do
-                    BAO_TOKEN=$(bao write -field=token \
-                      auth/{{ $.Values.auth.mountPath }}/login \
-                      role={{ $rc.baoRole }} \
-                      jwt=@/var/run/openbao/token 2>/dev/null) && break
-                    i=$((i+1))
+                  until BAO_TOKEN=$(bao write -field=token auth/{{ $.Values.auth.mountPath }}/login role={{ $rc.baoRole }} \
+                    jwt=@{{ include "ops.tokenPath" $ }} 2>/tmp/login.err); do
+                    i=$((i + 1))
+                    if [ "$i" -ge 30 ]; then
+                      echo "cannot log in to the restored copy:"
+                      cat /tmp/login.err
+                      exit 1
+                    fi
                     sleep 2
                   done
-                  [ -n "${BAO_TOKEN:-}" ] || { echo "cannot log in to the restored copy" >&2; exit 1; }
                   export BAO_TOKEN
-                  {{- if $rc.verifyCanary }}
+                  {{- if $canary.enabled }}
+                  {{- if $canary.namespaces }}
 
-                  # A canary read per namespace: the restore is judged on
-                  # data being there, not on the process exiting zero.
-                  {{- range $cns := $rc.canary.namespaces }}
-                  got=$(bao read -namespace={{ $cns }} -field={{ $rc.canary.field }} {{ $rc.canary.kvMount }}/data/{{ $rc.canary.path }})
-                  echo "canary {{ $cns }}: $got"
-                  [ -n "$got" ] || { echo "canary missing in {{ $cns }}" >&2; exit 1; }
-                  {{- end }}
-                  {{- end }}
-                  {{- if $rc.verifyIssue }}
+                  namespaces={{ join " " $canary.namespaces | quote }}
+                  {{- else }}
 
-                  # Issuing proves the PKI survived as an authority, not
-                  # merely as bytes: keys, issuers and roles all restored.
-                  {{- range $ins := $rc.issue.namespaces }}
-                  serial=$(bao write -namespace={{ $ins }} -format=json {{ $rc.issue.path }} \
-                    common_name="{{ $rc.issue.commonNamePrefix }}.{{ $ins }}.{{ $rc.issue.domain }}" ttl={{ $rc.issue.ttl }} \
-                    | sed -n 's/.*"serial_number"[^"]*"\([^"]*\)".*/\1/p')
-                  [ -n "$serial" ] || { echo "the restored PKI in {{ $ins }} issued nothing" >&2; exit 1; }
-                  echo "issued in {{ $ins }}: $serial"
+                  namespaces=$(bao list -format=json sys/namespaces | sed -n 's/^ *"\([^"]*\)\/",\{0,1\} *$/\1/p')
+                  [ -n "$namespaces" ] || { echo "the restored copy lists no namespaces"; exit 1; }
                   {{- end }}
+                  for ns in $namespaces; do
+                    got=$(bao read -namespace="$ns" -field=data {{ $canary.kvMount }}/data/{{ $canary.path }})
+                    if [ "$got" != "map[namespace:$ns]" ]; then
+                      echo "namespace $ns: restore canary reads '$got'"
+                      exit 1
+                    fi
+                  done
+                  {{- else }}
+                  namespaces={{ join " " $pki.namespaces | quote }}
+                  {{- end }}
+                  {{- if $pki.enabled }}
+
+                  verify_link() {
+                    possible_issuer=$1
+                    possible_issued=$2
+                    result=$(bao pki verify-sign -format=json "$possible_issuer" "$possible_issued")
+                    for field in signature_match path_match key_id_match subject_match trust_match; do
+                      echo "$result" | grep -Eq "\"$field\": *true" || {
+                        echo "$possible_issuer did not validate $possible_issued ($field): $result"
+                        exit 1
+                      }
+                    done
+                  }
+
+                  # Verify the recovered hierarchies cryptographically. trust_match also
+                  # evaluates path length and name constraints in the supplied chain.
+
+                  # The hierarchy, walked from the ROOT YOU TRUST. OpenBAO typically
+                  # holds only a nameless, keyless copy of that root (its key is kept
+                  # elsewhere), and a walk that ends at whatever the snapshot holds proves
+                  # the copy agrees with itself, not that it is ours. So the top is
+                  # the committed root certificate, staged in this token's
+                  # cubbyhole because verify-sign reads both ends through the API;
+                  # path_match on the first link then requires the restored domain
+                  # intermediate's ca_chain to carry that exact certificate.
+                  anchor=cubbyhole/restore-check/anchor
+                  bao write "$anchor" - </etc/restore-check/trust-anchor.json >/dev/null
+                  verify_link "$anchor" "$anchor"
+                  verify_link "$anchor" {{ $intermediate }}
+                  for env in {{ join " " $pki.namespaces }}; do
+                    verify_link \
+                      {{ $intermediate }} \
+                      "{{ $issuing }}"
+                  done
+                  {{- if $pki.refusals.enabled }}
+
+                  must_refuse() {
+                    label=$1
+                    shift
+                    if bao write -namespace={{ $refusalNs }} {{ $pki.issuing.mount }}/issue/{{ $pki.role }} "$@" >/tmp/invalid-pki.out 2>&1; then
+                      echo "the restored fixed-name role accepted $label"
+                      cat /tmp/invalid-pki.out
+                      exit 1
+                    fi
+                  }
+                  must_refuse wildcard common_name='*.{{ $refusalName }}'
+                  must_refuse subdomain common_name=child.{{ $refusalName }}
+                  must_refuse ip-san common_name={{ $refusalName }} ip_sans=127.0.0.1
+                  must_refuse uri-san common_name={{ $refusalName }} uri_sans=spiffe://external.invalid/workload
+                  must_refuse email-san common_name={{ $refusalName }} alt_names=user@example.com
                   {{- end }}
 
-                  bao token revoke -self
-                  echo "restore check passed: $(cat /work/key)"
+                  # One leaf per environment from the {{ $pki.role }} role, which
+                  # must point at that environment's issuing CA.
+                  # verify-sign reads the issued end as certificate plus ca_chain, and
+                  # {{ $pki.issuing.mount }}/cert/<serial> returns no ca_chain, so the issue response is
+                  # staged in the cubbyhole and its data read back as the leaf.
+                  for env in {{ join " " $pki.namespaces }}; do
+                    leaf=cubbyhole/restore-check/leaf-$env
+                    bao write -namespace="$env" -format=json {{ $pki.issuing.mount }}/issue/{{ $pki.role }} \
+                      common_name="{{ $pki.role }}.$env.{{ $pki.domain }}" ttl={{ $pki.ttl }} >/tmp/issued.json
+                    bao write cubbyhole/restore-check/issued - </tmp/issued.json >/dev/null
+                    bao read -format=json -field=data cubbyhole/restore-check/issued | bao write "$leaf" - >/dev/null
+                    rm -f /tmp/issued.json
+                    serial=$(bao read -field=serial_number "$leaf")
+                    stored=$(bao read -namespace="$env" -field=certificate "{{ $pki.issuing.mount }}/cert/$serial" 2>/dev/null) || stored=
+                    [ -n "$stored" ] && [ "$stored" = "$(bao read -field=certificate "$leaf")" ] || {
+                      echo "the restored $env issuer did not store the leaf it issued (serial '$serial')"
+                      exit 1
+                    }
+                    verify_link "{{ $issuing }}" "$leaf"
+                  done
+                  {{- end }}
+                  bao token revoke -self >/dev/null
+
+                  echo "restore check passed: $(cat /work/key) opened{{ with $rc.sealDescription }} with {{ . }}{{ end }};{{ if $canary.enabled }} canaries read{{ end }}{{ if and $canary.enabled $pki.enabled }} and{{ end }}{{ if $pki.enabled }} the chain verified from {{ $anchorName }} to a fresh leaf{{ end }}, in:" $namespaces
               env:
                 - name: BAO_ADDR
                   value: http://127.0.0.1:8200
@@ -283,7 +380,10 @@ spec:
                 - name: tmp
                   mountPath: /tmp
                 - name: login
-                  mountPath: /var/run/openbao
+                  mountPath: {{ $.Values.auth.tokenMountPath }}
+                  readOnly: true
+                - name: config
+                  mountPath: /etc/restore-check
                   readOnly: true
               resources:
                 {{- toYaml $rc.resources | nindent 16 }}

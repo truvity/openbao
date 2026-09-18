@@ -1,0 +1,5 @@
+# A certificate that names no host identifies nothing.
+serverCertificate:
+  enabled: true
+  serviceDnsNames: false
+  issuerRef: {name: example-ca}

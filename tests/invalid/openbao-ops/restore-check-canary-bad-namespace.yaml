@@ -1,0 +1,9 @@
+# A namespace name is spliced into a shell script: no spaces, no quotes.
+restoreCheck:
+  enabled: true
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealConfig: |
+    seal "awskms" {}
+  canary:
+    namespaces: ["devel prod"]

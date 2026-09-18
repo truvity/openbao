@@ -22,7 +22,7 @@ metadata:
     app.kubernetes.io/part-of: openbao
 spec:
   schedule: "17 */6 * * *"
-  timeZone: "Etc/UTC"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 1
@@ -48,35 +48,24 @@ spec:
               type: RuntimeDefault
           initContainers:
             - name: snapshot
-              image: "openbao/openbao:2.6.2"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   date -u +%Y%m%dT%H%M%SZ > /work/taken-at
-
-                  BAO_TOKEN=$(bao write -field=token \
-                    auth/jwt/login \
-                    role=openbao-snapshot \
-                    jwt=@/var/run/openbao/token)
+                  BAO_TOKEN="$(bao write -field=token auth/jwt/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
                   export BAO_TOKEN
-
                   bao operator raft snapshot save /work/openbao.snap
-                  # The token dies with the step that needed it.
                   bao token revoke -self
-
-                  # The archive carries its own SHA256SUMS. Verify here, so
-                  # a truncated or corrupt snapshot never reaches the store
-                  # and never counts as a backup.
                   mkdir /work/check
                   tar -xzf /work/openbao.snap -C /work/check
                   (cd /work/check && sha256sum -c SHA256SUMS)
                   rm -rf /work/check
-
                   echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
               env:
                 - name: BAO_ADDR
-                  value: "https://openbao-active.openbao.svc:8200"
+                  value: https://openbao-active.openbao.svc:8200
                 - name: BAO_CACERT
                   value: /tls/ca.crt
                 - name: HOME
@@ -104,21 +93,18 @@ spec:
                     - ALL
           containers:
             - name: upload
-              image: "amazon/aws-cli:2.32.7"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   key="raft/$(cat /work/taken-at).snap"
-                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" \
-                    --checksum-algorithm SHA256 --no-progress
+                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
-                - name: SNAPSHOT_PREFIX
-                  value: "raft/"
+                - name: AWS_REGION
+                  value: eu-example-1
                 - name: HOME
                   value: /tmp
-                - name: AWS_REGION
-                  value: "eu-example-1"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -149,7 +135,7 @@ spec:
               projected:
                 sources:
                   - serviceAccountToken:
-                      audience: "openbao"
+                      audience: openbao
                       expirationSeconds: 600
                       path: token
             - name: ca
@@ -171,7 +157,7 @@ metadata:
     app.kubernetes.io/part-of: openbao
 spec:
   schedule: "47 3 * * 0"
-  timeZone: "Etc/UTC"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 1
@@ -197,35 +183,24 @@ spec:
               type: RuntimeDefault
           initContainers:
             - name: snapshot
-              image: "openbao/openbao:2.6.2"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   date -u +%Y%m%dT%H%M%SZ > /work/taken-at
-
-                  BAO_TOKEN=$(bao write -field=token \
-                    auth/jwt/login \
-                    role=openbao-snapshot \
-                    jwt=@/var/run/openbao/token)
+                  BAO_TOKEN="$(bao write -field=token auth/jwt/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
                   export BAO_TOKEN
-
                   bao operator raft snapshot save /work/openbao.snap
-                  # The token dies with the step that needed it.
                   bao token revoke -self
-
-                  # The archive carries its own SHA256SUMS. Verify here, so
-                  # a truncated or corrupt snapshot never reaches the store
-                  # and never counts as a backup.
                   mkdir /work/check
                   tar -xzf /work/openbao.snap -C /work/check
                   (cd /work/check && sha256sum -c SHA256SUMS)
                   rm -rf /work/check
-
                   echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
               env:
                 - name: BAO_ADDR
-                  value: "https://openbao-active.openbao.svc:8200"
+                  value: https://openbao-active.openbao.svc:8200
                 - name: BAO_CACERT
                   value: /tls/ca.crt
                 - name: HOME
@@ -253,21 +228,18 @@ spec:
                     - ALL
           containers:
             - name: upload
-              image: "amazon/aws-cli:2.32.7"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   key="weekly/$(cat /work/taken-at).snap"
-                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" \
-                    --checksum-algorithm SHA256 --no-progress
+                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
-                - name: SNAPSHOT_PREFIX
-                  value: "weekly/"
+                - name: AWS_REGION
+                  value: eu-example-1
                 - name: HOME
                   value: /tmp
-                - name: AWS_REGION
-                  value: "eu-example-1"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -298,7 +270,7 @@ spec:
               projected:
                 sources:
                   - serviceAccountToken:
-                      audience: "openbao"
+                      audience: openbao
                       expirationSeconds: 600
                       path: token
             - name: ca

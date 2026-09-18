@@ -1,0 +1,6 @@
+# Alerting before renewal has even started is noise.
+certificateExpiry:
+  enabled: true
+  alertBeforeSeconds: 2592000
+  alert:
+    sns: {enabled: true, topicArn: t, region: r}

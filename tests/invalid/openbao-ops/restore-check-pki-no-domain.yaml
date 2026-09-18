@@ -1,0 +1,12 @@
+restoreCheck:
+  enabled: true
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealConfig: |
+    seal "awskms" {}
+  pki:
+    enabled: true
+    trustAnchor: {certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=}
+    intermediate: {issuer: example-2026}
+    issuing: {issuerPrefix: example-2026}
+    namespaces: [devel]

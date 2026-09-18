@@ -1,11 +1,11 @@
 {{/*
 openbao-ops helpers.
 
-This chart runs once, beside the OpenBAO server, and owns the operational
-half the upstream server chart leaves out: proving the backups exist,
-proving one of them can still be opened, keeping the traffic that reaches
-the server to what should, and reloading the serving certificate when it
-is renewed.
+This chart runs beside the OpenBAO server, and owns the operational half
+the upstream server chart leaves out: proving the backups exist, proving
+one of them can still be opened, noticing a serving certificate that stops
+renewing, keeping the traffic that reaches the server to what should, and
+reloading the serving certificate when it is renewed.
 
 The server itself stays upstream's. What is here is what an install is
 actually judged on when it fails.
@@ -24,7 +24,7 @@ actually judged on when it fails.
 {{- if .Values.server.address -}}
 {{- .Values.server.address -}}
 {{- else -}}
-{{- printf "https://%s.%s.svc:8200" .Values.server.activeService (include "ops.namespace" .) -}}
+{{- printf "https://%s.%s.svc:%d" .Values.server.activeService (include "ops.namespace" .) (int .Values.server.apiPort) -}}
 {{- end -}}
 {{- end -}}
 
@@ -60,11 +60,17 @@ name: login
 projected:
   sources:
     - serviceAccountToken:
-        audience: {{ .Values.auth.audience | quote }}
+        audience: {{ .Values.auth.audience }}
         expirationSeconds: {{ .Values.auth.expirationSeconds }}
         path: token
 {{- end -}}
 
+{{/* The login token's path inside a job's container. */}}
+{{- define "ops.tokenPath" -}}
+{{- printf "%s/token" (trimSuffix "/" .Values.auth.tokenMountPath) -}}
+{{- end -}}
+
+{{/* An image reference; a digest wins over a tag. */}}
 {{- define "ops.image" -}}
 {{- $img := .image -}}
 {{- if $img.digest -}}
@@ -75,8 +81,42 @@ projected:
 {{- end -}}
 
 {{/*
+A container's image lines: the reference, and a pull policy only when one
+is set — an unset field takes the cluster's default for the tag.
+*/}}
+{{- define "ops.imageLines" -}}
+image: {{ include "ops.image" (dict "image" .) }}
+{{- with .pullPolicy }}
+imagePullPolicy: {{ . }}
+{{- end }}
+{{- end -}}
+
+{{/* The labels every object of one part carries. */}}
+{{- define "ops.labels" -}}
+app.kubernetes.io/name: {{ . }}
+app.kubernetes.io/part-of: openbao
+{{- end -}}
+
+{{/*
+Renewal lead time in seconds, for the expiry alert's text: explicit, or
+derived from serverCertificate.renewBefore when that is whole hours.
+*/}}
+{{- define "ops.renewBeforeSeconds" -}}
+{{- $e := .Values.certificateExpiry -}}
+{{- if $e.renewBeforeSeconds -}}
+{{- int $e.renewBeforeSeconds -}}
+{{- else -}}
+{{- $rb := toString .Values.serverCertificate.renewBefore -}}
+{{- if not (regexMatch "^[0-9]+h$" $rb) -}}
+{{- fail (printf "certificateExpiry.renewBeforeSeconds is required: serverCertificate.renewBefore %q is not whole hours" $rb) -}}
+{{- end -}}
+{{- mul (trimSuffix "h" $rb | atoi) 3600 -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 The tls-reload sidecar, as a fragment to splice into the UPSTREAM server
-chart's server.extraContainers.
+chart's server.extraContainers (docs/server.md).
 
 It exists because of a specific, invisible failure: the upstream chart runs
 `bao server` under a `/bin/sh -ec` wrapper, so PID 1 is the shell and a
@@ -92,25 +132,19 @@ Requires shareProcessNamespace: true on the server pod.
 {{- define "ops.tlsReloadContainer" -}}
 {{- $r := .Values.tlsReload -}}
 - name: tls-reload
-  image: {{ include "ops.image" (dict "image" $r.image) | quote }}
-  imagePullPolicy: {{ $r.image.pullPolicy }}
+  {{- include "ops.imageLines" $r.image | nindent 2 }}
   command: ["/bin/sh", "-c"]
   args:
     - |
-      set -u
       crt={{ $r.certPath }}
       last=$(cksum "$crt")
-      while true; do
-        sleep {{ $r.intervalSeconds }}
-        # A read during cert-manager's write is expected, not an error.
+      while sleep {{ $r.intervalSeconds }}; do
         cur=$(cksum "$crt") || continue
         [ "$cur" = "$last" ] && continue
         for p in /proc/[0-9]*; do
           cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
           case "$cmd" in
-            "bao server "*)
-              kill -HUP "${p#/proc/}" && echo "tls-reload: certificate changed, reloaded bao (pid ${p#/proc/})"
-              ;;
+            "bao server "*) kill -HUP "${p#/proc/}" && echo "{{ base $r.mountPath }} changed: reloaded bao (pid ${p#/proc/})" ;;
           esac
         done
         last=$cur

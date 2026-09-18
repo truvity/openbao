@@ -14,9 +14,9 @@ Three things it renders, and the reason each is here rather than hand-written:
   writers      the asymmetric case: a store that presents the WRITER's own
                ServiceAccount token to the environment it writes into. One
                per (writer, environment).
-  pki          a cert-manager issuer backed by OpenBAO, the trust bundle
-               that makes what it issues verifiable, and the certificates
-               that prove both work.
+  pki          cert-manager issuers backed by OpenBAO, the trust anchors
+               and bundle that make what they issue verifiable, and the
+               certificates that prove both work.
 */}}
 
 {{- define "consumers.annotations" -}}

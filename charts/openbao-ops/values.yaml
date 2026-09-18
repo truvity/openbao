@@ -3,20 +3,31 @@
 # The upstream chart (openbao/openbao) installs the server. This one runs
 # beside it and owns what an install is actually judged on when it fails:
 #
-#   snapshot        backups, verified before they are stored — an archive
-#                   nobody has opened is a guess, not a backup.
-#   restoreCheck    a weekly restore into a throwaway server that reads the
-#                   data back. It is the only evidence the backups work.
-#   networkPolicy   the server reachable from clients and peers, the jobs
-#                   from nothing at all.
+#   snapshot           backups, verified before they are stored — an archive
+#                      nobody has opened is a guess, not a backup.
+#   restoreCheck       a weekly restore into a throwaway server that reads
+#                      the data back and, optionally, walks the restored PKI
+#                      from a root you committed. It is the only evidence the
+#                      backups work.
+#   certificateExpiry  a daily look at the serving certificate's end date,
+#                      alerting weeks before a renewal that keeps failing
+#                      turns into an outage.
+#   networkPolicy      the server reachable from clients and peers, the jobs
+#                      from nothing at all.
 #   serverCertificate + tlsReload
-#                   a serving certificate, and the sidecar that makes a
-#                   renewal take effect without a restart.
+#                      a serving certificate, and the sidecar that makes a
+#                      renewal take effect without a restart.
+#
+# Every part is off until enabled, so one install can carry any subset —
+# including a second install that renders only the certificate, where the
+# certificate is owned by a different deployment than the jobs.
 #
 # Nothing here names a cloud, a bucket, a key or a region. Object storage
-# is a container you supply with a documented contract, and an AWS S3
-# preset ships as one implementation of it.
+# and alerting are containers you supply with a documented contract, and an
+# AWS preset (S3, SNS) ships as one implementation of each.
 
+# Added to every object this chart renders. Per-part `annotations` are
+# merged over it.
 commonAnnotations: {}
 
 # Where the server and these jobs live. Empty: the release namespace.
@@ -37,6 +48,12 @@ server:
   # a client uses to verify the server.
   tlsSecretName: openbao-tls
   caKey: ca.crt
+  # The name a job verifies the server's certificate against, when that is
+  # not the name it dials (BAO_TLS_SERVER_NAME). Set it when the serving
+  # certificate names only the external endpoint — for instance because
+  # its chain is name-constrained and cannot carry in-cluster names — and
+  # the jobs dial the active Service by its cluster name.
+  tlsServerName: ""
   # How the server's pods are labelled, for the network policies.
   podLabels:
     app.kubernetes.io/name: openbao
@@ -49,6 +66,8 @@ auth:
   # cannot be replayed against the Kubernetes API.
   audience: openbao
   expirationSeconds: 600
+  # Where the projected login token is mounted in the jobs' containers.
+  tokenMountPath: /var/run/openbao
 
 # ---------------------------------------------------------------------------
 snapshot:
@@ -82,7 +101,7 @@ snapshot:
     repository: openbao/openbao
     tag: "2.6.2"
     digest: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: ""
   resources:
     requests:
       cpu: 10m
@@ -92,14 +111,14 @@ snapshot:
 
   # Where a verified snapshot goes. The container's contract: read
   # /work/openbao.snap and /work/taken-at, store the bytes under
-  # <SNAPSHOT_PREFIX><taken-at>.snap. Supply `command` for any store, or
+  # $SNAPSHOT_PREFIX<taken-at>.snap. Supply `command` for any store, or
   # turn on the s3 preset below.
   upload:
     image:
       repository: amazon/aws-cli
-      tag: "2.32.7"
+      tag: "2.36.44"
       digest: ""
-      pullPolicy: IfNotPresent
+      pullPolicy: ""
     command: []
     args: []
     env: []
@@ -121,11 +140,15 @@ restoreCheck:
   serviceAccountName: openbao-restore-check
   serviceAccountAnnotations: {}
   annotations: {}
+  # The role the check logs in as on the RESTORED copy. It needs to read
+  # the canaries and, with pki.enabled, issue from the check's PKI role.
   baoRole: openbao-restore-check
 
   schedule: "37 5 * * 0"
   timeZone: Etc/UTC
+  startingDeadlineSeconds: 3600
   activeDeadlineSeconds: 1200
+  backoffLimit: 1
   workSizeLimit: 2Gi
   nodeId: restore-check
   nodeSelector: {}
@@ -140,12 +163,27 @@ restoreCheck:
     repository: openbao/openbao
     tag: "2.6.2"
     digest: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: ""
 
   # Raw HCL for the scratch server's seal stanza. Empty: no seal, which
   # works for an unsealed test but not for a snapshot from an auto-unsealed
-  # cluster — that needs the same seal, or a replica of its key.
+  # cluster — that needs the same seal, or a replica of its key. Pointing
+  # it at a key replica in another region proves a snapshot opens without
+  # the primary region.
   sealConfig: ""
+  # How the pass line names that seal, e.g. "the unseal key's replica in
+  # <region>". Empty: not named.
+  sealDescription: ""
+  # Raw HCL for the scratch server's audit devices. OpenBAO refuses
+  # API-created audit devices, so the restored audit table only finds its
+  # device if the scratch server declares it exactly as production does.
+  auditConfig: |
+    audit "file" "to-stdout" {
+      options {
+        file_path = "stdout"
+      }
+    }
+  # Environment for the scratch server, e.g. the seal's region.
   serverEnv: []
   serverResources:
     requests:
@@ -155,20 +193,20 @@ restoreCheck:
       memory: 512Mi
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 10m
+      memory: 64Mi
     limits:
       memory: 256Mi
 
   # Where the newest snapshot comes from. The container's contract: write
   # it to /work/openbao.snap and its name to /work/key, and FAIL if the
-  # newest is older than maxSnapshotAgeSeconds.
+  # newest is older than $MAX_SNAPSHOT_AGE_SECONDS.
   fetch:
     image:
       repository: amazon/aws-cli
-      tag: "2.32.7"
+      tag: "2.36.44"
       digest: ""
-      pullPolicy: IfNotPresent
+      pullPolicy: ""
     command: []
     args: []
     env: []
@@ -184,24 +222,127 @@ restoreCheck:
       region: ""
       prefix: raft/
 
-  # Read a known value back per namespace. Judging a restore on the process
-  # exiting zero proves only that a process ran.
-  verifyCanary: true
+  # Read a known value back in every namespace. Judging a restore on the
+  # process exiting zero proves only that a process ran.
+  #
+  # The canary's contract: in each namespace, <kvMount>/<path> is a KV v2
+  # secret whose data is exactly {namespace: <that namespace's name>}. A
+  # value that names its own namespace also catches a restore that mixed
+  # namespaces up.
   canary:
+    enabled: true
     kvMount: kv
     path: restore-canary
-    field: data
+    # Empty: every namespace the restored copy lists (sys/namespaces).
+    # Listing none is then a failure, not a pass.
     namespaces: []
 
-  # Issue a certificate from the restored PKI. This proves it survived as
-  # an authority — keys, issuers and roles — not merely as bytes.
-  verifyIssue: false
-  issue:
+  # Walk the restored PKI from a root YOU hold, then issue from it. This
+  # proves the PKI survived as an authority — keys, issuers and roles — not
+  # merely as bytes, and that it is still the hierarchy you trust rather
+  # than one that merely agrees with itself.
+  #
+  # The shape is a two-tier hierarchy under an offline root: one domain
+  # intermediate in the root namespace, and one issuing CA per namespace.
+  pki:
+    enabled: false
+    # The committed root the walk starts from: base64 PEM, and a name for
+    # the logs.
+    trustAnchor:
+      name: ""
+      certificate: ""
+    # The domain intermediate the root signed: <mount>/issuer/<issuer>.
+    intermediate:
+      mount: pki-int
+      issuer: ""
+    # Each namespace's issuing CA: <ns>/<mount>/issuer/<issuerPrefix>-<ns>.
+    issuing:
+      mount: pki
+      issuerPrefix: ""
+    # The namespaces with an issuing CA. One leaf is issued in each.
     namespaces: []
-    path: pki/issue/restore-check
-    commonNamePrefix: restore-check
+    # The role the leaves are issued from (<issuing.mount>/issue/<role>):
+    # it should allow exactly one name per namespace, <role>.<ns>.<domain>.
+    role: restore-check
     domain: ""
     ttl: 1h
+    # Prove the role refuses what it must: a wildcard, a subdomain, an IP,
+    # URI or e-mail SAN. Run in one namespace; empty: the first listed.
+    refusals:
+      enabled: true
+      namespace: ""
+
+# ---------------------------------------------------------------------------
+# A daily check of the serving certificate's end date. The certificate is
+# typically renewed THROUGH OpenBAO, so a renewal that keeps failing is
+# silent until the certificate ends — and then every client stops at once.
+# This reads the Certificate's status.notAfter (what cert-manager last wrote
+# into the Secret) and, once fewer than alertBeforeSeconds are left, alerts
+# and fails. Reading it needs `get` on that one Certificate and no access to
+# any Secret.
+certificateExpiry:
+  enabled: false
+  # The ServiceAccount, Role, RoleBinding and CronJob.
+  name: openbao-tls-expiry
+  annotations: {}
+  # The Certificate to watch. Empty: server.tlsSecretName.
+  certificateName: ""
+  # For the alert text: which cluster, and cert-manager's namespace.
+  clusterName: ""
+  certManagerNamespace: cert-manager
+  # Daily: one alert a day while it lasts, not one an hour.
+  schedule: "23 7 * * *"
+  timeZone: Etc/UTC
+  startingDeadlineSeconds: 3600
+  activeDeadlineSeconds: 300
+  backoffLimit: 0
+  # 21 days: with renewal starting 30 days before the end, nine days of
+  # failed renewals — and three weeks before anything breaks.
+  alertBeforeSeconds: 1814400
+  # How long before its end the certificate renews, for the alert text.
+  # 0: derived from serverCertificate.renewBefore (hours).
+  renewBeforeSeconds: 0
+  nodeSelector: {}
+  tolerations: []
+
+  read:
+    image:
+      repository: alpine/kubectl
+      tag: "1.34.2"
+      digest: ""
+      pullPolicy: ""
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+
+  # What alerts. The container's contract: read /work/status — three
+  # lines: notAfter, the Ready condition's status, its message — and when
+  # fewer than $ALERT_BEFORE_SECONDS are left, alert and exit non-zero.
+  # Supply `command` for any channel, or turn on the sns preset below.
+  alert:
+    image:
+      repository: amazon/aws-cli
+      tag: "2.36.44"
+      digest: ""
+      pullPolicy: ""
+    command: []
+    args: []
+    env: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+    sns:
+      enabled: false
+      topicArn: ""
+      region: ""
+      # A last line for the message: where the way back is written down.
+      runbook: ""
 
 # ---------------------------------------------------------------------------
 networkPolicy:
@@ -210,16 +351,26 @@ networkPolicy:
   names:
     serverIngress: openbao-ingress
     restoreCheckIngress: openbao-restore-check-ingress
+    certificateExpiryIngress: openbao-tls-expiry-ingress
   # Where clients live. Required when enabled.
   clientCidrs: []
   # Anything else that may reach the API, as raw NetworkPolicyPeer entries.
   extraClientSelectors: []
-  # Egress is CIDR-based: naming hostnames needs a CNI extension whose
-  # shape differs by provider. Supply what this estate's CNI can express.
+  # More pods nothing may connect to — anything else that holds a restored
+  # copy, such as a hand-run rebuild drill. One ingress-deny policy each.
+  isolated: []
+  #  - name: openbao-drill-ingress
+  #    podSelector:
+  #      app.kubernetes.io/name: openbao-drill
+  # Egress, as whole policies. Standard NetworkPolicy is CIDR-based, and
+  # naming hostnames needs a CNI extension whose shape differs by provider,
+  # so a rule may set its own apiVersion and kind.
   egress:
     enabled: false
     rules: []
     #  - name: openbao-egress
+    #    apiVersion: networking.k8s.io/v1       # default
+    #    kind: NetworkPolicy                    # default
     #    podSelector:
     #      app.kubernetes.io/name: openbao
     #      component: server
@@ -232,7 +383,13 @@ serverCertificate:
   enabled: false
   # The name a client outside the cluster uses. Prepended to the SAN list.
   externalDnsName: ""
+  # Empty: externalDnsName, when set.
   commonName: ""
+  # The Services' in-cluster names and a wildcard over the peers. Turn it
+  # off when the chain is name-constrained and cannot carry them; clients
+  # then verify externalDnsName instead (server.tlsServerName, and the
+  # upstream chart's BAO_TLS_SERVER_NAME and leader_tls_servername).
+  serviceDnsNames: true
   extraDnsNames: []
   ipAddresses:
     - 127.0.0.1
@@ -250,12 +407,7 @@ serverCertificate:
 
 # ---------------------------------------------------------------------------
 # A fragment for the UPSTREAM server chart's server.extraContainers, not an
-# object of its own. Splice it in with:
-#
-#   extraContainers: |
-#     {{- include "ops.tlsReloadContainer" . | nindent 2 }}
-#
-# It needs shareProcessNamespace: true on the server pod.
+# object of its own — see docs/server.md.
 tlsReload:
   intervalSeconds: 60
   certPath: /openbao/userconfig/openbao-tls/tls.crt
@@ -265,7 +417,7 @@ tlsReload:
     repository: openbao/openbao
     tag: "2.6.2"
     digest: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: ""
   resources:
     requests:
       cpu: 5m

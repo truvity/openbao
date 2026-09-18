@@ -1,0 +1,205 @@
+{{- if .Values.certificateExpiry.enabled }}
+{{- $e := .Values.certificateExpiry }}
+{{- $ns := include "ops.namespace" . }}
+{{- $cert := $e.certificateName | default .Values.server.tlsSecretName }}
+{{- $alert := $e.alert }}
+{{- if and (not $alert.sns.enabled) (not $alert.command) }}
+{{- fail "certificateExpiry.alert needs either sns.enabled or an explicit command — an expiry check that tells nobody is a log line" }}
+{{- end }}
+{{- if and $alert.sns.enabled (not $alert.sns.topicArn) }}
+{{- fail "certificateExpiry.alert.sns.topicArn is required when the sns preset is on" }}
+{{- end }}
+{{- if and $alert.sns.enabled (not $alert.sns.region) }}
+{{- fail "certificateExpiry.alert.sns.region is required when the sns preset is on" }}
+{{- end }}
+{{- $alertBefore := int $e.alertBeforeSeconds }}
+{{- $renewBefore := include "ops.renewBeforeSeconds" . | int }}
+{{- if ge $alertBefore $renewBefore }}
+{{- fail (printf "certificateExpiry.alertBeforeSeconds (%d) must be less than the renewal lead time (%d): an alert before renewal has even started is noise" $alertBefore $renewBefore) }}
+{{- end }}
+---
+{{- /* Reading the Certificate's status needs the API, so this job keeps the
+       default token — and its Role grants `get` on one Certificate and
+       nothing else. No Secret is readable. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $e.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $e.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $e.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $e.name }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $e.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    resourceNames: [{{ $cert | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $e.name }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $e.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $e.name }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $e.name }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $e.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $e.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $e.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $e.schedule | quote }}
+  timeZone: {{ $e.timeZone }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $e.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $e.backoffLimit }}
+      activeDeadlineSeconds: {{ $e.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ $e.name }}
+        spec:
+          serviceAccountName: {{ $e.name }}
+          restartPolicy: Never
+          {{- with $e.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $e.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ops.podSecurityContext" $ | nindent 12 }}
+          {{- /* The Certificate's status, not the served certificate:
+                 status.notAfter is what cert-manager last wrote into the
+                 Secret, which is what the server serves once tls-reload has
+                 signalled it. */}}
+          initContainers:
+            - name: read
+              {{- include "ops.imageLines" $e.read.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n {{ $ns }} get certificate {{ $cert }} \
+                    -o jsonpath='{.status.notAfter}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{.status.conditions[?(@.type=="Ready")].message}{"\n"}' \
+                    > /work/status
+                  cat /work/status
+              env:
+                {{- /* kubectl's discovery cache; the root filesystem is
+                       read-only. */}}
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                {{- toYaml $e.read.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          containers:
+            - name: alert
+              {{- include "ops.imageLines" $alert.image | nindent 14 }}
+              {{- if $alert.sns.enabled }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  not_after=$(sed -n 1p /work/status)
+                  ready=$(sed -n 2p /work/status)
+                  reason=$(sed -n 3p /work/status)
+                  [ -n "$not_after" ] || { echo "{{ $ns }}/{{ $cert }} has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  left=$(( $(date -u -d "$not_after" +%s) - $(date -u +%s) ))
+                  echo "{{ $cert }}: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
+                  if [ "$left" -ge {{ $alertBefore }} ]; then
+                    exit 0
+                  fi
+                  aws sns publish --topic-arn {{ $alert.sns.topicArn | quote }} \
+                    --subject "OpenBAO's certificate ends in $((left / 86400)) days" \
+                    --message "{{ $ns }}/{{ $cert }}{{ with $e.clusterName }} on {{ . }}{{ end }} ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO {{ div $renewBefore 86400 }} days before its end, so renewal has been failing for $(( ({{ $renewBefore }} - left) / 86400 )) days. Certificate Ready=${ready}: ${reason}
+                  Look at: kubectl -n {{ $ns }} get certificaterequest; kubectl -n {{ $e.certManagerNamespace }} logs deploy/cert-manager.
+                  {{- with $alert.sns.runbook }}
+                  {{ . }}
+                  {{- end }}"
+                  exit 1
+              env:
+                - name: AWS_REGION
+                  value: {{ $alert.sns.region }}
+                - name: HOME
+                  value: /tmp
+                {{- with $alert.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- else }}
+              {{- /* The contract for a replacement: read /work/status (notAfter,
+                     the Ready status, its message; one per line) and, when
+                     fewer than $ALERT_BEFORE_SECONDS are left, alert and exit
+                     non-zero. */}}
+              command:
+                {{- toYaml $alert.command | nindent 16 }}
+              {{- with $alert.args }}
+              args:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              env:
+                - name: ALERT_BEFORE_SECONDS
+                  value: {{ $alertBefore | quote }}
+                - name: HOME
+                  value: /tmp
+                {{- with $alert.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- end }}
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml $alert.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+{{- end }}

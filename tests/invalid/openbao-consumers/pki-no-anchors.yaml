@@ -1,0 +1,7 @@
+# An issuer whose chain nothing trusts issues certificates nobody accepts.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  issuers:
+    - {name: example-private, signPath: pki/sign/private, role: example-private}
