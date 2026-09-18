@@ -1,0 +1,10 @@
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustRootCaBundle: Zm9v
+certificates:
+  - name: smoke
+    commonName: smoke.example.internal
+    issuerRef:
+      kind: ClusterIssuer

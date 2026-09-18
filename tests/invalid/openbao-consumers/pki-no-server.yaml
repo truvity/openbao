@@ -1,0 +1,4 @@
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustRootCaBundle: Zm9v
