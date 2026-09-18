@@ -1,0 +1,108 @@
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-issuer
+  namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example-root-2026
+  namespace: cert-manager
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    ZXhhbXBsZS1yb290
+    -----END CERTIFICATE-----
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["openbao-issuer"]
+    verbs: ["create"]
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-issuer-token
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: openbao-private-ca
+spec:
+  sources:
+    - configMap:
+        name: example-root-2026
+        key: ca.crt
+  target:
+    configMap:
+      key: ca-certificates.crt
+    namespaceSelector:
+      {}
+
+---
+# Source: openbao-consumers/templates/certificates.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: example-private-smoke
+  namespace: cert-manager
+spec:
+  secretName: example-private-smoke-tls
+  commonName: "smoke.prod.example.internal"
+  dnsNames:
+    - "smoke.prod.example.internal"
+  duration: 720h
+  renewBefore: 240h
+  privateKey:
+    algorithm: ECDSA
+    rotationPolicy: Always
+    size: 256
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: example-private
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: example-private
+spec:
+  vault:
+    server: "https://openbao.example.internal:8200"
+    namespace: prod
+    path: pki/sign/private
+    caBundle: "ZXhhbXBsZS1jYQ=="
+    auth:
+      kubernetes:
+        role: example-private
+        mountPath: /v1/auth/jwt-prod
+        serviceAccountRef:
+          name: openbao-issuer

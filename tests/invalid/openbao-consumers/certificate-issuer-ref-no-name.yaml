@@ -1,0 +1,13 @@
+# An issuerRef that names no issuer.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustAnchors: [{name: root, certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=}]
+  issuers:
+    - {name: example-private, signPath: pki/sign/private, role: example-private}
+certificates:
+  - name: smoke
+    commonName: smoke.example.internal
+    issuerRef:
+      kind: ClusterIssuer

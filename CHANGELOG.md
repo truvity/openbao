@@ -11,12 +11,24 @@ the tag go here.
 
 - **`openbao-ops`**: snapshots verified against their own `SHA256SUMS`
   before they are stored, in retention tiers; a weekly restore check that
-  restores the newest snapshot into a throwaway server, logs in as the
-  snapshot's own identity and reads a canary per namespace, and fails on a
-  stale snapshot; network policies; a serving certificate with generated
-  SANs; the `tlsReload` sidecar fragment for the upstream chart.
+  restores the newest snapshot into a throwaway server under the
+  production seal, logs in as the snapshot's own identity, reads a canary
+  in every namespace (listed, or every one the copy lists) that must name
+  its own namespace, and fails on a stale snapshot; optionally the same
+  check walks the restored PKI from a committed root to every namespace's
+  issuing CA, proves the role's refusals and issues a fresh leaf in each
+  (`restoreCheck.pki`); a daily serving-certificate expiry check that
+  alerts before the end (`certificateExpiry`, SNS preset); network
+  policies, with isolated pods and egress rules of any kind; a serving
+  certificate with generated SANs, or the endpoint alone for a
+  name-constrained chain (`serviceDnsNames: false`), verified by the jobs
+  through `server.tlsServerName`; the `tlsReload` sidecar fragment for the
+  upstream chart.
 - **`openbao-consumers`**: reader ClusterSecretStores bounded by namespace
   conditions, writer stores that present the writer's own
-  ServiceAccount token, a cert-manager issuer backed by OpenBAO's PKI, a
-  trust bundle that can carry two roots, and workload certificates.
-- Object storage as a container contract, with an S3 preset.
+  ServiceAccount token, cert-manager issuers backed by OpenBAO's PKI (one
+  per signing path, with extra token audiences), trust anchors distributed
+  by a trust bundle that carries every root, and certificates.
+- Object storage and alerting as container contracts, with S3 and SNS
+  presets. Every object name is a value and nothing carries Helm's own
+  labels, so objects rendered by other means can be adopted in place.

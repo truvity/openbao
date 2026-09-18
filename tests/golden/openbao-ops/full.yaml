@@ -5,6 +5,9 @@ kind: NetworkPolicy
 metadata:
   name: openbao-ingress
   namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "15"
 spec:
   podSelector:
     matchLabels:
@@ -44,12 +47,88 @@ kind: NetworkPolicy
 metadata:
   name: openbao-restore-check-ingress
   namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "15"
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: openbao-restore-check
   policyTypes:
     - Ingress
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-tls-expiry-ingress
+  namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "15"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-tls-expiry
+  policyTypes:
+    - Ingress
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-drill-ingress
+  namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "15"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-drill
+  policyTypes:
+    - Ingress
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-egress
+  namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "15"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      component: server
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 10.0.0.0/16
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
 
 ---
 # Source: openbao-ops/templates/restore-check.yaml
@@ -61,6 +140,9 @@ metadata:
   labels:
     app.kubernetes.io/name: openbao-restore-check
     app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
 automountServiceAccountToken: false
 
 ---
@@ -73,6 +155,10 @@ metadata:
   labels:
     app.kubernetes.io/name: openbao-snapshot
     app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/role: openbao-snapshot
+    example.com/sync-wave: "80"
 automountServiceAccountToken: false
 
 ---
@@ -82,35 +168,193 @@ kind: ConfigMap
 metadata:
   name: openbao-restore-check
   namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
 data:
   scratch.hcl: |
-    ui = false
+    ui            = false
     disable_mlock = true
-    api_addr     = "http://127.0.0.1:8200"
-    cluster_addr = "http://127.0.0.1:8201"
-
+    api_addr      = "http://127.0.0.1:8200"
+    cluster_addr  = "http://127.0.0.1:8201"
     listener "tcp" {
       address     = "127.0.0.1:8200"
       tls_disable = true
     }
-
     storage "raft" {
       path    = "/data"
       node_id = "restore-check"
     }
     seal "awskms" {
-      region     = "eu-example-1"
+      region     = "eu-example-2"
       kms_key_id = "alias/openbao-unseal"
     }
-    
-    # Declared, not created through the API: OpenBAO refuses API-created
-    # audit devices, so a restored copy with no device in its config would
-    # have an audit table production does not have.
+    # As production declares it, so the restored audit table finds its device.
     audit "file" "to-stdout" {
       options {
         file_path = "stdout"
       }
     }
+  trust-anchor.json: |
+    {"ca_chain":["-----BEGIN CERTIFICATE-----\nZXhhbXBsZS1yb290\n-----END CERTIFICATE-----\n"],"certificate":"-----BEGIN CERTIFICATE-----\nZXhhbXBsZS1yb290\n-----END CERTIFICATE-----\n"}
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    resourceNames: ["openbao-tls"]
+    verbs: ["get"]
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
+subjects:
+  - kind: ServiceAccount
+    name: openbao-tls-expiry
+    namespace: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-tls-expiry
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
+spec:
+  schedule: "23 7 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-tls-expiry
+        spec:
+          serviceAccountName: openbao-tls-expiry
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: read
+              image: alpine/kubectl:1.34.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n openbao get certificate openbao-tls \
+                    -o jsonpath='{.status.notAfter}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{.status.conditions[?(@.type=="Ready")].message}{"\n"}' \
+                    > /work/status
+                  cat /work/status
+              env:
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                limits:
+                  memory: 128Mi
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: alert
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  not_after=$(sed -n 1p /work/status)
+                  ready=$(sed -n 2p /work/status)
+                  reason=$(sed -n 3p /work/status)
+                  [ -n "$not_after" ] || { echo "openbao/openbao-tls has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  left=$(( $(date -u -d "$not_after" +%s) - $(date -u +%s) ))
+                  echo "openbao-tls: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
+                  if [ "$left" -ge 1814400 ]; then
+                    exit 0
+                  fi
+                  aws sns publish --topic-arn "example-topic" \
+                    --subject "OpenBAO's certificate ends in $((left / 86400)) days" \
+                    --message "openbao/openbao-tls on example-cluster ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO 30 days before its end, so renewal has been failing for $(( (2592000 - left) / 86400 )) days. Certificate Ready=${ready}: ${reason}
+                  Look at: kubectl -n openbao get certificaterequest; kubectl -n cert-manager logs deploy/cert-manager.
+                  The way back is the break-glass certificate: see the runbook."
+                  exit 1
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
 
 ---
 # Source: openbao-ops/templates/restore-check.yaml
@@ -122,9 +366,12 @@ metadata:
   labels:
     app.kubernetes.io/name: openbao-restore-check
     app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
 spec:
   schedule: "37 5 * * 0"
-  timeZone: "Etc/UTC"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 1
@@ -150,37 +397,28 @@ spec:
               type: RuntimeDefault
           initContainers:
             - name: fetch
-              image: "amazon/aws-cli:2.32.7"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
                 - |
-                  newest=$(aws s3api list-objects-v2 \
-                    --bucket example-openbao-backups --prefix raft/ \
-                    --query 'sort_by(Contents,&LastModified)[-1].[Key,LastModified]' \
-                    --output text)
+                  newest=$(aws s3api list-objects-v2 --bucket example-openbao-backups --prefix raft/ \
+                    --query 'sort_by(Contents, &LastModified)[-1].[Key, LastModified]' --output text)
                   set -- $newest
                   key=$1
                   age=$(( $(date +%s) - $(date -d "$2" +%s) ))
-                  echo "newest snapshot: $key, $((age/60)) minutes old"
-
-                  # A stale newest object means the snapshot job stopped and
-                  # nobody noticed. That is the failure this check exists to
-                  # find, so it fails here rather than passing on old data.
+                  echo "newest snapshot: $key, $((age / 60)) minutes old"
                   if [ "$age" -gt 43200 ]; then
-                    echo "no snapshot within 43200s: the snapshot job is not running" >&2
+                    echo "the newest snapshot is older than 12 hours: the snapshot job is not running"
                     exit 1
                   fi
-
                   aws s3 cp "s3://example-openbao-backups/$key" /work/openbao.snap --no-progress
                   echo "$key" > /work/key
               env:
-                - name: MAX_SNAPSHOT_AGE_SECONDS
-                  value: "43200"
+                - name: AWS_REGION
+                  value: eu-example-1
                 - name: HOME
                   value: /tmp
-                - name: AWS_REGION
-                  value: "eu-example-1"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -200,9 +438,11 @@ spec:
                     - ALL
             - name: server
               restartPolicy: Always
-              image: "openbao/openbao:2.6.2"
-              imagePullPolicy: IfNotPresent
-              command: ["bao", "server", "-config=/etc/openbao/scratch.hcl"]
+              image: openbao/openbao:2.6.2
+              command: [bao, server, -config=/etc/openbao/scratch.hcl]
+              env:
+                - name: AWS_REGION
+                  value: eu-example-2
               volumeMounts:
                 - name: config
                   mountPath: /etc/openbao
@@ -225,73 +465,136 @@ spec:
                     - ALL
           containers:
             - name: check
-              image: "openbao/openbao:2.6.2"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
                 - |
-                  # `bao status` exits 0 unsealed, 2 sealed or uninitialised,
-                  # 1 unreachable. Waiting on the right one of those is the
-                  # difference between a flaky check and a real one.
+                  # bao status: 0 unsealed, 2 sealed or uninitialized, 1 unreachable.
                   wait_for() {
-                    want=$1
                     i=0
-                    while [ $i -lt 90 ]; do
-                      bao status >/dev/null 2>&1 && return 0
-                      rc=$?
-                      [ "$want" = any ] && [ "$rc" = 2 ] && return 0
-                      i=$((i+1))
+                    while [ "$i" -lt 90 ]; do
+                      rc=0
+                      bao status >/dev/null 2>&1 || rc=$?
+                      case "$1:$rc" in any:0|any:2|unsealed:0) return 0 ;; esac
+                      i=$((i + 1))
                       sleep 2
                     done
-                    echo "timed out waiting for the scratch server ($want)" >&2
-                    exit 1
+                    echo "the scratch server never became $1 (bao status exit $rc)"
+                    bao status || true
+                    return 1
                   }
 
                   wait_for any
-
-                  # Throwaway recovery shares: this server exists for the
-                  # next ninety seconds and its keys are never printed.
-                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json \
-                    | sed -n 's/.*"root_token"[^"]*"\([^"]*\)".*/\1/p')
-                  [ -n "$BAO_TOKEN" ] || { echo "scratch init produced no token" >&2; exit 1; }
+                  # Recovery shares of a throwaway install: never printed, gone with the pod.
+                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json |
+                    sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p')
+                  [ -n "$BAO_TOKEN" ] || { echo "initializing the scratch server returned no root token"; exit 1; }
                   export BAO_TOKEN
                   wait_for unsealed
 
-                  # -force: the snapshot carries production's own keyring.
-                  # Judge by exit code — 2.x prints a spurious "Error
-                  # properly closing policy file" on success.
+                  # -force: the snapshot carries production's keyring, not the scratch's.
+                  # Judge by exit code; 2.x prints "Error properly closing policy file" on success.
                   bao operator raft snapshot restore -force /work/openbao.snap
-
-                  # The scratch root token died with the restore. From here
-                  # the only way in is what the SNAPSHOT grants, which is
-                  # the point: this proves the restored copy is usable, not
-                  # that a fresh server is.
                   unset BAO_TOKEN
                   wait_for unsealed
 
+                  # The scratch root token died with the restore; from here on only what the
+                  # snapshot itself grants.
                   i=0
-                  while [ $i -lt 30 ]; do
-                    BAO_TOKEN=$(bao write -field=token \
-                      auth/jwt-example/login \
-                      role=openbao-restore-check \
-                      jwt=@/var/run/openbao/token 2>/dev/null) && break
-                    i=$((i+1))
+                  until BAO_TOKEN=$(bao write -field=token auth/jwt-example/login role=openbao-restore-check \
+                    jwt=@/var/run/openbao/token 2>/tmp/login.err); do
+                    i=$((i + 1))
+                    if [ "$i" -ge 30 ]; then
+                      echo "cannot log in to the restored copy:"
+                      cat /tmp/login.err
+                      exit 1
+                    fi
                     sleep 2
                   done
-                  [ -n "${BAO_TOKEN:-}" ] || { echo "cannot log in to the restored copy" >&2; exit 1; }
                   export BAO_TOKEN
 
-                  # A canary read per namespace: the restore is judged on
-                  # data being there, not on the process exiting zero.
-                  got=$(bao read -namespace=devel -field=data kv/data/restore-canary)
-                  echo "canary devel: $got"
-                  [ -n "$got" ] || { echo "canary missing in devel" >&2; exit 1; }
-                  got=$(bao read -namespace=prod -field=data kv/data/restore-canary)
-                  echo "canary prod: $got"
-                  [ -n "$got" ] || { echo "canary missing in prod" >&2; exit 1; }
+                  namespaces=$(bao list -format=json sys/namespaces | sed -n 's/^ *"\([^"]*\)\/",\{0,1\} *$/\1/p')
+                  [ -n "$namespaces" ] || { echo "the restored copy lists no namespaces"; exit 1; }
+                  for ns in $namespaces; do
+                    got=$(bao read -namespace="$ns" -field=data kv/data/restore-canary)
+                    if [ "$got" != "map[namespace:$ns]" ]; then
+                      echo "namespace $ns: restore canary reads '$got'"
+                      exit 1
+                    fi
+                  done
 
-                  bao token revoke -self
-                  echo "restore check passed: $(cat /work/key)"
+                  verify_link() {
+                    possible_issuer=$1
+                    possible_issued=$2
+                    result=$(bao pki verify-sign -format=json "$possible_issuer" "$possible_issued")
+                    for field in signature_match path_match key_id_match subject_match trust_match; do
+                      echo "$result" | grep -Eq "\"$field\": *true" || {
+                        echo "$possible_issuer did not validate $possible_issued ($field): $result"
+                        exit 1
+                      }
+                    done
+                  }
+
+                  # Verify the recovered hierarchies cryptographically. trust_match also
+                  # evaluates path length and name constraints in the supplied chain.
+
+                  # The hierarchy, walked from the ROOT YOU TRUST. OpenBAO typically
+                  # holds only a nameless, keyless copy of that root (its key is kept
+                  # elsewhere), and a walk that ends at whatever the snapshot holds proves
+                  # the copy agrees with itself, not that it is ours. So the top is
+                  # the committed root certificate, staged in this token's
+                  # cubbyhole because verify-sign reads both ends through the API;
+                  # path_match on the first link then requires the restored domain
+                  # intermediate's ca_chain to carry that exact certificate.
+                  anchor=cubbyhole/restore-check/anchor
+                  bao write "$anchor" - </etc/restore-check/trust-anchor.json >/dev/null
+                  verify_link "$anchor" "$anchor"
+                  verify_link "$anchor" pki-example/issuer/example-2026/json
+                  for env in devel prod; do
+                    verify_link \
+                      pki-example/issuer/example-2026/json \
+                      "$env/pki/issuer/example-2026-$env/json"
+                  done
+
+                  must_refuse() {
+                    label=$1
+                    shift
+                    if bao write -namespace=devel pki/issue/restore-check "$@" >/tmp/invalid-pki.out 2>&1; then
+                      echo "the restored fixed-name role accepted $label"
+                      cat /tmp/invalid-pki.out
+                      exit 1
+                    fi
+                  }
+                  must_refuse wildcard common_name='*.restore-check.devel.example.internal'
+                  must_refuse subdomain common_name=child.restore-check.devel.example.internal
+                  must_refuse ip-san common_name=restore-check.devel.example.internal ip_sans=127.0.0.1
+                  must_refuse uri-san common_name=restore-check.devel.example.internal uri_sans=spiffe://external.invalid/workload
+                  must_refuse email-san common_name=restore-check.devel.example.internal alt_names=user@example.com
+
+                  # One leaf per environment from the restore-check role, which
+                  # must point at that environment's issuing CA.
+                  # verify-sign reads the issued end as certificate plus ca_chain, and
+                  # pki/cert/<serial> returns no ca_chain, so the issue response is
+                  # staged in the cubbyhole and its data read back as the leaf.
+                  for env in devel prod; do
+                    leaf=cubbyhole/restore-check/leaf-$env
+                    bao write -namespace="$env" -format=json pki/issue/restore-check \
+                      common_name="restore-check.$env.example.internal" ttl=1h >/tmp/issued.json
+                    bao write cubbyhole/restore-check/issued - </tmp/issued.json >/dev/null
+                    bao read -format=json -field=data cubbyhole/restore-check/issued | bao write "$leaf" - >/dev/null
+                    rm -f /tmp/issued.json
+                    serial=$(bao read -field=serial_number "$leaf")
+                    stored=$(bao read -namespace="$env" -field=certificate "pki/cert/$serial" 2>/dev/null) || stored=
+                    [ -n "$stored" ] && [ "$stored" = "$(bao read -field=certificate "$leaf")" ] || {
+                      echo "the restored $env issuer did not store the leaf it issued (serial '$serial')"
+                      exit 1
+                    }
+                    verify_link "$env/pki/issuer/example-2026-$env/json" "$leaf"
+                  done
+                  bao token revoke -self >/dev/null
+
+                  echo "restore check passed: $(cat /work/key) opened with the unseal key's eu-example-2 replica; canaries read and the chain verified from example-root-2026 to a fresh leaf, in:" $namespaces
               env:
                 - name: BAO_ADDR
                   value: http://127.0.0.1:8200
@@ -306,12 +609,15 @@ spec:
                 - name: login
                   mountPath: /var/run/openbao
                   readOnly: true
+                - name: config
+                  mountPath: /etc/restore-check
+                  readOnly: true
               resources:
                 limits:
                   memory: 256Mi
                 requests:
-                  cpu: 50m
-                  memory: 128Mi
+                  cpu: 10m
+                  memory: 64Mi
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -339,7 +645,7 @@ spec:
               projected:
                 sources:
                   - serviceAccountToken:
-                      audience: "openbao"
+                      audience: openbao
                       expirationSeconds: 600
                       path: token
 
@@ -353,9 +659,12 @@ metadata:
   labels:
     app.kubernetes.io/name: openbao-snapshot
     app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
 spec:
   schedule: "17 */6 * * *"
-  timeZone: "Etc/UTC"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 1
@@ -372,6 +681,8 @@ spec:
           serviceAccountName: openbao-snapshot
           automountServiceAccountToken: false
           restartPolicy: Never
+          nodeSelector:
+            example.com/pool: batch
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -381,35 +692,24 @@ spec:
               type: RuntimeDefault
           initContainers:
             - name: snapshot
-              image: "openbao/openbao:2.6.2"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   date -u +%Y%m%dT%H%M%SZ > /work/taken-at
-
-                  BAO_TOKEN=$(bao write -field=token \
-                    auth/jwt-example/login \
-                    role=openbao-snapshot \
-                    jwt=@/var/run/openbao/token)
+                  BAO_TOKEN="$(bao write -field=token auth/jwt-example/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
                   export BAO_TOKEN
-
                   bao operator raft snapshot save /work/openbao.snap
-                  # The token dies with the step that needed it.
                   bao token revoke -self
-
-                  # The archive carries its own SHA256SUMS. Verify here, so
-                  # a truncated or corrupt snapshot never reaches the store
-                  # and never counts as a backup.
                   mkdir /work/check
                   tar -xzf /work/openbao.snap -C /work/check
                   (cd /work/check && sha256sum -c SHA256SUMS)
                   rm -rf /work/check
-
                   echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
               env:
                 - name: BAO_ADDR
-                  value: "https://openbao-active.openbao.svc:8200"
+                  value: https://openbao-active.openbao.svc:8200
                 - name: BAO_CACERT
                   value: /tls/ca.crt
                 - name: HOME
@@ -437,21 +737,18 @@ spec:
                     - ALL
           containers:
             - name: upload
-              image: "amazon/aws-cli:2.32.7"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   key="raft/$(cat /work/taken-at).snap"
-                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" \
-                    --checksum-algorithm SHA256 --no-progress
+                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
-                - name: SNAPSHOT_PREFIX
-                  value: "raft/"
+                - name: AWS_REGION
+                  value: eu-example-1
                 - name: HOME
                   value: /tmp
-                - name: AWS_REGION
-                  value: "eu-example-1"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -482,7 +779,7 @@ spec:
               projected:
                 sources:
                   - serviceAccountToken:
-                      audience: "openbao"
+                      audience: openbao
                       expirationSeconds: 600
                       path: token
             - name: ca
@@ -502,9 +799,12 @@ metadata:
   labels:
     app.kubernetes.io/name: openbao-snapshot
     app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "80"
 spec:
   schedule: "47 3 * * 0"
-  timeZone: "Etc/UTC"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 1
@@ -521,6 +821,8 @@ spec:
           serviceAccountName: openbao-snapshot
           automountServiceAccountToken: false
           restartPolicy: Never
+          nodeSelector:
+            example.com/pool: batch
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -530,35 +832,24 @@ spec:
               type: RuntimeDefault
           initContainers:
             - name: snapshot
-              image: "openbao/openbao:2.6.2"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   date -u +%Y%m%dT%H%M%SZ > /work/taken-at
-
-                  BAO_TOKEN=$(bao write -field=token \
-                    auth/jwt-example/login \
-                    role=openbao-snapshot \
-                    jwt=@/var/run/openbao/token)
+                  BAO_TOKEN="$(bao write -field=token auth/jwt-example/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
                   export BAO_TOKEN
-
                   bao operator raft snapshot save /work/openbao.snap
-                  # The token dies with the step that needed it.
                   bao token revoke -self
-
-                  # The archive carries its own SHA256SUMS. Verify here, so
-                  # a truncated or corrupt snapshot never reaches the store
-                  # and never counts as a backup.
                   mkdir /work/check
                   tar -xzf /work/openbao.snap -C /work/check
                   (cd /work/check && sha256sum -c SHA256SUMS)
                   rm -rf /work/check
-
                   echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
               env:
                 - name: BAO_ADDR
-                  value: "https://openbao-active.openbao.svc:8200"
+                  value: https://openbao-active.openbao.svc:8200
                 - name: BAO_CACERT
                   value: /tls/ca.crt
                 - name: HOME
@@ -586,21 +877,18 @@ spec:
                     - ALL
           containers:
             - name: upload
-              image: "amazon/aws-cli:2.32.7"
-              imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
-              args:
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
                 - |
                   key="weekly/$(cat /work/taken-at).snap"
-                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" \
-                    --checksum-algorithm SHA256 --no-progress
+                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
-                - name: SNAPSHOT_PREFIX
-                  value: "weekly/"
+                - name: AWS_REGION
+                  value: eu-example-1
                 - name: HOME
                   value: /tmp
-                - name: AWS_REGION
-                  value: "eu-example-1"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -631,7 +919,7 @@ spec:
               projected:
                 sources:
                   - serviceAccountToken:
-                      audience: "openbao"
+                      audience: openbao
                       expirationSeconds: 600
                       path: token
             - name: ca
@@ -648,8 +936,21 @@ kind: Certificate
 metadata:
   name: openbao-tls
   namespace: openbao
+  annotations:
+    example.com/owner: platform
 spec:
   secretName: openbao-tls
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: example-ca
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    rotationPolicy: Always
+    size: 256
+  commonName: "openbao.example.internal"
   dnsNames:
     - "openbao.example.internal"
     - "openbao"
@@ -660,13 +961,27 @@ spec:
     - "*.openbao-internal.openbao.svc"
   ipAddresses:
     - 127.0.0.1
-  duration: 2160h
-  renewBefore: 720h
-  privateKey:
-    algorithm: ECDSA
-    rotationPolicy: Always
-    size: 256
-  issuerRef:
-    group: cert-manager.io
-    kind: ClusterIssuer
-    name: example-ca
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.example.com/v1alpha1
+kind: HostNetworkPolicy
+metadata:
+  name: openbao-snapshot-egress
+  namespace: openbao
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "15"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-snapshot
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - domainNames:
+        - objects.example.internal

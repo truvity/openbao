@@ -1,10 +1,19 @@
-# Everything on: two snapshot tiers, a weekly restore that reads canaries
-# back, policies that keep the jobs unreachable, and a serving certificate
-# with the sidecar that reloads it.
+# Everything on, in one install: two snapshot tiers, a weekly restore that
+# reads canaries back and walks the restored PKI from a committed root, the
+# serving certificate's expiry alert, policies that keep the jobs
+# unreachable, and a serving certificate with the in-cluster names.
+commonAnnotations:
+  example.com/owner: platform
 auth:
   mountPath: jwt-example
 snapshot:
   enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  serviceAccountAnnotations:
+    example.com/role: openbao-snapshot
+  nodeSelector:
+    example.com/pool: batch
   upload:
     s3:
       enabled: true
@@ -12,21 +21,74 @@ snapshot:
       region: eu-example-1
 restoreCheck:
   enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  sealConfig: |
+    seal "awskms" {
+      region     = "eu-example-2"
+      kms_key_id = "alias/openbao-unseal"
+    }
+  sealDescription: the unseal key's eu-example-2 replica
+  serverEnv:
+    - name: AWS_REGION
+      value: eu-example-2
   fetch:
     s3:
       enabled: true
       bucket: example-openbao-backups
       region: eu-example-1
-  canary:
+  pki:
+    enabled: true
+    trustAnchor:
+      name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+    intermediate:
+      mount: pki-example
+      issuer: example-2026
+    issuing:
+      mount: pki
+      issuerPrefix: example-2026
     namespaces: [devel, prod]
-  sealConfig: |
-    seal "awskms" {
-      region     = "eu-example-1"
-      kms_key_id = "alias/openbao-unseal"
-    }
+    domain: example.internal
+certificateExpiry:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  clusterName: example-cluster
+  alert:
+    sns:
+      enabled: true
+      topicArn: example-topic
+      region: eu-example-1
+      runbook: "The way back is the break-glass certificate: see the runbook."
 networkPolicy:
   enabled: true
+  annotations:
+    example.com/sync-wave: "15"
   clientCidrs: ["10.0.0.0/8"]
+  isolated:
+    - name: openbao-drill-ingress
+      podSelector:
+        app.kubernetes.io/name: openbao-drill
+  egress:
+    enabled: true
+    rules:
+      - name: openbao-egress
+        podSelector:
+          app.kubernetes.io/name: openbao
+          component: server
+        egress:
+          - to: [{ipBlock: {cidr: 10.0.0.0/16}}]
+            ports: [{port: 443, protocol: TCP}]
+      # A CNI extension that names hosts: its own apiVersion and kind.
+      - name: openbao-snapshot-egress
+        apiVersion: networking.example.com/v1alpha1
+        kind: HostNetworkPolicy
+        podSelector:
+          app.kubernetes.io/name: openbao-snapshot
+        egress:
+          - to: [{domainNames: [objects.example.internal]}]
+            ports: [{port: 443, protocol: TCP}]
 serverCertificate:
   enabled: true
   externalDnsName: openbao.example.internal

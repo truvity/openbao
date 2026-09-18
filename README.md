@@ -5,8 +5,8 @@ upstream server chart leaves out.
 
 | Artifact | What | Status |
 |---|---|---|
-| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that opens one, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
-| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), a cert-manager issuer backed by OpenBAO's PKI, the trust bundle, and workload certificates | unreleased |
+| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
+| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | unreleased |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from the first release on.
@@ -16,21 +16,24 @@ from the first release on.
 A platform team running OpenBAO on Kubernetes from upstream's
 `openbao/openbao` chart, with cert-manager, trust-manager and External
 Secrets, that wants backups it has seen restored, a serving certificate
-that reloads itself, and clusters that read, write and issue through
-OpenBAO without a stored token. The **server** is not here: these charts
-are what an install is judged on when it fails.
+that reloads itself and is noticed before it ends, and clusters that read,
+write and issue through OpenBAO without a stored token. The **server** is
+not here: [docs/server.md](docs/server.md) describes the shape these charts
+assume of it. These charts are what an install is judged on when it fails.
 
 ## The model
 
 Two halves. **openbao-ops** sits beside the server and owns its
 operational life: a snapshot is taken, verified and only then stored; a
-weekly restore opens the newest one in a throwaway server and reads a
-canary back; the server is reachable from its clients and the jobs from
-nothing. **openbao-consumers** sits on every cluster that uses the server:
-reader stores bounded by namespace conditions, writer stores that present
-the writer's own token, and a cert-manager issuer whose root is
-distributed as a trust bundle. Object storage is a container with a
-contract, with S3 as one preset; see [docs/doctrine.md](docs/doctrine.md).
+weekly restore opens the newest one in a throwaway server, reads a canary
+back in every namespace and walks the restored PKI from a root you
+committed; a daily check alerts weeks before the serving certificate ends;
+the server is reachable from its clients and the jobs from nothing.
+**openbao-consumers** sits on every cluster that uses the server: reader
+stores bounded by namespace conditions, writer stores that present the
+writer's own token, and cert-manager issuers whose roots are distributed as
+a trust bundle. Object storage and alerting are containers with a
+contract, with S3 and SNS as presets; see [docs/doctrine.md](docs/doctrine.md).
 
 ## Install and a worked example
 
@@ -40,27 +43,31 @@ helm install openbao-ops oci://ghcr.io/truvity/charts/openbao-ops \
 ```
 
 ```yaml
+auth:
+  mountPath: jwt-example
 snapshot:
   enabled: true
   upload:
     s3: { enabled: true, bucket: example-openbao-backups, region: eu-example-1 }
-
 restoreCheck:
   enabled: true
   fetch:
     s3: { enabled: true, bucket: example-openbao-backups, region: eu-example-1 }
-  canary:
-    namespaces: [devel, prod]      # a value that must survive the restore
-  sealConfig: |                     # the scratch server needs the same seal
+  sealConfig: |                     # the snapshot's seal, or a replica of its key
     seal "awskms" {
-      region     = "eu-example-1"
+      region     = "eu-example-2"
       kms_key_id = "alias/openbao-unseal"
     }
+certificateExpiry:
+  enabled: true
+  alert:
+    sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }
 ```
 
 The serving-certificate reload is a fragment for the upstream chart
 ([docs/safety.md](docs/safety.md#a-renewed-certificate-that-nothing-loads)
-says why):
+says why, [docs/server.md](docs/server.md) shows the rest of the server's
+values):
 
 ```yaml
 # in the upstream openbao chart's values
@@ -95,18 +102,26 @@ writers:
 
 pki:
   enabled: true
-  trustRootCaBundle: <base64 PEM of the ROOT that signs what OpenBAO issues>
+  trustAnchors:
+    - name: example-root-2026
+      certificate: <base64 PEM of the ROOT that signs what OpenBAO issues>
+  issuers:
+    - name: example-private
+      signPath: pki/sign/private
+      role: example-private
 ```
 
 ## Documentation
 
 - [docs/adoption.md](docs/adoption.md) — prerequisites, install order,
-  the zero-diff gate
+  adopting objects that already run, the zero-diff gate
 - [docs/safety.md](docs/safety.md) — the backup regime, the traps, and
   every render-time refusal
 - [docs/reference.md](docs/reference.md) — every value of both charts
-- [docs/doctrine.md](docs/doctrine.md) — the two halves, the storage
-  contract, and the ownership contract
+- [docs/doctrine.md](docs/doctrine.md) — the two halves, the container
+  contracts, and the ownership contract
+- [docs/server.md](docs/server.md) — the upstream server's values these
+  charts assume
 - [CHANGELOG.md](CHANGELOG.md) — what changed for a consumer, per version
 
 ## The rule that makes this repository public

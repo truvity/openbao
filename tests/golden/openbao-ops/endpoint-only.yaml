@@ -1,0 +1,24 @@
+---
+# Source: openbao-ops/templates/certificate.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-tls
+  namespace: openbao
+  annotations:
+    example.com/sync-wave: "56"
+spec:
+  secretName: openbao-tls
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: example-private
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    rotationPolicy: Always
+    size: 384
+  commonName: "openbao.example.internal"
+  dnsNames:
+    - "openbao.example.internal"

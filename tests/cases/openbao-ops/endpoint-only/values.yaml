@@ -1,0 +1,24 @@
+# A serving certificate from a name-constrained chain: ONE name, the
+# endpoint, and no IP. The in-cluster names cannot be on such a leaf, so
+# every client verifies the endpoint's name instead of the one it dials —
+# the jobs through server.tlsServerName, the server's own CLI and Raft
+# peers through BAO_TLS_SERVER_NAME and leader_tls_servername
+# (docs/server.md).
+#
+# Rendered by an install of its own: the certificate can belong to a
+# different deployment than the jobs, with its own ordering.
+serverCertificate:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "56"
+  externalDnsName: openbao.example.internal
+  serviceDnsNames: false
+  ipAddresses: []
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+    rotationPolicy: Always
+  issuerRef:
+    name: example-private
+    kind: ClusterIssuer
+    group: cert-manager.io

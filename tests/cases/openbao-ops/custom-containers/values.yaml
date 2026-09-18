@@ -1,0 +1,54 @@
+# Every container contract honoured by your own image instead of a preset:
+# an uploader and a fetcher for a store that is not S3, and an alert that
+# is not SNS. The jobs dial the active Service and verify the endpoint's
+# name, and log in with a token mounted where the estate wants it.
+server:
+  tlsServerName: openbao.example.internal
+auth:
+  mountPath: jwt-example
+  tokenMountPath: /var/run/example/openbao
+snapshot:
+  enabled: true
+  jobs:
+    - name: openbao-snapshot
+      schedule: "5 * * * *"
+      prefix: hourly/
+  upload:
+    image:
+      repository: registry.example.internal/object-store-cli
+      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      pullPolicy: IfNotPresent
+    command: [/usr/local/bin/put-snapshot]
+    args: [--bucket, example-openbao-backups]
+    env:
+      - name: STORE_ENDPOINT
+        value: https://objects.example.internal
+restoreCheck:
+  enabled: true
+  maxSnapshotAgeSeconds: 5400
+  sealConfig: |
+    seal "transit" {
+      address    = "https://unseal.example.internal:8200"
+      key_name   = "openbao-unseal"
+      mount_path = "transit/"
+    }
+  canary:
+    kvMount: secret
+    path: canary
+    namespaces: [team-a, team-b]
+  fetch:
+    image:
+      repository: registry.example.internal/object-store-cli
+      tag: "1.0.0"
+    command: [/usr/local/bin/get-newest-snapshot]
+    args: [--prefix, hourly/]
+certificateExpiry:
+  enabled: true
+  certificateName: openbao-serving
+  renewBeforeSeconds: 1209600
+  alertBeforeSeconds: 604800
+  alert:
+    image:
+      repository: registry.example.internal/pager
+      tag: "2.0.0"
+    command: [/usr/local/bin/page-if-expiring]

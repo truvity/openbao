@@ -1,0 +1,9 @@
+# A restore judged on nothing but the process exiting zero.
+restoreCheck:
+  enabled: true
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealConfig: |
+    seal "awskms" {}
+  canary:
+    enabled: false

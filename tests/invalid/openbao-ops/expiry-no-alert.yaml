@@ -1,0 +1,3 @@
+# An expiry check that tells nobody is a log line.
+certificateExpiry:
+  enabled: true

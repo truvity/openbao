@@ -1,0 +1,7 @@
+# The alert text needs the renewal lead time in seconds; "30d" is not hours.
+serverCertificate:
+  renewBefore: 30d
+certificateExpiry:
+  enabled: true
+  alert:
+    sns: {enabled: true, topicArn: t, region: r}

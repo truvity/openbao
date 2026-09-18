@@ -1,0 +1,13 @@
+# The walk starts from a root you hold, never from the restored copy's.
+restoreCheck:
+  enabled: true
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealConfig: |
+    seal "awskms" {}
+  pki:
+    enabled: true
+    intermediate: {issuer: example-2026}
+    issuing: {issuerPrefix: example-2026}
+    namespaces: [devel]
+    domain: example.internal

@@ -1,7 +1,8 @@
 restoreCheck:
   enabled: true
-  canary:
-    namespaces: [devel]
+  sealConfig: |
+    seal "awskms" {}
   fetch:
     s3:
       enabled: true
+      region: r

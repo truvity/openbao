@@ -4,20 +4,31 @@
 {{- if not ($c.issuerRef.name | default "") }}
 {{- fail "serverCertificate.issuerRef.name is required — the issuer is the estate's, never the chart's" }}
 {{- end }}
+{{- $names := list }}
+{{- if $c.serviceDnsNames }}
 {{- $svc := .Values.server.service }}
 {{- $active := .Values.server.activeService }}
 {{- $peers := .Values.server.headlessService }}
-{{- $names := list }}
 {{- range $n := (list $svc (printf "%s.%s.svc" $svc $ns) $active (printf "%s.%s.svc" $active $ns) (printf "*.%s" $peers) (printf "*.%s.%s.svc" $peers $ns)) }}
 {{- $names = append $names $n }}
 {{- end }}
+{{- end }}
 {{- with $c.externalDnsName }}{{- $names = prepend $names . }}{{- end }}
 {{- range $n := $c.extraDnsNames }}{{- $names = append $names $n }}{{- end }}
+{{- if not $names }}
+{{- fail "serverCertificate names no host — set externalDnsName, extraDnsNames, or serviceDnsNames: true" }}
+{{- end }}
+{{- $cn := $c.commonName | default $c.externalDnsName }}
 ---
-{{- /* The SAN set is generated, not listed: the Service, the active-only
-       Service, and a wildcard over the headless peer names — a Raft peer
-       dials another peer by its pod DNS name, so a certificate that names
-       only the Service cannot form a cluster.
+{{- /* With serviceDnsNames the SAN set is generated, not listed: the
+       Service, the active-only Service, and a wildcard over the headless
+       peer names — a Raft peer dials another peer by its pod DNS name, so
+       a certificate that names only the Service cannot form a cluster
+       unless the peers verify another name (leader_tls_servername).
+
+       Without it the certificate carries the endpoint alone, which is what
+       a name-constrained chain allows; every in-cluster client then
+       verifies that name instead of the one it dials.
 
        It deliberately does NOT name a load balancer's own hostname. A
        replaced load balancer then needs no reissue. */}}
@@ -32,7 +43,13 @@ metadata:
   {{- end }}
 spec:
   secretName: {{ .Values.server.tlsSecretName }}
-  {{- with $c.commonName }}
+  issuerRef:
+    {{- toYaml $c.issuerRef | nindent 4 }}
+  duration: {{ $c.duration }}
+  renewBefore: {{ $c.renewBefore }}
+  privateKey:
+    {{- toYaml $c.privateKey | nindent 4 }}
+  {{- with $cn }}
   commonName: {{ . | quote }}
   {{- end }}
   dnsNames:
@@ -43,10 +60,4 @@ spec:
   ipAddresses:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  duration: {{ $c.duration }}
-  renewBefore: {{ $c.renewBefore }}
-  privateKey:
-    {{- toYaml $c.privateKey | nindent 4 }}
-  issuerRef:
-    {{- toYaml $c.issuerRef | nindent 4 }}
 {{- end }}
