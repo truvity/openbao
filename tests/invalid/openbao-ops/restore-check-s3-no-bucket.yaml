@@ -1,0 +1,7 @@
+restoreCheck:
+  enabled: true
+  canary:
+    namespaces: [devel]
+  fetch:
+    s3:
+      enabled: true
