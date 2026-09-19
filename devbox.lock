@@ -335,6 +335,44 @@
           "store_path": "/nix/store/1z33qhx89k48gj7d0g25qd0k9h0zhm8v-kubernetes-helm-4.2.4"
         }
       }
+    },
+    "openbao@2.6.2": {
+      "last_modified": "2026-08-27T07:16:00Z",
+      "resolved": "github:NixOS/nixpkgs/c27cdad491a991b11ed731760aa2ef8db0cb0410#openbao",
+      "source": "devbox-search",
+      "version": "2.6.2",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/88fc1zyfww5llpxz12ibhb12h72dwb8x-openbao-2.6.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/88fc1zyfww5llpxz12ibhb12h72dwb8x-openbao-2.6.2"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/908xnxld52isr748bp94bsik0fb5m5ay-openbao-2.6.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/908xnxld52isr748bp94bsik0fb5m5ay-openbao-2.6.2"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/b2c1isy1cnpzrpqy2pqzhw1lg38fz54k-openbao-2.6.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/b2c1isy1cnpzrpqy2pqzhw1lg38fz54k-openbao-2.6.2"
+        }
+      }
     }
   }
 }

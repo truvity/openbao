@@ -337,6 +337,33 @@ spells every field. Durations are Go durations (`15m`, `720h`).
 | `SSHRole` | `Name`, `AllowedUsers`, `DefaultUser`, `KeyTypes`, `KeyIDFormat`, `Extensions`, `TTL`, `MaxTTL` | all but extensions | principals spelled out; never root |
 | `KVLayout` | rows of `Kind`, `Key`, `Properties`, `Writer` | kind, key, properties | `Validate`, `SecretsFor(kind)`, `SecretForKey(key)`, `Kinds()`; `{name}` placeholders |
 
+The access-roster preset ([integrations/access-roster.md](integrations/access-roster.md#the-preset)):
+
+| Type | Field | Default | What |
+|---|---|---|---|
+| `Roster` | `Issuer` | required | discovery URL and bound issuer of both doors |
+| | `TTL` | required | a login token's whole life, on both doors |
+| | `Audience` | `openbao` | the roster role's bound audience: the issuer's exchange client |
+| | `GroupsClaim`, `UserClaim` | `groups`, `sub` | the claims both roles map |
+| | `ClaimMappings` | none | claim -> alias metadata, on both roles |
+| | `Mount`, `Role` | `jwt-roster`, `roster` | the people-and-jobs door and its one role |
+| | `Description` | none | the door's description |
+| | `UI` | none | adds the web UI's door |
+| `RosterUI` | `RedirectURIs` | required | the UI's callback, `UICallback(address, mount)` |
+| | `Mount`, `ClientID` | `oidc`, `openbao-ui` | the UI's door and the issuer client it signs in as |
+| | `Scopes` | `profile`, `email` | the OIDC scopes asked for |
+| | `Description` | none | the door's description |
+
+Methods: `Door()`, `UIDoor()`, `Doors()`, `DoorPaths()`, `Identity(metadata)`
+(the roster door primary), `Grant(group, rules...)` and
+`JobGrant(group, rules...)` (a policy named after the group, admitted
+through every door or the roster door alone), `Bootstrap(operators)` (the
+operators' door in root, for `Desired.Bootstrap`), `RootUI(operators)`
+(the UI's door into root). `OperatorPolicy(name)` is every capability on
+`*`. The names are constants: `RosterMount`, `RosterRole`,
+`RosterAudience`, `RosterGroupsClaim`, `RosterUserClaim`, `RosterUIMount`,
+`RosterUIClient`.
+
 Helpers: `ServiceAccountSubject(namespace, serviceAccount)`,
 `Identity.GroupName(group, door)`, `Identity.GroupMetadata(door)`,
 `DurationSeconds(duration)`, `Desired.Applied()` (root, then the

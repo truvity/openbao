@@ -78,6 +78,14 @@ An `oidc` mount (`type: oidc`) is the web UI's door: a browser sign-in as
 It keeps the namespace in the OIDC state, so one redirect URI serves every
 namespace, and it is listed on the sign-in page.
 
+For an issuer whose tokens carry a flat groups claim -- access-roster's,
+or one shaped like it -- `model.Roster` builds both doors, the grants that
+turn a group name into a policy, and the operators' bootstrap door from
+one value. [integrations/access-roster.md](integrations/access-roster.md)
+is that contract end to end, and
+[`examples/roster`](../examples/roster/roster.go) a whole server built
+with it, which the conformance test applies to a real server.
+
 ### Groups and doors
 
 OpenBAO gives an identity group **one** alias: writing a second alias for

@@ -1,0 +1,222 @@
+bootstrap:
+  auth:
+    - path: jwt-roster
+      discoveryUrl: https://id.example.com
+      roles:
+        - name: roster
+          boundAudiences:
+            - openbao
+          userClaim: sub
+          groupsClaim: groups
+          ttl: 15m
+  policies:
+    - name: all:openbao:operator
+      rules:
+        - path: '*'
+          capabilities:
+            - create
+            - read
+            - update
+            - patch
+            - delete
+            - list
+            - sudo
+  groups:
+    - name: all:openbao:operator
+      policies:
+        - all:openbao:operator
+      doors:
+        - jwt-roster
+root:
+  pki:
+    - path: pki-root
+      description: the example root; signs the environment's issuing CA only
+      defaultLeaseTtl: 8760h
+      maxLeaseTtl: 8760h
+      defaultIssuer: example-root
+      issuers:
+        - name: example-root
+          commonName: Example Root CA
+          organization: Example Org
+          keyCurve: P-384
+          ttl: 8760h
+          maxPathLength: 1
+          selfSigned: true
+  auth:
+    - path: oidc
+      type: oidc
+      clientId: openbao-ui
+      defaultRole: roster
+      discoveryUrl: https://id.example.com
+      roles:
+        - name: roster
+          type: oidc
+          boundAudiences:
+            - openbao-ui
+          userClaim: sub
+          groupsClaim: groups
+          allowedRedirectUris:
+            - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+          oidcScopes:
+            - profile
+            - email
+          ttl: 15m
+  policies: []
+  groups:
+    - name: all:openbao:operator
+      policies:
+        - all:openbao:operator
+      doors:
+        - oidc
+namespaces:
+  - name: dev
+    kv:
+      - path: kv
+        description: the environment's secrets
+    pki:
+      - path: pki
+        description: the environment's credential certificates
+        defaultLeaseTtl: 1h
+        maxLeaseTtl: 720h
+        defaultIssuer: example-dev
+        issuers:
+          - name: example-dev
+            commonName: Example Dev Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 4380h
+            maxPathLength: 0
+            signedBy:
+              mount: pki-root
+              issuer: example-root
+        credentialRoles:
+          - name: db-client
+            issuer: example-dev
+            subjectMount: jwt-roster
+            cnValidations:
+              - email
+            server: false
+            client: true
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+    ssh:
+      - path: ssh
+        description: the environment's SSH user CA
+        keyType: ed25519
+        roles:
+          - name: user
+            allowedUsers:
+              - example
+            defaultUser: example
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions:
+              - permit-pty
+            ttl: 30m
+            maxTtl: 1h
+          - name: admin
+            allowedUsers:
+              - example-admin
+            defaultUser: example-admin
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions:
+              - permit-pty
+            ttl: 30m
+            maxTtl: 1h
+    auth:
+      - path: jwt-roster
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: roster
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            ttl: 1h
+      - path: oidc
+        type: oidc
+        clientId: openbao-ui
+        defaultRole: roster
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: roster
+            type: oidc
+            boundAudiences:
+              - openbao-ui
+            userClaim: sub
+            groupsClaim: groups
+            allowedRedirectUris:
+              - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+            oidcScopes:
+              - profile
+              - email
+            ttl: 1h
+    policies:
+      - name: dev:db:client
+        rules:
+          - path: pki/sign/db-client
+            capabilities:
+              - update
+      - name: dev:openbao:reader
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - read
+          - path: kv/metadata/*
+            capabilities:
+              - list
+              - read
+      - name: dev:ssh:admin
+        rules:
+          - path: ssh/sign/admin
+            capabilities:
+              - update
+      - name: dev:ssh:user
+        rules:
+          - path: ssh/sign/user
+            capabilities:
+              - update
+      - name: ci-release
+        rules:
+          - path: kv/data/ci/release
+            capabilities:
+              - read
+    groups:
+      - name: dev:db:client
+        policies:
+          - dev:db:client
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:openbao:reader
+        policies:
+          - dev:openbao:reader
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:ssh:admin
+        policies:
+          - dev:ssh:admin
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:ssh:user
+        policies:
+          - dev:ssh:user
+        doors:
+          - jwt-roster
+          - oidc
+      - name: ci-release
+        policies:
+          - ci-release
+        doors:
+          - jwt-roster
+identity:
+  primaryDoor: jwt-roster
+  metadata:
+    source: example issuer
+credentialMaxTtl: 1h
