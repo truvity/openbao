@@ -1,6 +1,8 @@
 # Reference
 
-Every value of both charts. `charts/<chart>/values.yaml` carries the same
+Every value of both charts, then the ceremony's
+[hierarchy file](#hierarchy-file), [`openbaoctl`](#openbaoctl) and the
+[`pkg/custody`](#pkgcustody) inputs. `charts/<chart>/values.yaml` carries the same
 keys with their defaults and a comment each, and `values.schema.json` is
 the authority on types: an unknown key fails the render.
 
@@ -241,3 +243,66 @@ Stores and PKI are independent: an install may render either or both.
 Two entries that would render the same object — two stores, a store and a
 writer, two anchors, two issuers, two certificates or their Secrets — fail
 the render instead of overwriting each other.
+
+## Hierarchy file
+
+What `openbaoctl pki` reads ([ceremony.md](ceremony.md#the-hierarchy-file)).
+Strict: an unknown key is an error. Paths are relative to the file.
+
+| Key | Type | Required | What |
+|---|---|---|---|
+| `serialNamespace` | string | no, `private-pki` | prefix of every deterministic serial's label (`<ns>-root-serial-v1`, `<ns>-intermediate-serial-v1`, `<ns>-emergency-server-serial-v1`); never change it for an existing root |
+| `root.generationId` | string | yes | the generation; part of the root's serial and of every artifact |
+| `root.subject.commonName`, `.organization` | string | CN yes | the root's subject; an empty organization is left out |
+| `root.notBefore` | RFC 3339 | yes | start of validity; fixed, so the template is reproducible |
+| `root.lifetime` | Go duration | yes | e.g. `175200h` |
+| `root.maxPathLen` | int ≥ 0 | yes | CA layers below the root; 0 is "leaves only", never unbounded |
+| `root.permittedDnsDomains` | list | no | a critical name constraint on the root; omit for none |
+| `root.artifact` | path | yes | where the root artifact is written, and `<artifact>.attempt` beside it |
+| `intermediates[].trustDomain` | string | yes | the intermediate's name (no spaces or slashes), unique; part of its serial |
+| `intermediates[].subject` | as above | CN yes | must equal the CSR's subject exactly |
+| `intermediates[].lifetime` | Go duration | yes | from the root's `notBefore`; must end inside the root |
+| `intermediates[].permittedDnsDomains` | list | no | a critical constraint that also excludes every IP; each name must sit inside the root's constraint, if any |
+| `intermediates[].artifact` | path | yes | the intermediate artifact, and its `.attempt` |
+| `emergencyServer.dnsName` | DNS name | for `sign-emergency-server` | the one name a break-glass leaf serves; no wildcard |
+| `emergencyServer.lifetime` | Go duration | no, `168h` | at most `720h` |
+
+## openbaoctl
+
+Every signing command asks the KMS key for at most one signature. The
+region is read from the key ARN; `--aws-profile` (default: the SDK's
+chain) is the identity to start from and `--role-arn` the ceremony role
+assumed on top of it.
+
+| Command | Flags | Signs |
+|---|---|---|
+| `pki create-root` | `--hierarchy`, `--key-arn` (required), `--import-certificate`, `--aws-profile`, `--role-arn` | once, unless the artifact exists or a certificate is imported |
+| `pki sign-intermediate` | `--hierarchy`, `--trust-domain`, `--csr` (required); exactly one of `--print-template` or `--confirm-template <sha256>`; `--key-arn` (default: the root artifact's), `--aws-profile`, `--role-arn` | only with `--confirm-template`, once, unless the artifact exists |
+| `pki verify-intermediate` | `--hierarchy`, `--trust-domain` (required), `--chain-out` (must not exist; default prints the chain) | never; needs no credential |
+| `pki sign-emergency-server` | `--hierarchy`, `--csr` (required); exactly one of `--print-template` or `--confirm-template`; `--not-before` (required to sign: the value `--print-template` printed), `--out` (default `openbao-emergency.crt`, must not exist), `--key-arn`, `--aws-profile`, `--role-arn` | only with `--confirm-template`, once per run; nothing is committed |
+
+## pkg/custody
+
+`custody.Deploy(ctx, custody.Args{...}, opts...)`; `opts` are appended to
+every resource and provider ([custody.md](custody.md)).
+
+| Field | Default | What |
+|---|---|---|
+| `AccountID` | required | the custody account; also every provider's only allowed account |
+| `Partition` | `aws` | the partition every ARN is composed in |
+| `Profile` | none | the AWS shared-config profile of every provider |
+| `TrustedPrincipalARNPattern` | required | `ArnLike` pattern of the human administrators: assume both roles, administer the keys directly |
+| `AdminRoleName`, `CeremonyRoleName` | required, distinct | the two roles |
+| `PermissionsBoundaryPolicyName` | none | a customer-managed policy in the account, attached to both roles as their boundary |
+| `Generations[]` | at least one | `ID`, `Region` (primary), `ReplicaRegion` (must differ); oldest first, additive |
+| `Notify` | none | e-mail addresses subscribed to every generation's Sign alarm, in both regions |
+| `AliasPrefix` | `alias/private-pki/root/` | alias `<prefix><ID>`, the same in both regions |
+| `SignAlertPrefix` | `private-pki-root-sign-` | topic, rule and alarm `<prefix><ID>` |
+| `DescriptionPrefix` | `Private PKI root` | key description `<prefix> <ID> (multi-region primary)` / `(DR replica)` |
+| `RolesProviderName` | `private-pki-root-primary` | the roles' provider, `provider/aws/<name>`, in the first generation's primary region |
+| `DeletionWindowDays` | `30` | 7–30 |
+| `Tags` | none | `func(TagScope) map[string]string`, called for `roles`, each generation's `key` and each generation's `sign-alert` |
+
+`Deploy` returns the roles and, per generation, the alias, the regions,
+the key and the replica, for the caller's exports.
+

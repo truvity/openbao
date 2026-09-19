@@ -1,11 +1,17 @@
 {
   "packages": [
+    "go@1.27.0",
+    "golangci-lint@2.13.1",
+    "gopls@latest",
     "goreleaser@latest",
+    "govulncheck@1.7.0",
     "just-lsp@latest",
     "just@latest",
     "kubernetes-helm@latest"
   ],
-  "env": {},
+  "env": {
+    "CGO_ENABLED": "0"
+  },
   "shell": {
     "init_hook": [],
     "scripts": {}

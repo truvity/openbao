@@ -1,15 +1,20 @@
 # openbao
 
 OpenBAO for Kubernetes estates, as reusable mechanism: the two halves the
-upstream server chart leaves out.
+upstream server chart leaves out, and the KMS-rooted CA ceremony its PKI
+hangs from.
 
 | Artifact | What | Status |
 |---|---|---|
 | `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
 | `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | unreleased |
+| `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format | unreleased |
+| `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region | unreleased |
+| `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release | unreleased |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
-from the first release on.
+from the first release on; the Go module is `github.com/truvity/openbao`
+at the same tag, and `openbaoctl` is attached to the GitHub Release.
 
 ## Who it is for
 
@@ -20,6 +25,12 @@ that reloads itself and is noticed before it ends, and clusters that read,
 write and issue through OpenBAO without a stored token. The **server** is
 not here: [docs/server.md](docs/server.md) describes the shape these charts
 assume of it. These charts are what an install is judged on when it fails.
+
+The ceremony and custody are for a team whose OpenBAO PKI should chain to
+a root nobody can copy: an AWS account holds the root key in KMS, a Pulumi
+Go program deploys its custody, and a person runs the ceremony with a
+second person checking the template. They do not create OpenBAO's mounts
+or roles, and they sign nothing on their own.
 
 ## The model
 
@@ -34,6 +45,13 @@ stores bounded by namespace conditions, writer stores that present the
 writer's own token, and cert-manager issuers whose roots are distributed as
 a trust bundle. Object storage and alerting are containers with a
 contract, with S3 and SNS as presets; see [docs/doctrine.md](docs/doctrine.md).
+
+Above both sits the **root**: a KMS key that signs a handful of
+certificates in its life -- itself, one intermediate per trust domain
+(whose keys stay in OpenBAO), and a break-glass leaf when OpenBAO cannot
+issue its own serving certificate. Each signature is a reviewed template,
+signed once, recorded as a public artifact the estate commits, and
+announced by an alarm.
 
 ## Install and a worked example
 
@@ -111,17 +129,45 @@ pki:
       role: example-private
 ```
 
+For the ceremony, a hierarchy file and one command per step
+([docs/ceremony.md](docs/ceremony.md) walks through all of them):
+
+```sh
+go install github.com/truvity/openbao/cmd/openbaoctl@latest   # or the release archive
+openbaoctl pki sign-intermediate --hierarchy pki.yaml --trust-domain private \
+  --csr private.csr --print-template                         # no credential; prints the hash
+openbaoctl pki sign-intermediate --hierarchy pki.yaml --trust-domain private \
+  --csr private.csr --confirm-template <sha256> --role-arn <ceremony role ARN>
+```
+
+```go
+// the custody, from a Pulumi Go program
+_, err := custody.Deploy(ctx, custody.Args{
+    AccountID:                  "111122223333",
+    TrustedPrincipalARNPattern: "arn:aws:iam::111122223333:role/example-admin-*",
+    AdminRoleName:              "private-pki-root-admin",
+    CeremonyRoleName:           "private-pki-root-ceremony",
+    Generations:                []custody.Generation{{ID: "example-root-2026-01", Region: "eu-example-1", ReplicaRegion: "eu-example-2"}},
+    Notify:                     []string{"security@example.com"},
+})
+```
+
 ## Documentation
 
 - [docs/adoption.md](docs/adoption.md) — prerequisites, install order,
   adopting objects that already run, the zero-diff gate
 - [docs/safety.md](docs/safety.md) — the backup regime, the traps, and
   every render-time refusal
-- [docs/reference.md](docs/reference.md) — every value of both charts
+- [docs/reference.md](docs/reference.md) — every value of both charts,
+  the hierarchy file, `openbaoctl` and `pkg/custody`
 - [docs/doctrine.md](docs/doctrine.md) — the two halves, the container
   contracts, and the ownership contract
 - [docs/server.md](docs/server.md) — the upstream server's values these
   charts assume
+- [docs/ceremony.md](docs/ceremony.md) — the KMS-rooted CA ceremony,
+  step by step
+- [docs/custody.md](docs/custody.md) — the root key's policy, roles and
+  Sign alarm
 - [CHANGELOG.md](CHANGELOG.md) — what changed for a consumer, per version
 
 ## The rule that makes this repository public
@@ -137,15 +183,15 @@ This repository follows the shared
 
 ## Status
 
-Extracted from a production estate, where the same mechanism runs. The
-charts themselves are not yet released; the first release is v0.1.0.
+Used in production by its maintainers. Nothing is released yet; the first
+release, v0.1.0, carries the charts, the Go module and `openbaoctl`.
 
 ## Development
 
 ```sh
 devbox shell        # or direnv
-just check          # lint + golden renders + leak canary
-just golden         # regenerate tests/golden after a template change — review the diff
+just check          # build + lint + golden renders + Go tests + leak canary
+just golden         # regenerate tests/golden and the ceremony's template goldens — review the diff
 ```
 
 `tests/invalid/<chart>/` holds one fixture per validation rule. Each must
@@ -155,8 +201,9 @@ that will quietly stop working.
 ## Releasing
 
 Push a tag `vX.Y.Z`. The shared release workflow creates the GitHub Release
-and pushes both charts at that version — a chart's own `version` field is a
-placeholder that never moves.
+with the `openbaoctl` binaries and pushes both charts at that version — a
+chart's own `version` field is a placeholder that never moves — and the
+tag is the Go module's version.
 
 The first release is a manual tag: auto-release never cuts one. It is
 present but not armed (`vars.AUTO_RELEASE` is unset); when armed it cuts

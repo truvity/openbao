@@ -2,14 +2,33 @@
 # which runs goreleaser and then pushes every chart under charts/ to
 # ghcr.io/truvity/charts at the tag's version.
 #
-# No binaries: this repository ships Helm charts (and a Go library, which
-# needs no build step) — goreleaser's job here is the GitHub Release with
-# the changelog, nothing else. `skip: true` is its documented shape for
-# library projects.
+# One tag stamps everything: the charts, the Go module (a module needs no
+# build step; the tag is its version) and the openbaoctl binaries built
+# here. openbaoctl is a binary, not an image: it is run by a person at a
+# ceremony, against a KMS key they were granted, and a container adds a
+# credential hand-off and nothing else.
 version: 2
 
+project_name: openbao
+
 builds:
-  - skip: true
+  - id: openbaoctl
+    main: ./cmd/openbaoctl
+    binary: openbaoctl
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+
+archives:
+  - id: openbaoctl
+    ids: [openbaoctl]
+    formats: [tar.gz]
+    name_template: "openbaoctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
 
 changelog:
   sort: asc
@@ -22,3 +41,11 @@ changelog:
 
 release:
   github: {}
+  header: |
+    ## openbao {{ .Tag }}
+
+    Charts: `oci://ghcr.io/truvity/charts/openbao-ops` and
+    `oci://ghcr.io/truvity/charts/openbao-consumers` at `{{ .Version }}`.
+    Go module: `go get github.com/truvity/openbao@{{ .Tag }}`.
+    CLI: the `openbaoctl` archives below, or
+    `go run github.com/truvity/openbao/cmd/openbaoctl@{{ .Tag }} --help`.

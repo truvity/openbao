@@ -1,0 +1,18 @@
+origin intermediate certificate template
+  root generation:     example-root-2026-01
+  root artifact:       pki/example-root-2026-01.yaml
+  artifact:            pki/example-root-2026-01-intermediate-origin.yaml
+  csr public key:      ECDSA P-384, SPKI SHA-256 A29E299FCC1D7996DBEAD21ACB48B16EDEF867E68C1DF82598AE0A6F9708D198
+  version:             3
+  serial:              430D52E82BE41F5310542C112090A64CDB47CB7C
+  signature algorithm: ECDSA-SHA384
+  issuer:              CN=Example Private Root 2026-01,O=Example Org
+  subject:             CN=example.com Origin Intermediate CA,O=Example Org
+  not before:          2026-01-01T00:00:00Z
+  not after:           2035-12-30T00:00:00Z
+  basic constraints:   critical, CA:TRUE, pathlen:2
+  key usage:           critical, Certificate Sign, CRL Sign
+  subject key id:      A29E299FCC1D7996DBEAD21ACB48B16EDEF867E6
+  authority key id:    A7E1F54820D563BD4E39ACE8C26CCF10E7310EB1
+  name constraints:    none (names are constrained by role policy only)
+  template sha256:     c3981ec08f76ac70720435d2d83c7a7aefbaf3b8018592a8edd5c0de50e1b8bc
