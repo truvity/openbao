@@ -13,8 +13,9 @@ hangs from.
 | `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release | unreleased |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
-from the first release on; the Go module is `github.com/truvity/openbao`
-at the same tag, and `openbaoctl` is attached to the GitHub Release.
+from v0.1.0 on; from v0.2.0 on the same tag is also the Go module
+`github.com/truvity/openbao`'s version, and `openbaoctl` is attached to the
+GitHub Release.
 
 ## Who it is for
 
@@ -183,8 +184,8 @@ This repository follows the shared
 
 ## Status
 
-Used in production by its maintainers. Nothing is released yet; the first
-release, v0.1.0, carries the charts, the Go module and `openbaoctl`.
+Used in production by its maintainers. The charts are released from
+v0.1.0; the Go module and `openbaoctl` arrive in v0.2.0.
 
 ## Development
 
