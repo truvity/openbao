@@ -15,7 +15,12 @@ lint:
     set -euo pipefail
     for chart in {{ charts }}; do
       helm lint "charts/$chart"
-      ! helm template x "charts/$chart" --set bogusKey=1 >/dev/null 2>&1
+      # Not `! helm template ...`: bash's `set -e` ignores a command
+      # negated with `!`, so such a probe could never fail the recipe.
+      if helm template x "charts/$chart" --set bogusKey=1 >/dev/null 2>&1; then
+        echo "$chart: an unknown key rendered" >&2
+        exit 1
+      fi
       for values in tests/invalid/"$chart"/*.yaml; do
         if helm template invalid "charts/$chart" -f "$values" >/dev/null 2>&1; then
           echo "RENDERED BUT SHOULD HAVE FAILED: $values" >&2
