@@ -6,8 +6,7 @@ GitHub Release lists them. Both charts are released at every version.
 
 ## v0.1.0
 
-Not yet tagged. The first release; entries for changes that land before
-the tag go here.
+The first release.
 
 - **`openbao-ops`**: snapshots verified against their own `SHA256SUMS`
   before they are stored, in retention tiers; a weekly restore check that
