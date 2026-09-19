@@ -93,6 +93,41 @@ back nothing for a mount it has just created. The server shape in
   the old and the new at once is what lets leaves be reissued in any
   order. A single-source bundle makes it a flag day.
 
+## The ceremony: one signature, reviewed, never twice
+
+A root key that signs something by accident cannot take it back: the root
+publishes no revocation, and every client trusts what it signs. The
+ceremony ([ceremony.md](ceremony.md)) takes a position on each way that
+happens, and its tests run every refusal against a KMS double.
+
+- **An ambiguous signature fails closed.** Before the one KMS call,
+  `<artifact>.attempt` is created exclusively and fsynced, and it is never
+  removed. A crash, a timeout or an unwritable artifact after that point
+  leaves the reservation without an artifact, and every rerun refuses:
+  the generation (for a root) or the CSR (for an intermediate) is burnt,
+  instead of the key being asked for a second signature whose first may
+  exist.
+- **Only a reviewed template is signed.** Signing needs the SHA-256 of the
+  exact TBSCertificate, derived offline by `--print-template`; a mismatch
+  is refused before the reservation, so it costs nothing. The signed body
+  is checked against the hash afterwards.
+- **Only the committed root's key signs below it.** The KMS public key
+  must be the committed root's, or nothing is reserved and nothing signed.
+- **The CSR contributes its key and nothing else.** P-384, self-signed,
+  exactly the authored subject, no alternative name, not the root's own
+  key; everything else in the certificate comes from the spec.
+- **A break-glass leaf is one name for days.** No wildcard, one DNS name,
+  server auth only, at most 30 days (default 7), inside the root's
+  validity and name constraint; `--out` is checked before the signature,
+  because a signature whose output cannot be written is an alarm for
+  nothing.
+- **An installer proves before it installs.** `LoadSignedIntermediate`
+  re-derives the template from the spec and checks the committed artifact
+  against it and the root; a swapped or edited file is refused.
+- **Custody cannot sign or delete.** The admin role has neither; the
+  ceremony role signs only `ECDSA_SHA_384`; every Sign raises an alarm in
+  both regions ([custody.md](custody.md)).
+
 ## Refused at render time
 
 | Refusal | What it prevents |

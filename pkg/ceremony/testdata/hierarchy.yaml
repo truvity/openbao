@@ -1,0 +1,27 @@
+# A two-domain hierarchy below one KMS root: the shape docs/ceremony.md
+# walks through. Artifact paths are relative to this file.
+root:
+  generationId: example-root-2026-01
+  subject:
+    commonName: Example Private Root 2026-01
+    organization: Example Org
+  notBefore: "2026-01-01T00:00:00Z"
+  lifetime: 175200h
+  maxPathLen: 3
+  artifact: roots/example-root-2026-01.yaml
+intermediates:
+  - trustDomain: private
+    subject:
+      commonName: example.internal Intermediate CA
+      organization: Example Org
+    lifetime: 87600h
+    permittedDnsDomains: [example.internal, cluster.local]
+    artifact: roots/example-root-2026-01-intermediate-private.yaml
+  - trustDomain: origin
+    subject:
+      commonName: example.com Origin Intermediate CA
+      organization: Example Org
+    lifetime: 87600h
+    artifact: roots/example-root-2026-01-intermediate-origin.yaml
+emergencyServer:
+  dnsName: openbao.example.internal

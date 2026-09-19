@@ -18,6 +18,12 @@
   `<canary.kvMount>/<canary.path>` holding exactly
   `{namespace: <that namespace>}`.
 
+For the ceremony ([ceremony.md](ceremony.md)) and its custody
+([custody.md](custody.md)): an AWS account for the root key, a
+multi-region CloudTrail trail logging management events in it, a Pulumi
+program to call `pkg/custody` from, and the OpenBAO PKI mounts whose keys
+the intermediates certify.
+
 ## Install order
 
 1. `openbao-ops` beside the server. Splice the `tlsReload` fragment into
@@ -58,6 +64,29 @@ a second Application, or removal and addition on two different clocks
 automated pruning a window in which the objects are in neither: it
 deletes them, and they are recreated only afterwards.
 
+## Adopting an existing ceremony and custody
+
+A root that already exists keeps its artifacts and its key; nothing is
+signed to adopt it.
+
+- **The artifacts.** The root and intermediate artifacts, and their
+  `.attempt` reservations, are the files `pkg/ceremony` writes and reads:
+  keep them where they are and point the hierarchy (or your own specs) at
+  them. Set `serialNamespace` to the label prefix the root was created
+  with -- the serial is derived from it, and a root created under another
+  prefix fails verification rather than being silently re-derived.
+  `openbaoctl pki create-root` then verifies the root and signs nothing,
+  and `pki sign-intermediate --print-template` against the same CSR must
+  print the template, and the hash, the previous tooling printed, byte
+  for byte.
+- **The custody.** Call `custody.Deploy` from the program that manages the
+  custody today, with the role names, prefixes, description prefix,
+  provider name and tags that program uses, so every Pulumi name and every
+  input comes out the same ([custody.md](custody.md#adopting-existing-custody)).
+  The preview must show no change to any key, alias, role or alarm; the
+  keys are protected and retained, so a URN change would show as a
+  replacement and must never be applied.
+
 ## The zero-diff gate
 
 Adopt a release only when your render is byte-identical to what runs, or
@@ -66,3 +95,8 @@ differs by exactly the change the release announces in
 
 Moving from hand-written objects to these charts is one change whose
 render diff is empty: set the names above first.
+
+For the Go module the render is the Pulumi preview of the program that
+calls `pkg/custody` (no change but provider metadata) and, for the
+ceremony, `--print-template` against the committed root and a known CSR
+(byte-identical to what the previous version printed).

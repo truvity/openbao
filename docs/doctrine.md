@@ -48,6 +48,25 @@ holds — and expects a two-tier hierarchy under an offline root:
 Each link is `bao pki verify-sign`: signature, path, key id, subject and
 trust, which also evaluates path length and name constraints.
 
+## The root key is in KMS, and the ceremony is not a resource
+
+The PKI's root is a KMS key (P-384, multi-region, protected and retained)
+and its certificate is signed by an explicit operator ceremony, never by a
+Pulumi resource or a controller: an imperative, once-only signature has no
+safe create/read lifecycle, and an apply callback can run again on a
+refresh or a retry. So the two are separate on purpose:
+
+- **`pkg/custody`** is declarative and signs nothing: the key, its policy,
+  the two roles and the Sign alarm ([custody.md](custody.md)).
+- **`pkg/ceremony`** signs, at most once per artifact, only a template a
+  person reviewed, and writes public artifacts the estate commits
+  ([ceremony.md](ceremony.md)).
+
+Intermediates' keys live in OpenBAO; the root certifies them and never
+sees them. The break-glass leaf exists so that OpenBAO's own serving
+certificate can come from the same hierarchy as everything else, with no
+second PKI kept aside for the day OpenBAO cannot issue.
+
 ## Ownership contract
 
 | This repository | The consuming estate |
@@ -56,6 +75,7 @@ trust, which also evaluates path length and name constraints.
 | the auth shape: audience-scoped, short-lived, projected tokens | mounts, roles, policies, namespaces |
 | that a snapshot is verified before it is stored and read back after | the schedule and retention that suit its risk |
 | the object and container contracts | the images, the CNI, the issuers, the trust roots, the alert channel |
+| the ceremony's checks, the artifact format, the key policy's shape | the hierarchy (names, lifetimes, constraints), the custody account, the regions, who may assume the roles, who is told of a Sign |
 
 The charts assume, and do not create, a least-privilege split:
 
@@ -90,6 +110,10 @@ the same ServiceAccount under another name.
   from the Services; a store's role defaults to its name, so the policy
   bounding it is findable from it.
 - **A refusal comes with its fixture** in `tests/invalid/<chart>/`.
+- **Nothing signs without a confirmed template hash**, and nothing signs
+  twice for one artifact.
+- **A Pulumi name or input the module derives never changes in a minor.**
+  Adopted custody must preview empty on every upgrade.
 - **A new capability renders nothing until asked for**, so an existing
   values file renders byte-for-byte the same after an upgrade unless the
   release says otherwise.

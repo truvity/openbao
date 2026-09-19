@@ -3,7 +3,7 @@
 
 charts := "openbao-ops openbao-consumers"
 
-# Lint every chart.
+# Lint every chart and the Go module.
 #
 # The schema is part of the lint: an unknown key must fail the render, not
 # be silently ignored. Everything a schema cannot express — a snapshot job
@@ -24,14 +24,36 @@ lint:
       done
       echo "$chart: schema and $(ls tests/invalid/"$chart"/*.yaml | wc -l | tr -d ' ') negative fixtures OK"
     done
+    golangci-lint config verify
+    golangci-lint run ./...
 
-# Golden renders: render every test case and compare with tests/golden.
+# Golden renders (every chart test case against tests/golden) and the Go
+# tests, which run every ceremony against a KMS double.
 test:
     hack/golden.sh
+    go test ./...
 
-# Regenerate the golden renders — review the diff before committing.
+# Regenerate the golden renders and the ceremony's template goldens —
+# review the diff before committing.
 golden:
     hack/golden.sh update
+    UPDATE_GOLDEN=1 go test ./pkg/ceremony/ -run Golden
+
+# Compile everything, openbaoctl included.
+build:
+    go build ./...
+
+# Format Go files.
+fmt:
+    golangci-lint fmt ./...
+
+# Reachable Go advisories.
+vuln:
+    govulncheck ./...
+
+# Run go mod tidy.
+tidy:
+    go mod tidy
 
 # The reason this repository can be public. Runs in CI as its own job.
 leak-canary:
@@ -44,4 +66,4 @@ package:
     for chart in {{ charts }}; do helm package "charts/$chart" --destination dist/; done
 
 # Everything CI runs on a pull request.
-check: lint test leak-canary
+check: build lint test leak-canary

@@ -1,0 +1,18 @@
+private intermediate certificate template
+  root generation:     example-root-2026-01
+  root artifact:       pki/example-root-2026-01.yaml
+  artifact:            pki/example-root-2026-01-intermediate-private.yaml
+  csr public key:      ECDSA P-384, SPKI SHA-256 DDD12FA199A8C36B4A8090E2642696AE80EF733E5D1263418949A51BB5DC31EC
+  version:             3
+  serial:              70B0472953963ADE89C45EFC26372DF6CB9973B8
+  signature algorithm: ECDSA-SHA384
+  issuer:              CN=Example Private Root 2026-01,O=Example Org
+  subject:             CN=example.internal Intermediate CA,O=Example Org
+  not before:          2026-01-01T00:00:00Z
+  not after:           2035-12-30T00:00:00Z
+  basic constraints:   critical, CA:TRUE, pathlen:2
+  key usage:           critical, Certificate Sign, CRL Sign
+  subject key id:      DDD12FA199A8C36B4A8090E2642696AE80EF733E
+  authority key id:    A7E1F54820D563BD4E39ACE8C26CCF10E7310EB1
+  name constraints:    critical, permitted DNS: example.internal, cluster.local; excluded IP: 0.0.0.0/0, ::/0
+  template sha256:     4bf1e2c5bb21d13d642cd15115a949cf82a6ab027b40c00685ed07df539ad9a0
