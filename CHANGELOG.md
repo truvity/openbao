@@ -5,6 +5,35 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.3.0
+
+OpenBAO's own configuration arrives as a model and its apply; both charts
+render exactly what v0.2.0 rendered, and nothing in `pkg/ceremony`,
+`pkg/custody` or `openbaoctl` changes.
+
+- **`pkg/model`**: OpenBAO's desired state per namespace and engine -- KV
+  v2 mounts with a restore canary, JWT and OIDC auth mounts with workload
+  roles (a bound ServiceAccount subject) and people roles (an issuer's
+  groups claim), identity groups with one identity group per door, ACL
+  policies, PKI mounts whose issuers are self-signed, signed by an issuer
+  of an earlier mount or signed outside OpenBAO, host-name and credential
+  roles, and SSH user CAs with their roles. The namespace tree is one
+  level: root and one namespace per environment. The types carry yaml
+  tags; `Validate` refuses a state that could not be applied as it reads
+  (docs/safety.md lists every refusal). `KVLayout` is the writer/reader
+  contract of a KV mount's keys. No loader and no configuration format.
+- **`pkg/apply`**: `Deploy` converges a server onto a model with the Pulumi
+  vault provider: it validates, runs `BeforeApply` on an apply only, logs
+  in with a JWT whose token it fetches afterwards, and registers every
+  resource on the caller's context, never the bootstrap door it logs in
+  through. CA keys, certificates, issuers, mount configuration, SSH engines
+  and credential roles are protected; every signature waits for its signer
+  mount's URLs. Resource names follow a fixed scheme (docs/model.md) that
+  never changes in a minor, and `Options.Rename` keeps a running
+  configuration's own names, so adoption previews empty.
+  `SnapshotJob` is the pre-apply snapshot from `openbao-ops`' CronJob;
+  `NewProvider` logs another program in the same way.
+
 ## v0.2.0
 
 The Go module and `openbaoctl` arrive; both charts render exactly what

@@ -1,4 +1,4 @@
-# Safety — what can break, and what the charts do about it
+# Safety — what can break, and what the charts and the module do about it
 
 A secret store fails quietly. Backups that were never opened, a restore
 judged on an exit code, a renewed certificate nobody loaded, a certificate
@@ -92,6 +92,81 @@ back nothing for a mount it has just created. The server shape in
 - **The bundle carries every root.** During a root migration, trusting
   the old and the new at once is what lets leaves be reissued in any
   order. A single-source bundle makes it a flag day.
+
+## The apply: a configuration that cannot lock itself out
+
+`pkg/apply` converges a whole server, so the ways it can hurt are the ways a
+configuration tool always has -- plus the ones OpenBAO adds. Each is
+answered in the model or the apply ([model.md](model.md)), and each answer
+has a test.
+
+- **Never the door it logs in through.** The operators' auth mount in root
+  is the model's `bootstrap`: declared for review and never applied. An
+  apply that owned it could change or remove it halfway through a run, and
+  the rest of the run -- and every run after -- would have no way in.
+- **A snapshot before anything changes.** `SnapshotJob` runs a Job from the
+  snapshot CronJob and waits for it, before the login. It steps aside only
+  for a named reason or on a fresh install; a failed snapshot stops the
+  apply.
+- **One alias per identity group.** OpenBAO keeps one alias per group and
+  silently replaces it on a second write, so one group aliased on the CLI's
+  mount and then the UI's would move its first alias to the second and lock
+  every CLI login out. Each door gets its own identity group.
+- **A role that binds nobody.** A JWT role with neither a bound subject nor
+  a groups claim admits every token issued for its audience. `Validate`
+  refuses it.
+- **A policy that names a path twice.** OpenBAO keeps the second stanza, so
+  such a policy grants whichever of the two nobody reviewed. Refused, as is
+  every other name declared twice in one namespace: the second write would
+  replace the first without a diff anyone reads.
+- **A certificate that points nowhere.** A certificate carries the issuer,
+  CRL and OCSP URLs its issuing mount had when it was signed, for its whole
+  life. Every signature waits for the signer mount's URL and CRL
+  configuration, and a signer must be an issuer of a mount declared before
+  the one it signs into.
+- **A constraint nobody declared.** An empty constraint list is left out,
+  never sent empty, and an issuer with no `nameConstraints` carries no
+  extension at all -- even one that only excludes IP ranges would be a
+  constraint the chain above does not have.
+- **A replaced CA.** Every key, certificate, import, issuer and mount
+  configuration is protected: a Pulumi replacement of a CA is a refusal,
+  never a new key. Retiring a CA is a migration -- a second issuer beside
+  the first, roles moved one by one, the old one drained -- not an update.
+- **Adopting under new names.** The apply registers on the caller's
+  context, never inside a component whose type would enter every URN; its
+  names never change in a minor, and `Options.Rename` keeps a running
+  state's own names. A name that changes is a delete and a create.
+- **Reads on a standby** ([above](#reads-on-a-standby)): the apply reads
+  back each object it writes, so the server forwards every request to the
+  active node.
+
+## Refused before anything is applied
+
+`model.Desired.Validate` runs first in `apply.Deploy`, and an estate runs
+it wherever it derives a model; `Deploy` adds the checks only its options
+can answer. Nothing is registered before a refusal.
+
+| Refusal | What it prevents |
+|---|---|
+| a nested namespace name, a namespace declared twice, a named root | a tree the one-level design does not have, or one namespace written twice |
+| a mount path, policy, group, role or issuer declared twice where it must be unique | the second write silently replacing the first |
+| a group through a door that is no auth mount in its namespace, or with no door or no policy | a group that exists without ever being reached, or grants nothing |
+| a JWT role with no audience, no user claim, no lifetime, or neither a bound subject nor a groups claim | a role that admits every token for its audience, or whose tokens never expire |
+| an oidc mount with no client, or an oidc role with no redirect URI | a sign-in that fails at the issuer |
+| a default role the mount does not declare | a login with no role |
+| a policy that grants nothing, names a path twice, climbs out with `..` or grants an unknown capability | a policy that grants what nobody reviewed |
+| a PKI mount with no issuer, or a default issuer it does not hold | a mount with nothing to sign with |
+| an issuer with no or two signers, an unknown curve, a negative path length, or no lifetime when OpenBAO signs it | an unbounded CA, or one nobody signs |
+| an issuer signed by one not declared in an earlier mount | a signature made before the signer's URLs exist |
+| a role on an issuer its mount does not hold, with no domain, a templated domain, no usage, or a default beyond its maximum | a role that signs with the wrong key, signs nothing, or signs for anyone |
+| a credential role reading its subject from no auth mount here | a role whose only name can never match |
+| an SSH role for `root`, for a pattern, defaulting outside its list, with no key id, no key type, or a default beyond its maximum | a certificate for anyone, or one that names nobody |
+| any SSH or credential role above `credentialMaxTtl` | a credential that outlives the ceiling |
+| identity with no primary door, or metadata writing the `door` key | identity groups named inconsistently |
+| (`Deploy`) an address that is not `https://`, a login with no mount, role or token | a token sent in clear, or no login |
+| (`Deploy`) an oidc mount whose client secret is not in `OIDCClientSecrets` | a sign-in configured with an empty secret |
+| (`Deploy`) an external issuer and no `SignedChain` | an intermediate the apply would have to invent |
+| (`Deploy`) an issuer name used twice across the server | two issuers under one resource name |
 
 ## The ceremony: one signature, reviewed, never twice
 

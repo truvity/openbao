@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.49.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.50.0
 	github.com/pulumi/pulumi-aws/sdk/v7 v7.42.0
+	github.com/pulumi/pulumi-vault/sdk/v7 v7.12.0
 	github.com/pulumi/pulumi/sdk/v3 v3.260.0
 	github.com/stretchr/testify v1.12.1
 	github.com/urfave/cli/v3 v3.11.0

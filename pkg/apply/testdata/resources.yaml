@@ -1,0 +1,1445 @@
+- type: pulumi:providers:vault
+  name: openbao
+  inputs:
+    address: https://openbao.example.com
+    authLoginJwt:
+      jwt:
+        element:
+          v: login-token
+      mount: jwt-people
+      role: people
+      useRootNamespace: true
+    caCertFile: /etc/openbao/ca.pem
+    maxLeaseTtlSeconds: 1200
+    maxRetries: 2
+    skipChildToken: true
+- type: vault:identity/group:Group
+  name: dev-group-dev-db-client
+  dependsOn:
+    - dev-policy-dev-db-client
+    - ns-dev
+  inputs:
+    metadata:
+      source: example directory
+    name: dev:db:client
+    namespace: dev
+    policies:
+      - dev:db:client
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-db-client-oidc
+  dependsOn:
+    - dev-policy-dev-db-client
+    - ns-dev
+  inputs:
+    metadata:
+      door: oidc
+      source: example directory
+    name: dev:db:client@oidc
+    namespace: dev
+    policies:
+      - dev:db:client
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-openbao-reader
+  dependsOn:
+    - dev-policy-dev-openbao-reader
+    - ns-dev
+  inputs:
+    metadata:
+      source: example directory
+    name: dev:openbao:reader
+    namespace: dev
+    policies:
+      - dev:openbao:reader
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-openbao-reader-oidc
+  dependsOn:
+    - dev-policy-dev-openbao-reader
+    - ns-dev
+  inputs:
+    metadata:
+      door: oidc
+      source: example directory
+    name: dev:openbao:reader@oidc
+    namespace: dev
+    policies:
+      - dev:openbao:reader
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-ssh-user
+  dependsOn:
+    - dev-policy-dev-ssh-user
+    - ns-dev
+  inputs:
+    metadata:
+      source: example directory
+    name: dev:ssh:user
+    namespace: dev
+    policies:
+      - dev:ssh:user
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-ssh-user-oidc
+  dependsOn:
+    - dev-policy-dev-ssh-user
+    - ns-dev
+  inputs:
+    metadata:
+      door: oidc
+      source: example directory
+    name: dev:ssh:user@oidc
+    namespace: dev
+    policies:
+      - dev:ssh:user
+    type: external
+- type: vault:identity/group:Group
+  name: prod-group-prod-openbao-reader
+  dependsOn:
+    - ns-prod
+    - prod-policy-prod-openbao-reader
+  inputs:
+    metadata:
+      source: example directory
+    name: prod:openbao:reader
+    namespace: prod
+    policies:
+      - prod:openbao:reader
+    type: external
+- type: vault:identity/group:Group
+  name: root-group-all-openbao-operator-oidc
+  inputs:
+    metadata:
+      door: oidc
+      source: example directory
+    name: all:openbao:operator@oidc
+    policies:
+      - all:openbao:operator
+    type: external
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-db-client
+  dependsOn:
+    - dev-auth-jwt-people
+    - dev-group-dev-db-client
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-db-client_id
+    mountAccessor: dev-auth-jwt-people#accessor
+    name: dev:db:client
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-db-client-oidc
+  dependsOn:
+    - dev-auth-oidc
+    - dev-group-dev-db-client-oidc
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-db-client-oidc_id
+    mountAccessor: dev-auth-oidc#accessor
+    name: dev:db:client
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-openbao-reader
+  dependsOn:
+    - dev-auth-jwt-people
+    - dev-group-dev-openbao-reader
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-openbao-reader_id
+    mountAccessor: dev-auth-jwt-people#accessor
+    name: dev:openbao:reader
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-openbao-reader-oidc
+  dependsOn:
+    - dev-auth-oidc
+    - dev-group-dev-openbao-reader-oidc
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-openbao-reader-oidc_id
+    mountAccessor: dev-auth-oidc#accessor
+    name: dev:openbao:reader
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-ssh-user
+  dependsOn:
+    - dev-auth-jwt-people
+    - dev-group-dev-ssh-user
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-ssh-user_id
+    mountAccessor: dev-auth-jwt-people#accessor
+    name: dev:ssh:user
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-ssh-user-oidc
+  dependsOn:
+    - dev-auth-oidc
+    - dev-group-dev-ssh-user-oidc
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-ssh-user-oidc_id
+    mountAccessor: dev-auth-oidc#accessor
+    name: dev:ssh:user
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: prod-alias-prod-openbao-reader
+  dependsOn:
+    - ns-prod
+    - prod-auth-jwt-people
+    - prod-group-prod-openbao-reader
+  inputs:
+    canonicalId: prod-group-prod-openbao-reader_id
+    mountAccessor: prod-auth-jwt-people#accessor
+    name: prod:openbao:reader
+    namespace: prod
+- type: vault:identity/groupAlias:GroupAlias
+  name: root-alias-all-openbao-operator-oidc
+  dependsOn:
+    - root-auth-oidc
+    - root-group-all-openbao-operator-oidc
+  inputs:
+    canonicalId: root-group-all-openbao-operator-oidc_id
+    mountAccessor: root-auth-oidc#accessor
+    name: all:openbao:operator
+- type: vault:index/mount:Mount
+  name: dev-kv
+  dependsOn:
+    - ns-dev
+  inputs:
+    description: the dev environment's secrets
+    namespace: dev
+    options:
+      version: "2"
+    path: kv
+    type: kv
+- type: vault:index/mount:Mount
+  name: dev-pki
+  protect: true
+  dependsOn:
+    - ns-dev
+  inputs:
+    defaultLeaseTtlSeconds: 2.592e+06
+    description: dev service certificates
+    maxLeaseTtlSeconds: 7.776e+06
+    namespace: dev
+    path: pki
+    type: pki
+- type: vault:index/mount:Mount
+  name: dev-pki-edge
+  protect: true
+  dependsOn:
+    - ns-dev
+  inputs:
+    defaultLeaseTtlSeconds: 2.592e+06
+    description: dev edge certificates
+    maxLeaseTtlSeconds: 7.776e+06
+    namespace: dev
+    path: pki-edge
+    type: pki
+- type: vault:index/mount:Mount
+  name: dev-ssh
+  protect: true
+  dependsOn:
+    - ns-dev
+  inputs:
+    auditNonHmacRequestKeys:
+      - valid_principals
+    auditNonHmacResponseKeys:
+      - serial_number
+    defaultLeaseTtlSeconds: 1800
+    description: the dev SSH user CA
+    maxLeaseTtlSeconds: 3600
+    namespace: dev
+    path: ssh
+    type: ssh
+- type: vault:index/mount:Mount
+  name: pki-edge
+  protect: true
+  inputs:
+    defaultLeaseTtlSeconds: 1.5768e+08
+    description: the edge intermediate, signed offline
+    maxLeaseTtlSeconds: 1.5768e+08
+    path: pki-edge
+    type: pki
+- type: vault:index/mount:Mount
+  name: pki-int
+  protect: true
+  inputs:
+    defaultLeaseTtlSeconds: 1.5768e+08
+    description: the example intermediate; signs environment issuing CAs only
+    maxLeaseTtlSeconds: 1.5768e+08
+    path: pki-int
+    type: pki
+- type: vault:index/mount:Mount
+  name: pki-root
+  protect: true
+  inputs:
+    defaultLeaseTtlSeconds: 3.1536e+08
+    description: the example root; signs the intermediate only
+    maxLeaseTtlSeconds: 3.1536e+08
+    path: pki-root
+    type: pki
+- type: vault:index/mount:Mount
+  name: prod-kv
+  dependsOn:
+    - ns-prod
+  inputs:
+    description: the prod environment's secrets
+    namespace: prod
+    options:
+      version: "2"
+    path: kv
+    type: kv
+- type: vault:index/namespace:Namespace
+  name: ns-dev
+  inputs:
+    path: dev
+- type: vault:index/namespace:Namespace
+  name: ns-prod
+  inputs:
+    path: prod
+- type: vault:index/policy:Policy
+  name: dev-policy-dev-db-client
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: dev:db:client
+    namespace: dev
+    policy: |
+      path "pki/sign/db-client" {
+        capabilities = ["update"]
+      }
+- type: vault:index/policy:Policy
+  name: dev-policy-dev-openbao-reader
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: dev:openbao:reader
+    namespace: dev
+    policy: |
+      path "kv/data/*" {
+        capabilities = ["read"]
+      }
+
+      path "kv/metadata/*" {
+        capabilities = ["list", "read"]
+      }
+- type: vault:index/policy:Policy
+  name: dev-policy-dev-ssh-user
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: dev:ssh:user
+    namespace: dev
+    policy: |
+      path "ssh/sign/user" {
+        capabilities = ["update"]
+      }
+- type: vault:index/policy:Policy
+  name: dev-policy-eso-app
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: eso-app
+    namespace: dev
+    policy: |
+      path "kv/data/app/*" {
+        capabilities = ["read"]
+      }
+
+      path "kv/metadata/app/*" {
+        capabilities = ["list", "read"]
+      }
+- type: vault:index/policy:Policy
+  name: dev-policy-pki-example-private
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: pki-example-private
+    namespace: dev
+    policy: |
+      path "pki/sign/service" {
+        capabilities = ["update"]
+      }
+
+      path "pki/sign/workload" {
+        capabilities = ["update"]
+      }
+- type: vault:index/policy:Policy
+  name: prod-policy-eso-app
+  dependsOn:
+    - ns-prod
+  inputs:
+    name: eso-app
+    namespace: prod
+    policy: |
+      path "kv/data/app/*" {
+        capabilities = ["read"]
+      }
+
+      path "kv/metadata/app/*" {
+        capabilities = ["list", "read"]
+      }
+- type: vault:index/policy:Policy
+  name: prod-policy-prod-openbao-reader
+  dependsOn:
+    - ns-prod
+  inputs:
+    name: prod:openbao:reader
+    namespace: prod
+    policy: |
+      path "kv/data/*" {
+        capabilities = ["read"]
+      }
+
+      path "kv/metadata/*" {
+        capabilities = ["list", "read"]
+      }
+- type: vault:index/policy:Policy
+  name: root-policy-openbao-snapshot
+  inputs:
+    name: openbao-snapshot
+    policy: |
+      path "sys/storage/raft/snapshot" {
+        capabilities = ["read"]
+      }
+- type: vault:jwt/authBackend:AuthBackend
+  name: dev-auth-jwt-dev
+  dependsOn:
+    - ns-dev
+  inputs:
+    boundIssuer: https://oidc.dev.example.com
+    description: the dev cluster's ServiceAccount tokens
+    namespace: dev
+    oidcDiscoveryUrl: https://oidc.dev.example.com
+    path: jwt-dev
+    type: jwt
+- type: vault:jwt/authBackend:AuthBackend
+  name: dev-auth-jwt-people
+  dependsOn:
+    - ns-dev
+  inputs:
+    boundIssuer: https://id.example.com
+    description: people, through the directory's tokens for audience openbao
+    namespace: dev
+    oidcDiscoveryUrl: https://id.example.com
+    path: jwt-people
+    type: jwt
+- type: vault:jwt/authBackend:AuthBackend
+  name: dev-auth-oidc
+  dependsOn:
+    - ns-dev
+  inputs:
+    boundIssuer: https://id.example.com
+    defaultRole: people
+    description: web UI sign-in, people only
+    namespace: dev
+    namespaceInState: true
+    oidcClientId: openbao-ui
+    oidcClientSecret:
+      element:
+        v: ui-secret
+    oidcDiscoveryUrl: https://id.example.com
+    path: oidc
+    tune:
+      listingVisibility: unauth
+    type: oidc
+- type: vault:jwt/authBackend:AuthBackend
+  name: prod-auth-jwt-people
+  dependsOn:
+    - ns-prod
+  inputs:
+    boundIssuer: https://id.example.com
+    description: people, through the directory's tokens for audience openbao
+    namespace: prod
+    oidcDiscoveryUrl: https://id.example.com
+    path: jwt-people
+    type: jwt
+- type: vault:jwt/authBackend:AuthBackend
+  name: prod-auth-jwt-prod
+  dependsOn:
+    - ns-prod
+  inputs:
+    boundIssuer: https://oidc.prod.example.com
+    description: the prod cluster's ServiceAccount tokens
+    namespace: prod
+    oidcDiscoveryUrl: https://oidc.prod.example.com
+    path: jwt-prod
+    type: jwt
+- type: vault:jwt/authBackend:AuthBackend
+  name: root-auth-jwt-ops
+  inputs:
+    boundIssuer: https://oidc.ops.example.com
+    description: the operations cluster's ServiceAccount tokens, for the backup jobs only
+    oidcDiscoveryUrl: https://oidc.ops.example.com
+    path: jwt-ops
+    type: jwt
+- type: vault:jwt/authBackend:AuthBackend
+  name: root-auth-oidc
+  inputs:
+    boundIssuer: https://id.example.com
+    defaultRole: people
+    description: web UI sign-in, people only
+    namespaceInState: true
+    oidcClientId: openbao-ui
+    oidcClientSecret:
+      element:
+        v: ui-secret
+    oidcDiscoveryUrl: https://id.example.com
+    path: oidc
+    tune:
+      listingVisibility: unauth
+    type: oidc
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: dev-role-jwt-dev-example-private
+  dependsOn:
+    - dev-auth-jwt-dev
+    - dev-policy-pki-example-private
+    - ns-dev
+  inputs:
+    backend: jwt-dev
+    boundAudiences:
+      - vault://example-private
+    boundSubject: system:serviceaccount:cert-manager:openbao-issuer
+    namespace: dev
+    roleName: example-private
+    roleType: jwt
+    tokenMaxTtl: 900
+    tokenPolicies:
+      - pki-example-private
+    tokenTtl: 900
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: dev-role-jwt-dev-external-secrets
+  dependsOn:
+    - dev-auth-jwt-dev
+    - dev-policy-eso-app
+    - ns-dev
+  inputs:
+    backend: jwt-dev
+    boundAudiences:
+      - openbao
+    boundSubject: system:serviceaccount:external-secrets:external-secrets
+    namespace: dev
+    roleName: external-secrets
+    roleType: jwt
+    tokenMaxTtl: 3600
+    tokenPolicies:
+      - eso-app
+    tokenTtl: 3600
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: dev-role-jwt-people-people
+  dependsOn:
+    - dev-auth-jwt-people
+    - ns-dev
+  inputs:
+    backend: jwt-people
+    boundAudiences:
+      - openbao
+    claimMappings:
+      email: email
+    groupsClaim: groups
+    namespace: dev
+    roleName: people
+    roleType: jwt
+    tokenMaxTtl: 3600
+    tokenPolicies: []
+    tokenTtl: 3600
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: dev-role-oidc-people
+  dependsOn:
+    - dev-auth-oidc
+    - ns-dev
+  inputs:
+    allowedRedirectUris:
+      - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+    backend: oidc
+    boundAudiences:
+      - openbao-ui
+    claimMappings:
+      email: email
+    groupsClaim: groups
+    namespace: dev
+    oidcScopes:
+      - profile
+      - email
+    roleName: people
+    roleType: oidc
+    tokenMaxTtl: 3600
+    tokenPolicies: []
+    tokenTtl: 3600
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: prod-role-jwt-people-people
+  dependsOn:
+    - ns-prod
+    - prod-auth-jwt-people
+  inputs:
+    backend: jwt-people
+    boundAudiences:
+      - openbao
+    groupsClaim: groups
+    namespace: prod
+    roleName: people
+    roleType: jwt
+    tokenMaxTtl: 3600
+    tokenPolicies: []
+    tokenTtl: 3600
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: prod-role-jwt-prod-external-secrets
+  dependsOn:
+    - ns-prod
+    - prod-auth-jwt-prod
+    - prod-policy-eso-app
+  inputs:
+    backend: jwt-prod
+    boundAudiences:
+      - openbao
+    boundSubject: system:serviceaccount:external-secrets:external-secrets
+    namespace: prod
+    roleName: external-secrets
+    roleType: jwt
+    tokenMaxTtl: 3600
+    tokenPolicies:
+      - eso-app
+    tokenTtl: 3600
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: root-role-jwt-ops-openbao-snapshot
+  dependsOn:
+    - root-auth-jwt-ops
+    - root-policy-openbao-snapshot
+  inputs:
+    backend: jwt-ops
+    boundAudiences:
+      - openbao
+    boundSubject: system:serviceaccount:openbao:openbao-snapshot
+    roleName: openbao-snapshot
+    roleType: jwt
+    tokenMaxTtl: 900
+    tokenPolicies:
+      - openbao-snapshot
+    tokenTtl: 900
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: root-role-oidc-people
+  dependsOn:
+    - root-auth-oidc
+  inputs:
+    allowedRedirectUris:
+      - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+    backend: oidc
+    boundAudiences:
+      - openbao-ui
+    claimMappings:
+      email: email
+    groupsClaim: groups
+    oidcScopes:
+      - profile
+      - email
+    roleName: people
+    roleType: oidc
+    tokenMaxTtl: 900
+    tokenPolicies: []
+    tokenTtl: 900
+    userClaim: sub
+- type: vault:kv/secretV2:SecretV2
+  name: dev-restore-canary
+  dependsOn:
+    - dev-kv
+  inputs:
+    dataJson:
+      element:
+        v: '{"namespace":"dev"}'
+    mount: kv
+    name: restore-canary
+    namespace: dev
+- type: vault:kv/secretV2:SecretV2
+  name: prod-restore-canary
+  dependsOn:
+    - prod-kv
+  inputs:
+    dataJson:
+      element:
+        v: '{"namespace":"prod"}'
+    mount: kv
+    name: restore-canary
+    namespace: prod
+- type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
+  name: dev-pki-auto-tidy
+  protect: true
+  dependsOn:
+    - dev-pki
+    - dev-pki-default
+    - example-dev-issuer
+  inputs:
+    backend: pki
+    enabled: true
+    intervalDuration: 24h
+    issuerSafetyBuffer: 8760h
+    maintainStoredCertificateCounts: true
+    namespace: dev
+    publishStoredCertificateCountMetrics: true
+    safetyBuffer: 720h
+    tidyCertStore: true
+    tidyExpiredIssuers: false
+    tidyRevokedCertIssuerAssociations: true
+    tidyRevokedCerts: true
+- type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
+  name: dev-pki-edge-auto-tidy
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - dev-pki-edge-default
+    - example-edge-dev-issuer
+  inputs:
+    backend: pki-edge
+    enabled: true
+    intervalDuration: 24h
+    issuerSafetyBuffer: 8760h
+    maintainStoredCertificateCounts: true
+    namespace: dev
+    publishStoredCertificateCountMetrics: true
+    safetyBuffer: 720h
+    tidyCertStore: true
+    tidyExpiredIssuers: false
+    tidyRevokedCertIssuerAssociations: true
+    tidyRevokedCerts: true
+- type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
+  name: pki-edge-auto-tidy
+  protect: true
+  dependsOn:
+    - example-edge-issuer
+    - pki-edge
+    - pki-edge-default
+  inputs:
+    backend: pki-edge
+    enabled: true
+    intervalDuration: 24h
+    issuerSafetyBuffer: 8760h
+    maintainStoredCertificateCounts: true
+    publishStoredCertificateCountMetrics: true
+    safetyBuffer: 720h
+    tidyCertStore: true
+    tidyExpiredIssuers: false
+    tidyRevokedCertIssuerAssociations: true
+    tidyRevokedCerts: true
+- type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
+  name: pki-int-auto-tidy
+  protect: true
+  dependsOn:
+    - example-int-issuer
+    - pki-int
+    - pki-int-default
+  inputs:
+    backend: pki-int
+    enabled: true
+    intervalDuration: 24h
+    issuerSafetyBuffer: 8760h
+    maintainStoredCertificateCounts: true
+    publishStoredCertificateCountMetrics: true
+    safetyBuffer: 720h
+    tidyCertStore: true
+    tidyExpiredIssuers: false
+    tidyRevokedCertIssuerAssociations: true
+    tidyRevokedCerts: true
+- type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
+  name: pki-root-auto-tidy
+  protect: true
+  dependsOn:
+    - example-root-certificate
+    - pki-root
+    - pki-root-default
+  inputs:
+    backend: pki-root
+    enabled: true
+    intervalDuration: 24h
+    issuerSafetyBuffer: 8760h
+    maintainStoredCertificateCounts: true
+    publishStoredCertificateCountMetrics: true
+    safetyBuffer: 720h
+    tidyCertStore: true
+    tidyExpiredIssuers: false
+    tidyRevokedCertIssuerAssociations: true
+    tidyRevokedCerts: true
+- type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
+  name: dev-pki-default
+  protect: true
+  dependsOn:
+    - dev-pki
+    - example-dev-issuer
+    - ns-dev
+  inputs:
+    backend: pki
+    default: example-dev-issuer#issuerId
+    defaultFollowsLatestIssuer: false
+    namespace: dev
+- type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
+  name: dev-pki-edge-default
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - example-edge-dev-issuer
+    - ns-dev
+  inputs:
+    backend: pki-edge
+    default: example-edge-dev-issuer#issuerId
+    defaultFollowsLatestIssuer: false
+    namespace: dev
+- type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
+  name: pki-edge-default
+  protect: true
+  dependsOn:
+    - example-edge-issuer
+    - pki-edge
+  inputs:
+    backend: pki-edge
+    default: example-edge-issuer#issuerId
+    defaultFollowsLatestIssuer: false
+- type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
+  name: pki-int-default
+  protect: true
+  dependsOn:
+    - example-int-issuer
+    - pki-int
+  inputs:
+    backend: pki-int
+    default: example-int-issuer#issuerId
+    defaultFollowsLatestIssuer: false
+- type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
+  name: pki-root-default
+  protect: true
+  dependsOn:
+    - example-root-certificate
+    - pki-root
+  inputs:
+    backend: pki-root
+    default: example-root-certificate#issuerId
+    defaultFollowsLatestIssuer: false
+- type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
+  name: dev-pki-edge-urls
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - dev-pki-edge-default
+    - example-edge-dev-issuer
+  inputs:
+    backend: pki-edge
+    crlDistributionPoints:
+      - https://openbao.example.com/v1/dev/pki-edge/issuer/{{issuer_id}}/crl/der
+    enableTemplating: true
+    issuingCertificates:
+      - https://openbao.example.com/v1/dev/pki-edge/issuer/{{issuer_id}}/der
+    namespace: dev
+    ocspServers:
+      - https://openbao.example.com/v1/dev/pki-edge/ocsp
+- type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
+  name: dev-pki-urls
+  protect: true
+  dependsOn:
+    - dev-pki
+    - dev-pki-default
+    - example-dev-issuer
+  inputs:
+    backend: pki
+    crlDistributionPoints:
+      - https://openbao.example.com/v1/dev/pki/issuer/{{issuer_id}}/crl/der
+    enableTemplating: true
+    issuingCertificates:
+      - https://openbao.example.com/v1/dev/pki/issuer/{{issuer_id}}/der
+    namespace: dev
+    ocspServers:
+      - https://openbao.example.com/v1/dev/pki/ocsp
+- type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
+  name: pki-edge-urls
+  protect: true
+  dependsOn:
+    - example-edge-issuer
+    - pki-edge
+    - pki-edge-default
+  inputs:
+    backend: pki-edge
+    crlDistributionPoints:
+      - https://openbao.example.com/v1/pki-edge/issuer/{{issuer_id}}/crl/der
+    enableTemplating: true
+    issuingCertificates:
+      - https://openbao.example.com/v1/pki-edge/issuer/{{issuer_id}}/der
+    ocspServers:
+      - https://openbao.example.com/v1/pki-edge/ocsp
+- type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
+  name: pki-int-urls
+  protect: true
+  dependsOn:
+    - example-int-issuer
+    - pki-int
+    - pki-int-default
+  inputs:
+    backend: pki-int
+    crlDistributionPoints:
+      - https://openbao.example.com/v1/pki-int/issuer/{{issuer_id}}/crl/der
+    enableTemplating: true
+    issuingCertificates:
+      - https://openbao.example.com/v1/pki-int/issuer/{{issuer_id}}/der
+    ocspServers:
+      - https://openbao.example.com/v1/pki-int/ocsp
+- type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
+  name: pki-root-urls
+  protect: true
+  dependsOn:
+    - example-root-certificate
+    - pki-root
+    - pki-root-default
+  inputs:
+    backend: pki-root
+    crlDistributionPoints:
+      - https://openbao.example.com/v1/pki-root/issuer/{{issuer_id}}/crl/der
+    enableTemplating: true
+    issuingCertificates:
+      - https://openbao.example.com/v1/pki-root/issuer/{{issuer_id}}/der
+    ocspServers:
+      - https://openbao.example.com/v1/pki-root/ocsp
+- type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
+  name: dev-pki-crl
+  protect: true
+  dependsOn:
+    - dev-pki
+    - dev-pki-default
+    - example-dev-issuer
+  inputs:
+    autoRebuild: true
+    autoRebuildGracePeriod: 12h
+    backend: pki
+    deltaRebuildInterval: 15m
+    disable: false
+    enableDelta: true
+    expiry: 72h
+    namespace: dev
+    ocspDisable: false
+    ocspExpiry: 1h
+- type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
+  name: dev-pki-edge-crl
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - dev-pki-edge-default
+    - example-edge-dev-issuer
+  inputs:
+    autoRebuild: true
+    autoRebuildGracePeriod: 12h
+    backend: pki-edge
+    deltaRebuildInterval: 15m
+    disable: false
+    enableDelta: true
+    expiry: 72h
+    namespace: dev
+    ocspDisable: false
+    ocspExpiry: 1h
+- type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
+  name: pki-edge-crl
+  protect: true
+  dependsOn:
+    - example-edge-issuer
+    - pki-edge
+    - pki-edge-default
+  inputs:
+    autoRebuild: true
+    autoRebuildGracePeriod: 12h
+    backend: pki-edge
+    deltaRebuildInterval: 15m
+    disable: false
+    enableDelta: true
+    expiry: 72h
+    ocspDisable: false
+    ocspExpiry: 1h
+- type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
+  name: pki-int-crl
+  protect: true
+  dependsOn:
+    - example-int-issuer
+    - pki-int
+    - pki-int-default
+  inputs:
+    autoRebuild: true
+    autoRebuildGracePeriod: 12h
+    backend: pki-int
+    deltaRebuildInterval: 15m
+    disable: false
+    enableDelta: true
+    expiry: 72h
+    ocspDisable: false
+    ocspExpiry: 1h
+- type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
+  name: pki-root-crl
+  protect: true
+  dependsOn:
+    - example-root-certificate
+    - pki-root
+    - pki-root-default
+  inputs:
+    autoRebuild: true
+    autoRebuildGracePeriod: 12h
+    backend: pki-root
+    deltaRebuildInterval: 15m
+    disable: false
+    enableDelta: true
+    expiry: 72h
+    ocspDisable: false
+    ocspExpiry: 1h
+- type: vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest
+  name: example-dev-csr
+  protect: true
+  dependsOn:
+    - dev-pki
+    - ns-dev
+  inputs:
+    backend: pki
+    commonName: dev.example.internal Issuing CA
+    excludeCnFromSans: true
+    format: pem
+    keyBits: 384
+    keyName: example-dev
+    keyType: ec
+    namespace: dev
+    organization: Example Org
+    type: internal
+- type: vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest
+  name: example-edge-csr
+  protect: true
+  dependsOn:
+    - pki-edge
+  inputs:
+    backend: pki-edge
+    commonName: Example Edge Intermediate CA
+    excludeCnFromSans: true
+    format: pem
+    keyBits: 384
+    keyName: example-edge
+    keyType: ec
+    organization: Example Org
+    type: internal
+- type: vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest
+  name: example-edge-dev-csr
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - ns-dev
+  inputs:
+    backend: pki-edge
+    commonName: dev.example.com Edge Issuing CA
+    excludeCnFromSans: true
+    format: pem
+    keyBits: 384
+    keyName: example-edge-dev
+    keyType: ec
+    namespace: dev
+    organization: Example Org
+    type: internal
+- type: vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest
+  name: example-int-csr
+  protect: true
+  dependsOn:
+    - pki-int
+  inputs:
+    backend: pki-int
+    commonName: example.internal Intermediate CA
+    excludeCnFromSans: true
+    format: pem
+    keyBits: 384
+    keyName: example-int
+    keyType: ec
+    organization: Example Org
+    type: internal
+- type: vault:pkiSecret/secretBackendIntermediateSetSigned:SecretBackendIntermediateSetSigned
+  name: example-dev-import
+  protect: true
+  dependsOn:
+    - dev-pki
+    - example-dev-signed
+    - ns-dev
+  inputs:
+    backend: pki
+    certificate: example-dev-signed#certificateBundle
+    namespace: dev
+- type: vault:pkiSecret/secretBackendIntermediateSetSigned:SecretBackendIntermediateSetSigned
+  name: example-edge-dev-import
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - example-edge-dev-signed
+    - ns-dev
+  inputs:
+    backend: pki-edge
+    certificate: example-edge-dev-signed#certificateBundle
+    namespace: dev
+- type: vault:pkiSecret/secretBackendIntermediateSetSigned:SecretBackendIntermediateSetSigned
+  name: example-edge-import
+  protect: true
+  dependsOn:
+    - example-edge-csr
+    - pki-edge
+  inputs:
+    backend: pki-edge
+    certificate: |
+      -----BEGIN CERTIFICATE-----
+      example edge intermediate
+      -----END CERTIFICATE-----
+- type: vault:pkiSecret/secretBackendIntermediateSetSigned:SecretBackendIntermediateSetSigned
+  name: example-int-import
+  protect: true
+  dependsOn:
+    - example-int-signed
+    - pki-int
+  inputs:
+    backend: pki-int
+    certificate: example-int-signed#certificateBundle
+- type: vault:pkiSecret/secretBackendIssuer:SecretBackendIssuer
+  name: example-dev-issuer
+  protect: true
+  dependsOn:
+    - dev-pki
+    - example-dev-import
+    - ns-dev
+  inputs:
+    backend: pki
+    issuerName: example-dev
+    issuerRef: example-dev-import#imported
+    namespace: dev
+    usage: crl-signing,issuing-certificates,read-only
+- type: vault:pkiSecret/secretBackendIssuer:SecretBackendIssuer
+  name: example-edge-dev-issuer
+  protect: true
+  dependsOn:
+    - dev-pki-edge
+    - example-edge-dev-import
+    - ns-dev
+  inputs:
+    backend: pki-edge
+    issuerName: example-edge-dev
+    issuerRef: example-edge-dev-import#imported
+    namespace: dev
+    usage: crl-signing,issuing-certificates,read-only
+- type: vault:pkiSecret/secretBackendIssuer:SecretBackendIssuer
+  name: example-edge-issuer
+  protect: true
+  dependsOn:
+    - example-edge-import
+    - pki-edge
+  inputs:
+    backend: pki-edge
+    issuerName: example-edge
+    issuerRef: example-edge-import#imported
+    usage: crl-signing,issuing-certificates,read-only
+- type: vault:pkiSecret/secretBackendIssuer:SecretBackendIssuer
+  name: example-int-issuer
+  protect: true
+  dependsOn:
+    - example-int-import
+    - pki-int
+  inputs:
+    backend: pki-int
+    issuerName: example-int
+    issuerRef: example-int-import#imported
+    usage: crl-signing,issuing-certificates,read-only
+- type: vault:pkiSecret/secretBackendRole:SecretBackendRole
+  name: example-dev-credential-role-db-client
+  protect: true
+  dependsOn:
+    - dev-auth-jwt-people
+    - dev-pki
+    - example-dev-issuer
+    - ns-dev
+  inputs:
+    allowAnyName: false
+    allowBareDomains: true
+    allowGlobDomains: false
+    allowIpSans: false
+    allowLocalhost: false
+    allowSubdomains: false
+    allowWildcardCertificates: false
+    allowedDomains:
+      - '{{identity.entity.aliases.dev-auth-jwt-people#accessor.name}}'
+    allowedDomainsTemplate: true
+    allowedOtherSans: []
+    allowedUriSans: []
+    allowedUriSansTemplate: false
+    allowedUserIds: []
+    backend: pki
+    basicConstraintsValidForNonCa: false
+    clientFlag: true
+    cnValidations:
+      - email
+    codeSigningFlag: false
+    emailProtectionFlag: false
+    enforceHostnames: true
+    generateLease: false
+    issuerRef: example-dev
+    keyBits: 384
+    keyType: ec
+    maxTtl: "3600"
+    name: db-client
+    namespace: dev
+    noStore: true
+    requireCn: true
+    serverFlag: false
+    ttl: "3600"
+    useCsrCommonName: true
+    useCsrSans: false
+- type: vault:pkiSecret/secretBackendRole:SecretBackendRole
+  name: example-dev-role-service
+  dependsOn:
+    - dev-pki
+    - example-dev-issuer
+    - ns-dev
+  inputs:
+    allowAnyName: false
+    allowBareDomains: false
+    allowGlobDomains: false
+    allowIpSans: false
+    allowLocalhost: false
+    allowSubdomains: true
+    allowWildcardCertificates: false
+    allowedDomains:
+      - dev.example.internal
+    allowedDomainsTemplate: false
+    allowedOtherSans: []
+    allowedUriSans: []
+    allowedUserIds: []
+    backend: pki
+    clientFlag: false
+    cnValidations:
+      - hostname
+    emailProtectionFlag: false
+    enforceHostnames: true
+    issuerRef: example-dev
+    keyBits: 384
+    keyType: ec
+    maxTtl: "7776000"
+    name: service
+    namespace: dev
+    noStore: false
+    requireCn: false
+    serverFlag: true
+    ttl: "2592000"
+- type: vault:pkiSecret/secretBackendRole:SecretBackendRole
+  name: example-dev-role-workload
+  dependsOn:
+    - dev-pki
+    - example-dev-issuer
+    - ns-dev
+  inputs:
+    allowAnyName: false
+    allowBareDomains: false
+    allowGlobDomains: false
+    allowIpSans: false
+    allowLocalhost: false
+    allowSubdomains: true
+    allowWildcardCertificates: false
+    allowedDomains:
+      - svc.cluster.local
+    allowedDomainsTemplate: false
+    allowedOtherSans: []
+    allowedUriSans: []
+    allowedUserIds: []
+    backend: pki
+    clientFlag: true
+    cnValidations:
+      - hostname
+    emailProtectionFlag: false
+    enforceHostnames: true
+    issuerRef: example-dev
+    keyBits: 384
+    keyType: ec
+    maxTtl: "2592000"
+    name: workload
+    namespace: dev
+    noStore: false
+    requireCn: false
+    serverFlag: true
+    ttl: "2592000"
+- type: vault:pkiSecret/secretBackendRole:SecretBackendRole
+  name: example-edge-dev-role-origin
+  dependsOn:
+    - dev-pki-edge
+    - example-edge-dev-issuer
+    - ns-dev
+  inputs:
+    allowAnyName: false
+    allowBareDomains: true
+    allowGlobDomains: false
+    allowIpSans: false
+    allowLocalhost: false
+    allowSubdomains: false
+    allowWildcardCertificates: true
+    allowedDomains:
+      - app.dev.example.com
+      - '*.preview.dev.example.com'
+    allowedDomainsTemplate: false
+    allowedOtherSans: []
+    allowedUriSans: []
+    allowedUserIds: []
+    backend: pki-edge
+    clientFlag: false
+    cnValidations:
+      - hostname
+    emailProtectionFlag: false
+    enforceHostnames: true
+    issuerRef: example-edge-dev
+    keyBits: 384
+    keyType: ec
+    maxTtl: "7776000"
+    name: origin
+    namespace: dev
+    noStore: false
+    requireCn: false
+    serverFlag: true
+    ttl: "2592000"
+- type: vault:pkiSecret/secretBackendRootCert:SecretBackendRootCert
+  name: example-root-certificate
+  protect: true
+  dependsOn:
+    - pki-root
+  inputs:
+    backend: pki-root
+    commonName: Example Root CA
+    excludeCnFromSans: true
+    excludedIpRanges:
+      - 0.0.0.0/0
+      - ::/0
+    format: pem
+    issuerName: example-root
+    keyBits: 384
+    keyName: example-root
+    keyType: ec
+    maxPathLength: 2
+    organization: Example Org
+    permittedDnsDomains:
+      - example.internal
+      - cluster.local
+    ttl: 87600h
+    type: internal
+- type: vault:pkiSecret/secretBackendRootSignIntermediate:SecretBackendRootSignIntermediate
+  name: example-dev-signed
+  protect: true
+  dependsOn:
+    - example-dev-csr
+    - example-int-issuer
+    - pki-int
+    - pki-int-auto-tidy
+    - pki-int-crl
+    - pki-int-default
+    - pki-int-urls
+  inputs:
+    backend: pki-int
+    commonName: dev.example.internal Issuing CA
+    csr: example-dev-csr#csr
+    excludeCnFromSans: true
+    excludedIpRanges:
+      - 0.0.0.0/0
+      - ::/0
+    format: pem
+    issuerRef: example-int
+    maxPathLength: 0
+    permittedDnsDomains:
+      - dev.example.internal
+      - cluster.local
+    ttl: 26280h
+    useCsrValues: true
+- type: vault:pkiSecret/secretBackendRootSignIntermediate:SecretBackendRootSignIntermediate
+  name: example-edge-dev-signed
+  protect: true
+  dependsOn:
+    - example-edge-dev-csr
+    - example-edge-issuer
+    - pki-edge
+    - pki-edge-auto-tidy
+    - pki-edge-crl
+    - pki-edge-default
+    - pki-edge-urls
+  inputs:
+    backend: pki-edge
+    commonName: dev.example.com Edge Issuing CA
+    csr: example-edge-dev-csr#csr
+    excludeCnFromSans: true
+    format: pem
+    issuerRef: example-edge
+    maxPathLength: 0
+    ttl: 26280h
+    useCsrValues: true
+- type: vault:pkiSecret/secretBackendRootSignIntermediate:SecretBackendRootSignIntermediate
+  name: example-int-signed
+  protect: true
+  dependsOn:
+    - example-int-csr
+    - example-root-certificate
+    - pki-root
+    - pki-root-auto-tidy
+    - pki-root-crl
+    - pki-root-default
+    - pki-root-urls
+  inputs:
+    backend: pki-root
+    commonName: example.internal Intermediate CA
+    csr: example-int-csr#csr
+    excludeCnFromSans: true
+    excludedIpRanges:
+      - 0.0.0.0/0
+      - ::/0
+    format: pem
+    issuerRef: example-root
+    maxPathLength: 1
+    permittedDnsDomains:
+      - example.internal
+      - cluster.local
+    ttl: 43800h
+    useCsrValues: true
+- type: vault:ssh/secretBackendCa:SecretBackendCa
+  name: dev-ssh-ca
+  protect: true
+  dependsOn:
+    - dev-ssh
+    - ns-dev
+  inputs:
+    backend: ssh
+    generateSigningKey: true
+    keyType: ed25519
+    namespace: dev
+- type: vault:ssh/secretBackendRole:SecretBackendRole
+  name: dev-ssh-sshrole-user
+  protect: true
+  dependsOn:
+    - dev-ssh
+    - dev-ssh-ca
+    - ns-dev
+  inputs:
+    allowBareDomains: false
+    allowEmptyPrincipals: false
+    allowHostCertificates: false
+    allowSubdomains: false
+    allowUserCertificates: true
+    allowUserKeyIds: false
+    allowedCriticalOptions: ""
+    allowedExtensions: permit-pty
+    allowedUserKeyConfigs:
+      - lengths:
+          - 0
+        type: ed25519
+    allowedUsers: builder
+    allowedUsersTemplate: false
+    backend: ssh
+    defaultCriticalOptions: {}
+    defaultExtensions:
+      permit-pty: ""
+    defaultExtensionsTemplate: false
+    defaultUser: builder
+    defaultUserTemplate: false
+    keyIdFormat: '{{token_display_name}}'
+    keyType: ca
+    maxTtl: "3600"
+    name: user
+    namespace: dev
+    ttl: "1800"

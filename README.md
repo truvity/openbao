@@ -1,8 +1,9 @@
 # openbao
 
 OpenBAO for Kubernetes estates, as reusable mechanism: the two halves the
-upstream server chart leaves out, and the KMS-rooted CA ceremony its PKI
-hangs from.
+upstream server chart leaves out, the desired state of OpenBAO's own
+configuration and its apply, and the KMS-rooted CA ceremony its PKI hangs
+from.
 
 | Artifact | What | Status |
 |---|---|---|
@@ -10,12 +11,14 @@ hangs from.
 | `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | unreleased |
 | `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format | unreleased |
 | `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region | unreleased |
+| `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader | unreleased |
+| `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged | unreleased |
 | `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release | unreleased |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from v0.1.0 on; from v0.2.0 on the same tag is also the Go module
-`github.com/truvity/openbao`'s version, and `openbaoctl` is attached to the
-GitHub Release.
+`github.com/truvity/openbao`'s version (`pkg/model` and `pkg/apply` from
+v0.3.0 on), and `openbaoctl` is attached to the GitHub Release.
 
 ## Who it is for
 
@@ -26,6 +29,12 @@ that reloads itself and is noticed before it ends, and clusters that read,
 write and issue through OpenBAO without a stored token. The **server** is
 not here: [docs/server.md](docs/server.md) describes the shape these charts
 assume of it. These charts are what an install is judged on when it fails.
+
+The model and its apply are for a team that configures OpenBAO itself --
+its namespaces, logins, policies, PKI and SSH engines -- from a Pulumi Go
+program, and wants that configuration derived from its own sources,
+reviewed as a file, and refused before it is applied when it would lock
+someone out or admit more than it names.
 
 The ceremony and custody are for a team whose OpenBAO PKI should chain to
 a root nobody can copy: an AWS account holds the root key in KMS, a Pulumi
@@ -47,7 +56,15 @@ writer's own token, and cert-manager issuers whose roots are distributed as
 a trust bundle. Object storage and alerting are containers with a
 contract, with S3 and SNS as presets; see [docs/doctrine.md](docs/doctrine.md).
 
-Above both sits the **root**: a KMS key that signs a handful of
+Inside the server, the **desired state** (`pkg/model`) is one level of
+namespaces -- root, and one per environment -- each holding the same
+engines: KV, JWT/OIDC doors, identity groups admitted through those doors,
+policies, PKI mounts whose issuers are self-signed, signed by an earlier
+issuer or signed outside OpenBAO, and SSH CAs. The estate derives it;
+`pkg/apply` writes it, never touching the door it logs in through
+([docs/model.md](docs/model.md)).
+
+Above everything sits the **root**: a KMS key that signs a handful of
 certificates in its life -- itself, one intermediate per trust domain
 (whose keys stay in OpenBAO), and a break-glass leaf when OpenBAO cannot
 issue its own serving certificate. Each signature is a reviewed template,
@@ -130,6 +147,36 @@ pki:
       role: example-private
 ```
 
+OpenBAO's own configuration, from a Pulumi Go program
+([docs/model.md](docs/model.md) has the whole shape):
+
+```go
+desired := &model.Desired{
+    Bootstrap: operatorsDoor, // declared for review, never applied
+    Identity:  model.Identity{PrimaryDoor: "jwt-people"},
+    Namespaces: []model.Namespace{{
+        Name: "dev",
+        KV:   []model.KVMount{{Path: "kv", Canary: "restore-canary"}},
+        Auth: []model.JWTMount{{
+            Path: "jwt-dev", DiscoveryURL: "https://oidc.dev.example.com",
+            Roles: []model.Role{{
+                Name: "external-secrets", BoundAudiences: []string{"openbao"},
+                BoundSubject: model.ServiceAccountSubject("external-secrets", "external-secrets"),
+                UserClaim: "sub", Policies: []string{"eso-app"}, TTL: "1h",
+            }},
+        }},
+        Policies: []model.Policy{{Name: "eso-app", Rules: []model.Rule{
+            {Path: "kv/data/app/*", Capabilities: []string{"read"}},
+        }}},
+    }},
+}
+
+_, err := apply.Deploy(c, desired, apply.Options{ // c is the *pulumi.Context
+    Address: "https://openbao.example.com",
+    Login:   apply.Login{Mount: "jwt-people", Role: "people", Token: operatorToken},
+})
+```
+
 For the ceremony, a hierarchy file and one command per step
 ([docs/ceremony.md](docs/ceremony.md) walks through all of them):
 
@@ -160,7 +207,8 @@ _, err := custody.Deploy(ctx, custody.Args{
 - [docs/safety.md](docs/safety.md) — the backup regime, the traps, and
   every render-time refusal
 - [docs/reference.md](docs/reference.md) — every value of both charts,
-  the hierarchy file, `openbaoctl` and `pkg/custody`
+  the hierarchy file, `openbaoctl`, `pkg/custody`, `pkg/model` and
+  `pkg/apply`
 - [docs/doctrine.md](docs/doctrine.md) — the two halves, the container
   contracts, and the ownership contract
 - [docs/server.md](docs/server.md) — the upstream server's values these
@@ -169,6 +217,8 @@ _, err := custody.Deploy(ctx, custody.Args{
   step by step
 - [docs/custody.md](docs/custody.md) — the root key's policy, roles and
   Sign alarm
+- [docs/model.md](docs/model.md) — OpenBAO's desired state per engine,
+  its apply, and the resource names an existing configuration adopts
 - [CHANGELOG.md](CHANGELOG.md) — what changed for a consumer, per version
 
 ## The rule that makes this repository public
@@ -185,14 +235,15 @@ This repository follows the shared
 ## Status
 
 Used in production by its maintainers. The charts are released from
-v0.1.0; the Go module and `openbaoctl` arrive in v0.2.0.
+v0.1.0; the Go module and `openbaoctl` from v0.2.0; `pkg/model` and
+`pkg/apply` arrive in v0.3.0.
 
 ## Development
 
 ```sh
 devbox shell        # or direnv
 just check          # build + lint + golden renders + Go tests + leak canary
-just golden         # regenerate tests/golden and the ceremony's template goldens — review the diff
+just golden         # regenerate tests/golden, the ceremony's template goldens, the model example and the apply's resources — review the diff
 ```
 
 `tests/invalid/<chart>/` holds one fixture per validation rule. Each must

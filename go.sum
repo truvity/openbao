@@ -197,6 +197,8 @@ github.com/pulumi/appdash v0.0.0-20231130102222-75f619a67231 h1:vkHw5I/plNdTr435
 github.com/pulumi/appdash v0.0.0-20231130102222-75f619a67231/go.mod h1:murToZ2N9hNJzewjHBgfFdXhZKjY3z5cYC1VXk+lbFE=
 github.com/pulumi/pulumi-aws/sdk/v7 v7.42.0 h1:BOVzggIfWBIQGzSFWzDW339YSxKp4VSw2ePpwnnu3ZU=
 github.com/pulumi/pulumi-aws/sdk/v7 v7.42.0/go.mod h1:wImO2X5EeAVjuNtyJF/W/N96Q73tEO9t1Ne9Uqa50Ps=
+github.com/pulumi/pulumi-vault/sdk/v7 v7.12.0 h1:iK3QO1LaCtD59Qqegg3HIPnbDYA5hQes8GYC5Qs4s1Y=
+github.com/pulumi/pulumi-vault/sdk/v7 v7.12.0/go.mod h1:HxseA2SYxIsTJCcknPb+EanxA/WheL/N1oqN3OMxHIk=
 github.com/pulumi/pulumi/sdk/v3 v3.260.0 h1:Bc848YiSK8oZqYn+xOnuuGb0oMK/w17DV6X5G0OIWvM=
 github.com/pulumi/pulumi/sdk/v3 v3.260.0/go.mod h1:xlOo55i2hj5tDyMY8diTS5LfFAn2sFew+50d67sVNdg=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=

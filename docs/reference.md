@@ -1,8 +1,9 @@
 # Reference
 
 Every value of both charts, then the ceremony's
-[hierarchy file](#hierarchy-file), [`openbaoctl`](#openbaoctl) and the
-[`pkg/custody`](#pkgcustody) inputs. `charts/<chart>/values.yaml` carries the same
+[hierarchy file](#hierarchy-file), [`openbaoctl`](#openbaoctl), the
+[`pkg/custody`](#pkgcustody) inputs, and the desired-state
+[`pkg/model`](#pkgmodel) and its [`pkg/apply`](#pkgapply). `charts/<chart>/values.yaml` carries the same
 keys with their defaults and a comment each, and `values.schema.json` is
 the authority on types: an unknown key fails the render.
 
@@ -306,3 +307,74 @@ every resource and provider ([custody.md](custody.md)).
 `Deploy` returns the roles and, per generation, the alias, the regions,
 the key and the replica, for the caller's exports.
 
+## pkg/model
+
+The fields of `model.Desired` and what each engine holds; yaml keys in
+brackets. [model.md](model.md) explains the shape and
+[`pkg/model/testdata/desired.yaml`](../pkg/model/testdata/desired.yaml)
+spells every field. Durations are Go durations (`15m`, `720h`).
+
+| Type | Field | Required | What |
+|---|---|---|---|
+| `Desired` | `Bootstrap` (`bootstrap`) | yes | the root door the apply logs in through; validated, never applied |
+| | `Root` (`root`) | yes | what the apply owns in root; no name |
+| | `Namespaces` (`namespaces`) | no | one per environment, a plain name each |
+| | `Identity` (`identity`) | yes | `primaryDoor`, and `metadata` every identity group carries |
+| | `CredentialMaxTTL` (`credentialMaxTtl`) | no | the ceiling on every SSH and credential role |
+| `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `Auth`, `Policies`, `Groups` | name outside root | the engines below |
+| `KVMount` | `Path`, `Description`, `Canary` | path | a KV v2 mount; the canary is written as `{"namespace": <name>}` |
+| `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `Roles` | path, issuer | one auth mount; the discovery URL is also the bound issuer |
+| `Role` | `Name`, `Type`, `BoundAudiences`, `BoundSubject`, `UserClaim`, `GroupsClaim`, `ClaimMappings`, `AllowedRedirectURIs`, `OIDCScopes` (oidc), `Policies`, `TTL` | name, audience, user claim, TTL, and a subject or a groups claim | `TTL` is also the maximum |
+| `Group` | `Name`, `Policies`, `Doors` | all | one identity group per door, aliased there by `Name` |
+| `Policy`, `Rule` | `Name`, `Rules`; `Path`, `Capabilities` | all | rendered in rule order (`Policy.HCL`) |
+| `PKIMount` | `Path`, `Description`, `DefaultLeaseTTL`, `MaxLeaseTTL`, `DefaultIssuer`, `Issuers`, `Roles`, `CredentialRoles` | all but description and roles | the default issuer is pinned |
+| `PKIIssuer` | `Name`, `CommonName`, `Organization`, `KeyCurve` (`P-256`, `P-384`, `P-521`), `TTL`, `MaxPathLength`, `NameConstraints`, and one of `SelfSigned`, `SignedBy`, `External` | name, common name, curve, signer; TTL unless external | issuer names are unique across the server |
+| `IssuerRef` | `Namespace` (empty for root), `Mount`, `Issuer` | mount, issuer | an issuer of an earlier mount |
+| `NameConstraints` | `PermittedDNSDomains`, `ExcludedIPRanges`, `PermittedEmailAddresses`, `PermittedURIDomains` | no | an empty list is left out |
+| `PKIRole` | `Name`, `Issuer`, `AllowedDomains`, `AllowBareDomains`, `AllowSubdomains`, `AllowWildcards` (`allowWildcardCertificates`), `Server`, `Client`, `KeyCurve`, `TTL`, `MaxTTL`, `RenewBefore` | all but `RenewBefore` | `RenewBefore` is for the consumers, not OpenBAO |
+| `CredentialRole` | `Name`, `Issuer`, `SubjectMount`, `CNValidations` (`email`, `hostname`), `Server`, `Client`, `KeyCurve`, `TTL`, `MaxTTL` | all but validations | signs only the caller's own alias name on `SubjectMount` |
+| `SSHMount` | `Path`, `Description`, `KeyType`, `Roles` | path, key type, a role | the CA key is generated inside OpenBAO |
+| `SSHRole` | `Name`, `AllowedUsers`, `DefaultUser`, `KeyTypes`, `KeyIDFormat`, `Extensions`, `TTL`, `MaxTTL` | all but extensions | principals spelled out; never root |
+| `KVLayout` | rows of `Kind`, `Key`, `Properties`, `Writer` | kind, key, properties | `Validate`, `SecretsFor(kind)`, `SecretForKey(key)`, `Kinds()`; `{name}` placeholders |
+
+Helpers: `ServiceAccountSubject(namespace, serviceAccount)`,
+`Identity.GroupName(group, door)`, `Identity.GroupMetadata(door)`,
+`DurationSeconds(duration)`, `Desired.Applied()` (root, then the
+namespaces), `Namespace.Label()` (`root` for root).
+
+## pkg/apply
+
+`apply.Deploy(ctx, &desired, apply.Options{...})` validates, runs
+`BeforeApply` (apply only), logs in, and registers every namespace the
+model owns on `ctx` ([model.md](model.md#applying-it)).
+
+| Option | Default | What |
+|---|---|---|
+| `Address` | required | `https://` URL clients reach; the provider's address and the base of every PKI mount's issuer, CRL and OCSP URLs (`<Address>/v1/<ns>/<mount>/...`) |
+| `Login.Mount`, `Login.Role` | required | the auth mount and role in root the provider logs in with |
+| `Login.Token` | required | returns the JWT; called once, after `BeforeApply`, and marked secret |
+| `Login.CACertFile` | none | the PEM file the server's certificate is verified against |
+| `ProviderName` | `openbao` | the provider's logical name |
+| `BeforeApply` | none | runs on an apply, never on a preview; an error stops the apply |
+| `OIDCClientSecrets` | none | client secret by client id; required for every oidc mount's client |
+| `SignedChain` | none | returns an external issuer's PEM chain, the issuer's certificate first; required when the model has one. Verify it before returning it |
+| `Rename` | none | maps a derived logical name to the name a running state holds; the adoption hook |
+| `ResourceOptions` | none | appended to every resource and the provider (a parent, for instance) |
+
+`Deploy` returns `Result`: `Provider`, `Namespaces`, `Certificates`
+(self-signed issuers' certificates by issuer name), `CertificateRequests`
+(external issuers' requests by issuer name) and `SSHCAPublicKeys` (by
+`MountRef{Namespace, Path}`). `apply.NewProvider(ctx, name, address, login)`
+creates the same provider for another program that writes into OpenBAO as
+the same operator.
+
+`apply.SnapshotJob` is the pre-apply snapshot; pass its `Run` as
+`BeforeApply`.
+
+| Field | Default | What |
+|---|---|---|
+| `Kubectl` | required | runs kubectl (`apply.KubectlWith(kubeconfig)`) |
+| `Namespace`, `CronJob` | required | the snapshot CronJob (`openbao-ops` renders one); the Job is `<CronJob>-pre-apply-<UTC timestamp>` |
+| `SkipEnv` | none | an environment variable that, set to a reason, applies without a snapshot |
+| `Wait`, `Poll` | `16m`, `5s` | how long to wait for the Job, and how often to look |
+| `Logger`, `Now` | `slog.Default()`, `time.Now` | |

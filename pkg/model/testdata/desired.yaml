@@ -1,0 +1,412 @@
+bootstrap:
+  auth:
+    - path: jwt-people
+      description: people, through the directory's tokens for audience openbao
+      discoveryUrl: https://id.example.com
+      roles:
+        - name: people
+          boundAudiences:
+            - openbao
+          userClaim: sub
+          groupsClaim: groups
+          ttl: 15m
+  policies:
+    - name: all:openbao:operator
+      rules:
+        - path: '*'
+          capabilities:
+            - create
+            - read
+            - update
+            - patch
+            - delete
+            - list
+            - sudo
+  groups:
+    - name: all:openbao:operator
+      policies:
+        - all:openbao:operator
+      doors:
+        - jwt-people
+root:
+  pki:
+    - path: pki-root
+      description: the example root; signs the intermediate only
+      defaultLeaseTtl: 87600h
+      maxLeaseTtl: 87600h
+      defaultIssuer: example-root
+      issuers:
+        - name: example-root
+          commonName: Example Root CA
+          organization: Example Org
+          keyCurve: P-384
+          ttl: 87600h
+          maxPathLength: 2
+          nameConstraints:
+            permittedDnsDomains:
+              - example.internal
+              - cluster.local
+            excludedIpRanges:
+              - 0.0.0.0/0
+              - ::/0
+          selfSigned: true
+    - path: pki-int
+      description: the example intermediate; signs environment issuing CAs only
+      defaultLeaseTtl: 43800h
+      maxLeaseTtl: 43800h
+      defaultIssuer: example-int
+      issuers:
+        - name: example-int
+          commonName: example.internal Intermediate CA
+          organization: Example Org
+          keyCurve: P-384
+          ttl: 43800h
+          maxPathLength: 1
+          nameConstraints:
+            permittedDnsDomains:
+              - example.internal
+              - cluster.local
+            excludedIpRanges:
+              - 0.0.0.0/0
+              - ::/0
+          signedBy:
+            mount: pki-root
+            issuer: example-root
+    - path: pki-edge
+      description: the edge intermediate, signed offline
+      defaultLeaseTtl: 43800h
+      maxLeaseTtl: 43800h
+      defaultIssuer: example-edge
+      issuers:
+        - name: example-edge
+          commonName: Example Edge Intermediate CA
+          organization: Example Org
+          keyCurve: P-384
+          ttl: 43800h
+          maxPathLength: 1
+          external: true
+  auth:
+    - path: jwt-ops
+      description: the operations cluster's ServiceAccount tokens, for the backup jobs only
+      discoveryUrl: https://oidc.ops.example.com
+      roles:
+        - name: openbao-snapshot
+          boundAudiences:
+            - openbao
+          boundSubject: system:serviceaccount:openbao:openbao-snapshot
+          userClaim: sub
+          policies:
+            - openbao-snapshot
+          ttl: 15m
+    - path: oidc
+      type: oidc
+      description: web UI sign-in, people only
+      clientId: openbao-ui
+      defaultRole: people
+      discoveryUrl: https://id.example.com
+      roles:
+        - name: people
+          type: oidc
+          boundAudiences:
+            - openbao-ui
+          userClaim: sub
+          groupsClaim: groups
+          claimMappings:
+            email: email
+          allowedRedirectUris:
+            - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+          oidcScopes:
+            - profile
+            - email
+          ttl: 15m
+  policies:
+    - name: openbao-snapshot
+      rules:
+        - path: sys/storage/raft/snapshot
+          capabilities:
+            - read
+  groups:
+    - name: all:openbao:operator
+      policies:
+        - all:openbao:operator
+      doors:
+        - oidc
+namespaces:
+  - name: dev
+    kv:
+      - path: kv
+        description: the dev environment's secrets
+        canary: restore-canary
+    pki:
+      - path: pki
+        description: dev service certificates
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-dev
+        issuers:
+          - name: example-dev
+            commonName: dev.example.internal Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 0
+            nameConstraints:
+              permittedDnsDomains:
+                - dev.example.internal
+                - cluster.local
+              excludedIpRanges:
+                - 0.0.0.0/0
+                - ::/0
+            signedBy:
+              mount: pki-int
+              issuer: example-int
+        roles:
+          - name: service
+            issuer: example-dev
+            allowedDomains:
+              - dev.example.internal
+            allowBareDomains: false
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: workload
+            issuer: example-dev
+            allowedDomains:
+              - svc.cluster.local
+            allowBareDomains: false
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 720h
+        credentialRoles:
+          - name: db-client
+            issuer: example-dev
+            subjectMount: jwt-people
+            cnValidations:
+              - email
+            server: false
+            client: true
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+      - path: pki-edge
+        description: dev edge certificates
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-edge-dev
+        issuers:
+          - name: example-edge-dev
+            commonName: dev.example.com Edge Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 0
+            signedBy:
+              mount: pki-edge
+              issuer: example-edge
+        roles:
+          - name: origin
+            issuer: example-edge-dev
+            allowedDomains:
+              - app.dev.example.com
+              - '*.preview.dev.example.com'
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: true
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+    ssh:
+      - path: ssh
+        description: the dev SSH user CA
+        keyType: ed25519
+        roles:
+          - name: user
+            allowedUsers:
+              - builder
+            defaultUser: builder
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions:
+              - permit-pty
+            ttl: 30m
+            maxTtl: 1h
+    auth:
+      - path: jwt-dev
+        description: the dev cluster's ServiceAccount tokens
+        discoveryUrl: https://oidc.dev.example.com
+        roles:
+          - name: external-secrets
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:external-secrets:external-secrets
+            userClaim: sub
+            policies:
+              - eso-app
+            ttl: 1h
+          - name: example-private
+            boundAudiences:
+              - vault://example-private
+            boundSubject: system:serviceaccount:cert-manager:openbao-issuer
+            userClaim: sub
+            policies:
+              - pki-example-private
+            ttl: 15m
+      - path: jwt-people
+        description: people, through the directory's tokens for audience openbao
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: people
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+            ttl: 1h
+      - path: oidc
+        type: oidc
+        description: web UI sign-in, people only
+        clientId: openbao-ui
+        defaultRole: people
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: people
+            type: oidc
+            boundAudiences:
+              - openbao-ui
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+            allowedRedirectUris:
+              - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+            oidcScopes:
+              - profile
+              - email
+            ttl: 1h
+    policies:
+      - name: dev:db:client
+        rules:
+          - path: pki/sign/db-client
+            capabilities:
+              - update
+      - name: dev:openbao:reader
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - read
+          - path: kv/metadata/*
+            capabilities:
+              - list
+              - read
+      - name: dev:ssh:user
+        rules:
+          - path: ssh/sign/user
+            capabilities:
+              - update
+      - name: eso-app
+        rules:
+          - path: kv/data/app/*
+            capabilities:
+              - read
+          - path: kv/metadata/app/*
+            capabilities:
+              - list
+              - read
+      - name: pki-example-private
+        rules:
+          - path: pki/sign/service
+            capabilities:
+              - update
+          - path: pki/sign/workload
+            capabilities:
+              - update
+    groups:
+      - name: dev:db:client
+        policies:
+          - dev:db:client
+        doors:
+          - jwt-people
+          - oidc
+      - name: dev:openbao:reader
+        policies:
+          - dev:openbao:reader
+        doors:
+          - jwt-people
+          - oidc
+      - name: dev:ssh:user
+        policies:
+          - dev:ssh:user
+        doors:
+          - jwt-people
+          - oidc
+  - name: prod
+    kv:
+      - path: kv
+        description: the prod environment's secrets
+        canary: restore-canary
+    auth:
+      - path: jwt-prod
+        description: the prod cluster's ServiceAccount tokens
+        discoveryUrl: https://oidc.prod.example.com
+        roles:
+          - name: external-secrets
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:external-secrets:external-secrets
+            userClaim: sub
+            policies:
+              - eso-app
+            ttl: 1h
+      - path: jwt-people
+        description: people, through the directory's tokens for audience openbao
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: people
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            ttl: 1h
+    policies:
+      - name: eso-app
+        rules:
+          - path: kv/data/app/*
+            capabilities:
+              - read
+          - path: kv/metadata/app/*
+            capabilities:
+              - list
+              - read
+      - name: prod:openbao:reader
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - read
+          - path: kv/metadata/*
+            capabilities:
+              - list
+              - read
+    groups:
+      - name: prod:openbao:reader
+        policies:
+          - prod:openbao:reader
+        doors:
+          - jwt-people
+identity:
+  primaryDoor: jwt-people
+  metadata:
+    source: example directory
+credentialMaxTtl: 1h
