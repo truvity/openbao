@@ -18,6 +18,11 @@
   `<canary.kvMount>/<canary.path>` holding exactly
   `{namespace: <that namespace>}`.
 
+For the desired-state model and its apply ([model.md](model.md)): a Pulumi
+Go program to call `pkg/apply` from, an auth mount and role in root the
+program logs in through (the model's bootstrap, created by the server's
+initialisation), and the server's `disable_standby_reads = true`.
+
 For the ceremony ([ceremony.md](ceremony.md)) and its custody
 ([custody.md](custody.md)): an AWS account for the root key, a
 multi-region CloudTrail trail logging management events in it, a Pulumi
@@ -87,6 +92,33 @@ signed to adopt it.
   keys are protected and retained, so a URN change would show as a
   replacement and must never be applied.
 
+## Adopting a running OpenBAO configuration
+
+A server already configured by a Pulumi program is adopted by `pkg/apply`
+with an empty preview; nothing is recreated to adopt it.
+
+1. **Derive the model from what the program declares today**, and write
+   it out as a golden file. Every value the program spelled as a constant
+   -- a mount's description, a role's claim mappings, an identity group's
+   metadata, an issuer's organization -- becomes data in the model.
+2. **Keep every resource name.** `pkg/apply` registers on the caller's
+   context, not in a component, so a name the scheme in
+   [model.md](model.md#resource-names) already produces needs nothing.
+   Map every other one with `Options.Rename`, from the name the scheme
+   gives to the name the state holds. Derive the map from the model rather
+   than listing names by hand: a missed entry is a create beside a live
+   object, and on a protected CA key a refusal.
+3. **Prove it before any preview.** Register both programs under Pulumi's
+   mocks and compare what each declares -- type, name, every input,
+   protection, provider -- resource by resource. Dependencies may only
+   grow: the apply waits for more than a hand-written program may have
+   (a signature waits for its signer's pinned default and its mount's
+   URLs), and a dependency is not part of a diff.
+4. **Preview against the real server.** The only change allowed is the
+   provider's per-run login token. Protected resources make a mistake a
+   refusal rather than a replacement, but a replacement proposed on an
+   unprotected role is still a delete, so read the preview.
+
 ## The zero-diff gate
 
 Adopt a release only when your render is byte-identical to what runs, or
@@ -97,6 +129,7 @@ Moving from hand-written objects to these charts is one change whose
 render diff is empty: set the names above first.
 
 For the Go module the render is the Pulumi preview of the program that
-calls `pkg/custody` (no change but provider metadata) and, for the
-ceremony, `--print-template` against the committed root and a known CSR
-(byte-identical to what the previous version printed).
+calls `pkg/custody` (no change but provider metadata), the preview of the
+program that calls `pkg/apply` (no change but the provider's login token)
+and, for the ceremony, `--print-template` against the committed root and a
+known CSR (byte-identical to what the previous version printed).

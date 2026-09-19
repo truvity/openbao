@@ -33,16 +33,20 @@ lint:
     golangci-lint run ./...
 
 # Golden renders (every chart test case against tests/golden) and the Go
-# tests, which run every ceremony against a KMS double.
+# tests, which run every ceremony against a KMS double and every apply
+# under Pulumi's mocks.
 test:
     hack/golden.sh
     go test ./...
 
-# Regenerate the golden renders and the ceremony's template goldens —
-# review the diff before committing.
+# Regenerate the golden renders, the ceremony's template goldens, the
+# model's example and the apply's registered resources — review the diff
+# before committing.
 golden:
     hack/golden.sh update
     UPDATE_GOLDEN=1 go test ./pkg/ceremony/ -run Golden
+    UPDATE_GOLDEN=1 go test ./pkg/model/ -run Canonical
+    UPDATE_GOLDEN=1 go test ./pkg/apply/ -run Golden
 
 # Compile everything, openbaoctl included.
 build:

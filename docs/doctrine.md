@@ -67,6 +67,33 @@ sees them. The break-glass leaf exists so that OpenBAO's own serving
 certificate can come from the same hierarchy as everything else, with no
 second PKI kept aside for the day OpenBAO cannot issue.
 
+## The model is a shape; the derivation is the estate's
+
+OpenBAO's own configuration -- namespaces, mounts, roles, policies,
+identity groups, the PKI and SSH engines -- is described by `pkg/model` and
+applied by `pkg/apply` ([model.md](model.md)). The model is deliberately
+not a configuration format. What decides that a cluster's External Secrets
+may read one prefix, that a group of people may sign SSH certificates for
+one account, that a PKI role may sign the names of an edge catalog, lives
+in the estate's own sources and vocabulary; the estate derives the model
+from them, and reviews the derived model as a golden file. So the estate
+keeps its rules and this repository keeps the mechanism: how each engine is
+written to OpenBAO, what is refused before it is, what is protected, and
+what a name is.
+
+Three positions follow:
+
+- **One namespace level.** Root and one namespace per environment;
+  projects are policy paths and identity groups. A namespace per project
+  multiplies mounts, issuing CAs and logins for no isolation a policy does
+  not already give.
+- **The apply never owns its own door.** The bootstrap is declared for
+  review and created by the server's initialisation.
+- **Registration on the caller's context.** Like `pkg/custody`, the apply
+  registers every resource on the caller's context rather than inside a
+  component, so a running configuration is adopted without a URN change,
+  and its derived names are an API.
+
 ## Ownership contract
 
 | This repository | The consuming estate |
@@ -76,6 +103,7 @@ second PKI kept aside for the day OpenBAO cannot issue.
 | that a snapshot is verified before it is stored and read back after | the schedule and retention that suit its risk |
 | the object and container contracts | the images, the CNI, the issuers, the trust roots, the alert channel |
 | the ceremony's checks, the artifact format, the key policy's shape | the hierarchy (names, lifetimes, constraints), the custody account, the regions, who may assume the roles, who is told of a Sign |
+| the model's shape and refusals, how each engine is written, what is protected, the resource names | the model's content: which namespaces, mounts, roles, policies and groups, derived from its own sources, and the login the apply uses |
 
 The charts assume, and do not create, a least-privilege split:
 
@@ -113,7 +141,10 @@ the same ServiceAccount under another name.
 - **Nothing signs without a confirmed template hash**, and nothing signs
   twice for one artifact.
 - **A Pulumi name or input the module derives never changes in a minor.**
-  Adopted custody must preview empty on every upgrade.
+  Adopted custody and an adopted OpenBAO configuration must preview empty
+  on every upgrade.
+- **A refusal in the model comes with a test** in `pkg/model`, and every
+  resource the worked example registers is in `pkg/apply`'s golden.
 - **A new capability renders nothing until asked for**, so an existing
   values file renders byte-for-byte the same after an upgrade unless the
   release says otherwise.
