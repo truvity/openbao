@@ -14,6 +14,7 @@ from.
 | `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader | unreleased |
 | `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged | unreleased |
 | `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release | unreleased |
+| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl credential` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` | unreleased |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from v0.1.0 on; from v0.2.0 on the same tag is also the Go module
@@ -219,6 +220,10 @@ _, err := custody.Deploy(ctx, custody.Args{
   Sign alarm
 - [docs/model.md](docs/model.md) — OpenBAO's desired state per engine,
   its apply, and the resource names an existing configuration adopts
+- [docs/integrations/access-roster.md](docs/integrations/access-roster.md)
+  — the access-roster issuer, end to end: the two doors, groups to
+  policies, the operators' door, the credential paths, CI, and every
+  failure mode
 - [CHANGELOG.md](CHANGELOG.md) — what changed for a consumer, per version
 
 ## The rule that makes this repository public
@@ -242,9 +247,13 @@ v0.1.0; the Go module and `openbaoctl` from v0.2.0; `pkg/model` and
 
 ```sh
 devbox shell        # or direnv
-just check          # build + lint + golden renders + Go tests + leak canary
+just check          # build + lint + golden renders + Go tests (a real bao server -dev included) + leak canary
 just golden         # regenerate tests/golden, the ceremony's template goldens, the model example and the apply's resources — review the diff
 ```
+
+The access-roster conformance test (`conformance/`) starts the `bao`
+binary the dev shell pins; outside it the test skips, and `just test` sets
+`OPENBAO_CONFORMANCE=required` so that it never does there.
 
 `tests/invalid/<chart>/` holds one fixture per validation rule. Each must
 fail to render; `just lint` proves it. A rule without a fixture is a rule

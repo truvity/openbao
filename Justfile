@@ -34,19 +34,22 @@ lint:
 
 # Golden renders (every chart test case against tests/golden) and the Go
 # tests, which run every ceremony against a KMS double and every apply
-# under Pulumi's mocks.
+# under Pulumi's mocks -- and the access-roster conformance test against a
+# real `bao server -dev`, which the dev shell pins. Required here, so a
+# shell without `bao` fails rather than skipping the proof.
 test:
     hack/golden.sh
-    go test ./...
+    OPENBAO_CONFORMANCE=required go test ./...
 
 # Regenerate the golden renders, the ceremony's template goldens, the
-# model's example and the apply's registered resources — review the diff
-# before committing.
+# model's example, the apply's registered resources and the access-roster
+# example — review the diff before committing.
 golden:
     hack/golden.sh update
     UPDATE_GOLDEN=1 go test ./pkg/ceremony/ -run Golden
     UPDATE_GOLDEN=1 go test ./pkg/model/ -run Canonical
     UPDATE_GOLDEN=1 go test ./pkg/apply/ -run Golden
+    UPDATE_GOLDEN=1 go test ./examples/roster/ -run Golden
 
 # Compile everything, openbaoctl included.
 build:

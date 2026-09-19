@@ -7,13 +7,14 @@
     "govulncheck@1.7.0",
     "just-lsp@latest",
     "just@latest",
-    "kubernetes-helm@latest"
+    "kubernetes-helm@latest",
+    "openbao@2.6.2"
   ],
   "env": {
     "CGO_ENABLED": "0"
   },
   "shell": {
     "init_hook": [],
-    "scripts": {}
+    "scripts":   {}
   }
 }

@@ -5,6 +5,35 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.4.0
+
+The access-roster integration becomes one documented, tested contract.
+Both charts render exactly what v0.3.0 rendered, and nothing in
+`pkg/apply`, `pkg/ceremony`, `pkg/custody` or `openbaoctl` changes.
+
+- **`docs/integrations/access-roster.md`**: the contract end to end --
+  what the issuer must provide (discovery, `iss`, a flat `groups` claim,
+  the `openbao` exchange client and the `openbao-ui` confidential client,
+  and why their `requires` match), the `jwt-roster` and `oidc` doors and
+  `namespace_in_state`, groups to identity groups to policies, the
+  operators' door, the paths and key types `accessctl credential` uses,
+  CI jobs, and every failure mode with its status and exit code.
+- **`pkg/model`**: `Roster` and `RosterUI`, a preset for an issuer shaped
+  like access-roster's: `Door`, `UIDoor`, `Doors` and `DoorPaths` build
+  the two auth mounts, `Grant` and `JobGrant` a policy named after a group
+  with the group admitted through the right doors, `Identity` the identity
+  settings, `Bootstrap` and `RootUI` the operators' door; `OperatorPolicy`,
+  `UICallback` and the default names as constants. Additive: no existing
+  type changes.
+- **`examples/roster`**: a neutral, whole server built with the preset
+  (operators' door, one environment with SSH and database credential
+  roles, a reader and a CI job's read), with its golden `desired.yaml`.
+- **`conformance/`**: a test that applies what `pkg/apply` registers for
+  that example to a real `bao server -dev`, trusting a fake issuer, and
+  proves login -> policy -> `ssh/sign` and `pki/sign`, the UI's code flow
+  across namespaces, a CI job's one read, and the refusals. The dev shell
+  pins `openbao` for it; `just test` requires it.
+
 ## v0.3.0
 
 OpenBAO's own configuration arrives as a model and its apply; both charts
