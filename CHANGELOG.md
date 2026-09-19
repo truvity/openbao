@@ -7,8 +7,8 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## v0.2.0
 
-Not yet tagged. The Go module and `openbaoctl` arrive; both charts render
-exactly what v0.1.0 rendered.
+The Go module and `openbaoctl` arrive; both charts render exactly what
+v0.1.0 rendered.
 
 - **`pkg/ceremony`**: the CA ceremony with the root key in AWS KMS (P-384,
   `ECDSA_SHA_384`). The root's self-signature (or the import of an
