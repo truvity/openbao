@@ -28,6 +28,6 @@ jobs:
     permissions:
       contents: write
       packages: write
-    uses: truvity/ci-workflows/.github/workflows/release-public.yaml@367635e4cd8312c449772fe8e43e6a7afe4f3bf9 # v2.19.0
+    uses: truvity/ci-workflows/.github/workflows/release-public.yaml@ea3c238133634f69f0c51240ede27bb270e24dc0 # v3.0.1
     with:
       charts: '["openbao-ops", "openbao-consumers"]'
