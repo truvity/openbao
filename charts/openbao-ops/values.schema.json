@@ -195,6 +195,19 @@
                 "region": { "type": "string" },
                 "runbook": { "type": "string" }
               }
+            },
+            "alertmanager": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "url": { "type": "string" },
+                "alertname": { "type": "string", "minLength": 1 },
+                "severity": { "type": "string", "minLength": 1 },
+                "release": { "type": "string" },
+                "runbook": { "type": "string" },
+                "image": { "$ref": "#/definitions/image" }
+              }
             }
           }
         }

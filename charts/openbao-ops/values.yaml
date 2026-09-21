@@ -321,7 +321,9 @@ certificateExpiry:
   # What alerts. The container's contract: read /work/status — three
   # lines: notAfter, the Ready condition's status, its message — and when
   # fewer than $ALERT_BEFORE_SECONDS are left, alert and exit non-zero.
-  # Supply `command` for any channel, or turn on the sns preset below.
+  # Supply `command` for any channel, or turn on one of the presets below.
+  # Exactly one of them: two channels from one job is two implementations
+  # of one contract.
   alert:
     image:
       repository: amazon/aws-cli
@@ -343,6 +345,35 @@ certificateExpiry:
       region: ""
       # A last line for the message: where the way back is written down.
       runbook: ""
+    # The other shipped implementation: one alert posted to the
+    # Alertmanager v2 API, for an estate whose alerts already arrive that
+    # way — Alertmanager itself, or whatever vmalert sends to — and which
+    # has no SNS.
+    alertmanager:
+      enabled: false
+      # Where Alertmanager answers, e.g. http://alertmanager.example.svc:9093.
+      # The alert is posted to <url>/api/v2/alerts: the path is the API's,
+      # not a value, and a url that is not http(s) fails the render.
+      url: ""
+      # The labels the alert carries. A route matches on labels, so which
+      # ones they are is the consumer's decision, not this chart's.
+      # `release` is what tells two OpenBAO installs apart; empty leaves
+      # the label out. It is a value like every other name here — Helm's
+      # own release name is never rendered into anything.
+      alertname: OpenBAOCertificateExpiring
+      severity: warning
+      release: ""
+      # An annotation on the alert: where the way back is written down.
+      runbook: ""
+      # This preset's own image, because `alert.image` above defaults to
+      # the AWS CLI — the SNS preset's tool, and no HTTP client. Anything
+      # with a POSIX shell and curl does; the container assumes busybox's
+      # `date`, which is the stricter of the two.
+      image:
+        repository: curlimages/curl
+        tag: "8.22.0"
+        digest: ""
+        pullPolicy: ""
 
 # ---------------------------------------------------------------------------
 networkPolicy:

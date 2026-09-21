@@ -1,0 +1,5 @@
+# A preset with nowhere to post is an expiry check that tells nobody.
+certificateExpiry:
+  enabled: true
+  alert:
+    alertmanager: {enabled: true}

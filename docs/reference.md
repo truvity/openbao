@@ -128,9 +128,16 @@ Every part is off until enabled, so one install can carry any subset.
 | `read.image`, `read.resources` | `alpine/kubectl:1.34.2`, 10m / 32Mi | Reads the Certificate's status. |
 | `alert.image` | `amazon/aws-cli:2.36.44` | |
 | `alert.command`, `alert.args`, `alert.env`, `alert.resources` | none | A replacement alert (the contract above). |
-| `alert.sns.enabled` | `false` | The SNS preset: publish, then fail the run. |
+| `alert.sns.enabled` | `false` | The SNS preset: publish, then fail the run. At most one preset may be on. |
 | `alert.sns.topicArn`, `alert.sns.region` | `""` | Required with the preset. |
 | `alert.sns.runbook` | `""` | A last line of the message: where the way back is written down. |
+| `alert.alertmanager.enabled` | `false` | The Alertmanager preset: one POST, then fail the run. At most one preset may be on. |
+| `alert.alertmanager.url` | `""` | Required with the preset: where Alertmanager answers, e.g. `http://alertmanager.example.svc:9093`. The chart appends `/api/v2/alerts`, so a value that is not an `http(s)` origin fails the render. |
+| `alert.alertmanager.alertname` | `OpenBAOCertificateExpiring` | The `alertname` label. |
+| `alert.alertmanager.severity` | `warning` | The `severity` label. |
+| `alert.alertmanager.release` | `""` | The `release` label, which tells two installs apart; empty leaves the label out. A value like every other name here, never Helm's release name. |
+| `alert.alertmanager.runbook` | `""` | The `runbook` annotation: where the way back is written down. |
+| `alert.alertmanager.image` | `curlimages/curl:8.22.0` | This preset's image, because `alert.image` defaults to the AWS CLI. Anything with a POSIX shell and curl does. |
 
 ### networkPolicy
 
@@ -310,9 +317,11 @@ the key and the replica, for the caller's exports.
 ## pkg/model
 
 The fields of `model.Desired` and what each engine holds; yaml keys in
-brackets. [model.md](model.md) explains the shape and
-[`pkg/model/testdata/desired.yaml`](../pkg/model/testdata/desired.yaml)
-spells every field. Durations are Go durations (`15m`, `720h`).
+brackets. [model.md](model.md) explains the shape,
+[`desired-one-env.yaml`](../pkg/model/testdata/desired-one-env.yaml) is
+the small case and
+[`desired.yaml`](../pkg/model/testdata/desired.yaml) spells every field.
+Durations are Go durations (`15m`, `720h`).
 
 | Type | Field | Required | What |
 |---|---|---|---|

@@ -1,0 +1,182 @@
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/sync-wave: "80"
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  annotations:
+    example.com/sync-wave: "80"
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    resourceNames: ["openbao-tls"]
+    verbs: ["get"]
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  annotations:
+    example.com/sync-wave: "80"
+subjects:
+  - kind: ServiceAccount
+    name: openbao-tls-expiry
+    namespace: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-tls-expiry
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+  annotations:
+    example.com/sync-wave: "80"
+spec:
+  schedule: "23 7 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-tls-expiry
+        spec:
+          serviceAccountName: openbao-tls-expiry
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: read
+              image: alpine/kubectl:1.34.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n openbao get certificate openbao-tls \
+                    -o jsonpath='{.status.notAfter}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{.status.conditions[?(@.type=="Ready")].message}{"\n"}' \
+                    > /work/status
+                  cat /work/status
+              env:
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                limits:
+                  memory: 128Mi
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: alert
+              image: curlimages/curl:8.22.0
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  not_after=$(sed -n 1p /work/status)
+                  ready=$(sed -n 2p /work/status)
+                  reason=$(sed -n 3p /work/status)
+                  [ -n "$not_after" ] || { echo "openbao/openbao-tls has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  # busybox's date does not read RFC 3339: hand it the form it parses.
+                  left=$(( $(date -u -d "$(echo "$not_after" | sed -e 's/T/ /' -e 's/Z$//')" +%s) - $(date -u +%s) ))
+                  echo "openbao-tls: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
+                  if [ "$left" -ge 1814400 ]; then
+                    exit 0
+                  fi
+                  # cert-manager's own text goes into a JSON body: one quote in
+                  # it would make the body something Alertmanager rejects, and
+                  # then nobody is told at all.
+                  escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+                  cat > /tmp/alert.json <<JSON
+                  [
+                    {
+                      "labels": {
+                        "alertname": "OpenBAOCertificateExpiring",
+                        "severity": "critical",
+                        "release": "openbao"
+                      },
+                      "annotations": {
+                        "summary": "OpenBAO's certificate ends in $((left / 86400)) days",
+                        "description": "openbao/openbao-tls on example-cluster ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO 30 days before its end, so renewal has been failing for $(( (2592000 - left) / 86400 )) days. Certificate Ready=$(escape "$ready"): $(escape "$reason"). Look at: kubectl -n openbao get certificaterequest; kubectl -n cert-manager logs deploy/cert-manager.",
+                        "runbook": "The way back is the break-glass certificate: see the runbook."
+                      }
+                    }
+                  ]
+                  JSON
+                  curl --silent --show-error --fail --max-time 30 \
+                    --header 'Content-Type: application/json' \
+                    --data-binary @/tmp/alert.json \
+                    "http://alertmanager.example.svc:9093/api/v2/alerts"
+                  exit 1
+              env:
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

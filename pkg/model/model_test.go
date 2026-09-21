@@ -13,14 +13,19 @@ import (
 	"github.com/truvity/openbao/pkg/model"
 )
 
-const examplePath = "testdata/desired.yaml"
+const (
+	// oneEnvironmentPath is the small case a reader meets first: one
+	// environment, on the cluster that also runs the server.
+	oneEnvironmentPath = "testdata/desired-one-env.yaml"
+	examplePath        = "testdata/desired.yaml"
+)
 
-// example is the neutral golden: a whole server's desired state, read
-// strictly, so every field it spells is a field the model has.
-func example(t *testing.T) *model.Desired {
+// read is one golden, read strictly, so every field it spells is a field
+// the model has.
+func read(t *testing.T, path string) *model.Desired {
 	t.Helper()
 
-	raw, err := os.ReadFile(examplePath)
+	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
@@ -30,6 +35,13 @@ func example(t *testing.T) *model.Desired {
 	require.NoError(t, decoder.Decode(&desired))
 
 	return &desired
+}
+
+// example is the neutral golden: a whole server's desired state.
+func example(t *testing.T) *model.Desired {
+	t.Helper()
+
+	return read(t, examplePath)
 }
 
 func encode(t *testing.T, desired *model.Desired) []byte {
@@ -44,26 +56,30 @@ func encode(t *testing.T, desired *model.Desired) []byte {
 	return out.Bytes()
 }
 
-// The example is valid, and it is written in the model's own canonical
-// form: decoding and encoding it again gives the same bytes. UPDATE_GOLDEN=1
-// rewrites it in that form.
-func TestExampleIsValidAndCanonical(t *testing.T) {
-	desired := example(t)
-	require.NoError(t, desired.Validate())
+// Both examples are valid, and each is written in the model's own
+// canonical form: decoding and encoding it again gives the same bytes.
+// UPDATE_GOLDEN=1 rewrites them in that form.
+func TestExamplesAreValidAndCanonical(t *testing.T) {
+	for _, path := range []string{oneEnvironmentPath, examplePath} {
+		t.Run(path, func(t *testing.T) {
+			desired := read(t, path)
+			require.NoError(t, desired.Validate())
 
-	got := encode(t, desired)
+			got := encode(t, desired)
 
-	if os.Getenv("UPDATE_GOLDEN") != "" {
-		require.NoError(t, os.WriteFile(examplePath, got, 0o644))
+			if os.Getenv("UPDATE_GOLDEN") != "" {
+				require.NoError(t, os.WriteFile(path, got, 0o644))
 
-		return
-	}
+				return
+			}
 
-	want, err := os.ReadFile(examplePath)
-	require.NoError(t, err)
+			want, err := os.ReadFile(path)
+			require.NoError(t, err)
 
-	if !bytes.Equal(want, got) {
-		t.Fatalf("%s is not in canonical form; review and rerun with UPDATE_GOLDEN=1", examplePath)
+			if !bytes.Equal(want, got) {
+				t.Fatalf("%s is not in canonical form; review and rerun with UPDATE_GOLDEN=1", path)
+			}
+		})
 	}
 }
 
@@ -162,14 +178,19 @@ func TestValidateRefuses(t *testing.T) {
 // The bootstrap is validated like everything else, but it is never part
 // of what is applied.
 func TestAppliedIsRootThenTheEnvironments(t *testing.T) {
-	desired := example(t)
+	for path, want := range map[string][]string{
+		oneEnvironmentPath: {"root", "prod"},
+		examplePath:        {"root", "dev", "prod"},
+	} {
+		desired := read(t, path)
 
-	var names []string
-	for _, namespace := range desired.Applied() {
-		names = append(names, namespace.Label())
+		var names []string
+		for _, namespace := range desired.Applied() {
+			names = append(names, namespace.Label())
+		}
+
+		assert.Equal(t, want, names, path)
 	}
-
-	assert.Equal(t, []string{"root", "dev", "prod"}, names)
 }
 
 func TestIdentityNamesAGroupPerDoor(t *testing.T) {

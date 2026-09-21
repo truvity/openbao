@@ -75,6 +75,25 @@ server:
         }
 ```
 
+## The seal's health check is a KMS budget
+
+`seal "awskms"` is not only used to unseal. Every replica keeps checking
+that it still can, by round-tripping an `Encrypt` and a `Decrypt` against
+the key on a timer, for as long as it runs — so the request count follows
+the number of replicas and the clock, not the traffic.
+
+Measured on a five-replica cluster: about **960 KMS requests a day**,
+which is about 192 per replica per day. Three replicas are therefore
+about 17,000 requests a month and five about 29,000. AWS's free tier is
+20,000 requests a month, so five replicas cross it around the 21st and
+the account is billed for the rest of the month, every month.
+
+So `replicas: 3` above is the reference for two reasons, not one: it is
+the smallest Raft quorum that survives losing a node, and it is the
+seal's budget. A replica added for headroom keeps spending its 192
+requests a day for as long as it exists, whether or not anything reads
+from it.
+
 ## Verifying one name
 
 A certificate issued from a name-constrained intermediate cannot carry the

@@ -1,0 +1,7 @@
+# Two implementations of one contract: the job alerts once, so one of them
+# would be silently ignored.
+certificateExpiry:
+  enabled: true
+  alert:
+    sns: {enabled: true, topicArn: t, region: r}
+    alertmanager: {enabled: true, url: "http://alertmanager.example.svc:9093"}
