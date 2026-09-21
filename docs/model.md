@@ -43,10 +43,23 @@ namespace, never a namespace of its own: a namespace per project multiplies
 mounts, issuing CAs and logins for no isolation a policy does not already
 give. `Validate` refuses a namespace name with a `/`.
 
-A worked example of the whole shape is
-[`pkg/model/testdata/desired.yaml`](../pkg/model/testdata/desired.yaml): a
-root CA and an intermediate in root, an intermediate signed outside
-OpenBAO, and two environments.
+Two worked examples, the small one first:
+
+- [`desired-one-env.yaml`](../pkg/model/testdata/desired-one-env.yaml) —
+  **one environment**, on the cluster that also runs the server: a root
+  CA and an intermediate in root, that cluster's door in root for the
+  backup job and the same door in the environment for its stores and its
+  issuer, the environment's issuing CA and its service role, a KV mount
+  with a restore canary, and people's door. It is the single-cluster
+  install ([adoption.md](adoption.md#single-cluster)) as desired state,
+  and `conformance/` applies it to a real server.
+- [`desired.yaml`](../pkg/model/testdata/desired.yaml) — **the whole
+  shape**: the same root and intermediate, a second intermediate signed
+  outside OpenBAO, an SSH user CA, the web UI's door, credential roles,
+  and two environments.
+
+Neither is a template to copy: an estate derives its own model from its
+own sources. They are what every field looks like when it is filled in.
 
 ### The bootstrap
 
@@ -120,7 +133,11 @@ a certificate carries the URLs its issuing mount had when it was signed.
 list is left out rather than sent empty, and an issuer with none carries no
 name-constraints extension at all: an unconstrained parent gives an
 unconstrained child. For an `external` issuer they record what the
-external signer is expected to put there.
+external signer is expected to put there. OpenBAO 2.6.2 does not
+recognise `excludedIpRanges` when it generates a root inside the mount —
+it ignores the parameter and says so in a warning — which is why the
+one-environment example, the one applied to a real server, constrains
+domains only.
 
 A host-name role (`roles[]`) signs the names it lists; everything else is
 off whatever is written: no templates, globs, any-name, IP, URI or other

@@ -1,0 +1,18 @@
+# The expiry check on a cluster whose alerts already arrive through
+# Alertmanager and which has no SNS: the same contract, the other shipped
+# implementation, with the labels a route matches on. The renewal lead
+# time is explicit here because this install renders no certificate — the
+# deployment that owns the certificate does.
+certificateExpiry:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  clusterName: example-cluster
+  renewBeforeSeconds: 2592000
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      severity: critical
+      release: openbao
+      runbook: "The way back is the break-glass certificate: see the runbook."

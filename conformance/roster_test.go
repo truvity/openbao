@@ -290,14 +290,7 @@ func TestRosterContract(t *testing.T) {
 func start(t *testing.T) *conformance {
 	t.Helper()
 
-	binary, err := exec.LookPath("bao")
-	if err != nil {
-		if os.Getenv(requireVariable) == "required" {
-			t.Fatalf("%s=required and no `bao` on PATH: run the test in the dev shell (devbox), which pins it", requireVariable)
-		}
-
-		t.Skipf("no `bao` on PATH; the dev shell pins it, and %s=required makes this a failure", requireVariable)
-	}
+	binary := tool(t, "bao")
 
 	issuer, err := fakeissuer.New(map[string]string{model.RosterUIClient: uiSecret})
 	require.NoError(t, err)

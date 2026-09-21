@@ -3,14 +3,31 @@
 {{- $ns := include "ops.namespace" . }}
 {{- $cert := $e.certificateName | default .Values.server.tlsSecretName }}
 {{- $alert := $e.alert }}
-{{- if and (not $alert.sns.enabled) (not $alert.command) }}
-{{- fail "certificateExpiry.alert needs either sns.enabled or an explicit command — an expiry check that tells nobody is a log line" }}
+{{- $am := $alert.alertmanager }}
+{{- if and $alert.sns.enabled $am.enabled }}
+{{- fail "certificateExpiry.alert has both presets on: sns and alertmanager are two implementations of one contract, and the job alerts once" }}
+{{- end }}
+{{- if and (not $alert.sns.enabled) (not $am.enabled) (not $alert.command) }}
+{{- fail "certificateExpiry.alert needs a preset (sns, alertmanager) or an explicit command — an expiry check that tells nobody is a log line" }}
 {{- end }}
 {{- if and $alert.sns.enabled (not $alert.sns.topicArn) }}
 {{- fail "certificateExpiry.alert.sns.topicArn is required when the sns preset is on" }}
 {{- end }}
 {{- if and $alert.sns.enabled (not $alert.sns.region) }}
 {{- fail "certificateExpiry.alert.sns.region is required when the sns preset is on" }}
+{{- end }}
+{{- if and $am.enabled (not $am.url) }}
+{{- fail "certificateExpiry.alert.alertmanager.url is required when the alertmanager preset is on" }}
+{{- end }}
+{{- /* The path is the v2 API's and the chart appends it, so what is
+       configured is an origin, not an endpoint: a value that is not one
+       is a job that posts nowhere, and nobody is told. */}}
+{{- if and $am.enabled (not (regexMatch `^https?://\S+$` $am.url)) }}
+{{- fail (printf "certificateExpiry.alert.alertmanager.url must be an http(s) URL Alertmanager answers at, not %q — the alert goes to <url>/api/v2/alerts" $am.url) }}
+{{- end }}
+{{- $alertImage := $alert.image }}
+{{- if $am.enabled }}
+{{- $alertImage = $am.image }}
 {{- end }}
 {{- $alertBefore := int $e.alertBeforeSeconds }}
 {{- $renewBefore := include "ops.renewBeforeSeconds" . | int }}
@@ -134,7 +151,7 @@ spec:
                 {{- include "ops.containerSecurityContext" $ | nindent 16 }}
           containers:
             - name: alert
-              {{- include "ops.imageLines" $alert.image | nindent 14 }}
+              {{- include "ops.imageLines" $alertImage | nindent 14 }}
               {{- if $alert.sns.enabled }}
               command:
                 - /bin/sh
@@ -160,6 +177,52 @@ spec:
               env:
                 - name: AWS_REGION
                   value: {{ $alert.sns.region }}
+                - name: HOME
+                  value: /tmp
+                {{- with $alert.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- else if $am.enabled }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  not_after=$(sed -n 1p /work/status)
+                  ready=$(sed -n 2p /work/status)
+                  reason=$(sed -n 3p /work/status)
+                  [ -n "$not_after" ] || { echo "{{ $ns }}/{{ $cert }} has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  # busybox's date does not read RFC 3339: hand it the form it parses.
+                  left=$(( $(date -u -d "$(echo "$not_after" | sed -e 's/T/ /' -e 's/Z$//')" +%s) - $(date -u +%s) ))
+                  echo "{{ $cert }}: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
+                  if [ "$left" -ge {{ $alertBefore }} ]; then
+                    exit 0
+                  fi
+                  # cert-manager's own text goes into a JSON body: one quote in
+                  # it would make the body something Alertmanager rejects, and
+                  # then nobody is told at all.
+                  escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+                  cat > /tmp/alert.json <<JSON
+                  [
+                    {
+                      "labels": {
+                        "alertname": {{ $am.alertname | quote }},
+                        "severity": {{ $am.severity | quote }}{{ if $am.release }},
+                        "release": {{ $am.release | quote }}{{ end }}
+                      },
+                      "annotations": {
+                        "summary": "OpenBAO's certificate ends in $((left / 86400)) days",
+                        "description": "{{ $ns }}/{{ $cert }}{{ with $e.clusterName }} on {{ . }}{{ end }} ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO {{ div $renewBefore 86400 }} days before its end, so renewal has been failing for $(( ({{ $renewBefore }} - left) / 86400 )) days. Certificate Ready=$(escape "$ready"): $(escape "$reason"). Look at: kubectl -n {{ $ns }} get certificaterequest; kubectl -n {{ $e.certManagerNamespace }} logs deploy/cert-manager."{{ with $am.runbook }},
+                        "runbook": {{ . | quote }}{{ end }}
+                      }
+                    }
+                  ]
+                  JSON
+                  curl --silent --show-error --fail --max-time 30 \
+                    --header 'Content-Type: application/json' \
+                    --data-binary @/tmp/alert.json \
+                    {{ printf "%s/api/v2/alerts" (trimSuffix "/" $am.url) | quote }}
+                  exit 1
+              env:
                 - name: HOME
                   value: /tmp
                 {{- with $alert.env }}

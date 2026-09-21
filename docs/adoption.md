@@ -9,7 +9,9 @@
   trust-manager for the trust bundle.
 - External Secrets, for the stores.
 - A JWT auth mount per consuming cluster that trusts that cluster's
-  ServiceAccount issuer, and the roles and policies the charts name
+  ServiceAccount issuer (one cluster, one issuer — see
+  [Single cluster](#single-cluster)), and the roles and policies the
+  charts name
   (`snapshot.baoRole`, `restoreCheck.baoRole`, `stores[].role`,
   `writers[].name`, `pki.issuers[].role`). Those are the estate's: the
   charts assume them and never create them
@@ -38,10 +40,77 @@ the intermediates certify.
    let one pass before relying on either. Trigger a first run by hand
    (`kubectl create job --from=cronjob/<name>`) rather than waiting a week.
 3. Turn on `certificateExpiry` once the serving certificate is issued.
-4. `openbao-consumers` on each consuming cluster. With `pki.enabled`,
+4. `openbao-consumers` on each consuming cluster — which may be this one
+   ([Single cluster](#single-cluster)). With `pki.enabled`,
    issue one disposable certificate per issuer (`certificates:`) to prove
    the login, the chain and renewal before any existing workload changes
    its `issuerRef`.
+
+## Single cluster
+
+The smallest install: the server, its jobs and its consumers on one
+cluster — the one the server itself runs on. No value means anything
+different there; what changes is that the values which name "the
+consuming cluster" all name this one, and that the two charts are
+ordered inside one deployment instead of following two clocks.
+
+**One cluster is one token issuer.** A JWT auth mount trusts exactly one
+issuer, and here there is one: this cluster's ServiceAccount issuer. What
+there is one of is the *door*, not the mount object — anything logging in
+does so in the OpenBAO namespace it works in, so the mount is created in
+each namespace that is logged in to:
+
+| Who logs in | Where | Mount |
+|---|---|---|
+| the ops jobs (snapshot, restore check) | root: `sys/storage/raft/snapshot` is a root path, and the restore check lists namespaces from there | `auth.mountPath` in root |
+| the stores and the cert-manager issuers | the environment's namespace, the one they read and sign in | `auth.mountPath` in that namespace |
+
+Both trust the same issuer, take the same audience and carry the same
+name, so both charts are given the same `auth.mountPath` and
+`auth.audience` and there is one discovery URL in the whole install. A
+second name, with a second issuer to keep in step, appears when a second
+CLUSTER does — never because a namespace was added.
+[`pkg/model/testdata/desired-one-env.yaml`](../pkg/model/testdata/desired-one-env.yaml)
+is that shape as desired state, and the conformance harness applies it to
+a server.
+
+**The values that collapse to one name.**
+
+| openbao-ops | openbao-consumers | On one cluster |
+|---|---|---|
+| `auth.mountPath`, `auth.audience` | `auth.mountPath`, `auth.audience`, `writerAuthMount` | one mount name and one audience; `writerAuthMount` stays empty, because the writer's cluster is this one |
+| `server.activeService` (what the jobs dial) | `server` | the same endpoint: the consumers are in this cluster too, so they dial the Service rather than an external name |
+| `server.tlsSecretName`, `server.caKey` | `caBundle` | the CA that signed the SERVER's certificate — not a root that verifies what OpenBAO issues |
+| `restoreCheck.canary.namespaces`, `restoreCheck.pki.namespaces` | `vaultNamespace` | the one environment |
+| `restoreCheck.pki.issuing.issuerPrefix` | `pki.issuers[].signPath` | the one environment's issuing CA |
+| `certificateExpiry.clusterName` | — | this cluster, in the alert's text |
+
+**One wave sequence, not two clocks.** With two clusters the charts are
+two Applications that sync independently. Here they belong to one, as two
+sources or as two Applications in one project, and the install order
+above is a sync-wave order — each chart's `annotations` carry the wave:
+
+| Wave | What |
+|---|---|
+| 0 | `openbao-ops` with only `serverCertificate` on: the server cannot serve without its Secret |
+| 5 | the server, upstream's chart, with the `tlsReload` fragment spliced in |
+| 10 | `openbao-ops`' jobs and policies: `snapshot`, `restoreCheck`, `certificateExpiry`, `networkPolicy` |
+| 20 | `openbao-consumers`: the stores, the issuers, the anchors and the bundle |
+
+What happens between waves 5 and 10 is not in either chart: the mounts,
+roles and policies both charts name are created by the program that calls
+`pkg/apply` (or by hand), against the server that wave 5 started. A store
+or a job that logs in before its role exists fails until it is retried —
+which is why wave 20 is last and why the first restore check is triggered
+by hand rather than waited for.
+
+**Proving it.** On one cluster the proof is the same as anywhere: turn on
+`snapshot`, run one by hand, then turn on `restoreCheck` with
+`canary.namespaces` naming the one environment (or empty, to read back
+every namespace the restored copy lists) and `pki.namespaces` naming it
+too, and run it by hand. The pass line names the snapshot it opened, the
+canaries it read and the chain it walked; until it has printed one, the
+install has backups nobody has opened.
 
 ## Adopting objects that already run
 

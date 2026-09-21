@@ -214,7 +214,8 @@ happens, and its tests run every refusal against a KMS double.
 | a restore check with neither `canary` nor `pki` on | a restore judged on nothing |
 | the PKI walk with no trust anchor, intermediate, issuer prefix, namespaces or domain | a walk that starts from the restored copy, or proves no issuing CA |
 | a canary or PKI namespace that is not a plain name (schema) | a name spliced into the check's script |
-| an expiry check with neither the SNS preset nor a command, or SNS with no topic or region | an expiry check that tells nobody |
+| an expiry check with no preset and no command, SNS with no topic or region, or Alertmanager with no url or one that is not an `http(s)` origin | an expiry check that tells nobody |
+| both alert presets at once | a second channel silently dropped by a job that alerts once |
 | `alertBeforeSeconds` not below the renewal lead time | an alert before renewal has even started |
 | no `renewBeforeSeconds` and a `serverCertificate.renewBefore` that is not whole hours | an alert text that cannot say how long renewal has been failing |
 | a network policy with no client CIDRs | an ingress policy that admits nobody |

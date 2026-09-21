@@ -1,0 +1,196 @@
+bootstrap:
+  auth:
+    - path: jwt-people
+      description: people, through the directory's tokens for audience openbao
+      discoveryUrl: https://id.example.com
+      roles:
+        - name: people
+          boundAudiences:
+            - openbao
+          userClaim: sub
+          groupsClaim: groups
+          ttl: 15m
+  policies:
+    - name: all:openbao:operator
+      rules:
+        - path: '*'
+          capabilities:
+            - create
+            - read
+            - update
+            - patch
+            - delete
+            - list
+            - sudo
+  groups:
+    - name: all:openbao:operator
+      policies:
+        - all:openbao:operator
+      doors:
+        - jwt-people
+root:
+  pki:
+    - path: pki-root
+      description: the example root; signs the intermediate only
+      defaultLeaseTtl: 87600h
+      maxLeaseTtl: 87600h
+      defaultIssuer: example-root
+      issuers:
+        - name: example-root
+          commonName: Example Root CA
+          organization: Example Org
+          keyCurve: P-384
+          ttl: 87600h
+          maxPathLength: 2
+          nameConstraints:
+            permittedDnsDomains:
+              - example.internal
+              - cluster.local
+          selfSigned: true
+    - path: pki-int
+      description: the example intermediate; signs the environment's issuing CA only
+      defaultLeaseTtl: 43800h
+      maxLeaseTtl: 43800h
+      defaultIssuer: example-int
+      issuers:
+        - name: example-int
+          commonName: example.internal Intermediate CA
+          organization: Example Org
+          keyCurve: P-384
+          ttl: 43800h
+          maxPathLength: 1
+          nameConstraints:
+            permittedDnsDomains:
+              - example.internal
+              - cluster.local
+          signedBy:
+            mount: pki-root
+            issuer: example-root
+  auth:
+    - path: jwt-cluster
+      description: the cluster's ServiceAccount tokens; in root, for the backup jobs
+      discoveryUrl: https://oidc.cluster.example.com
+      roles:
+        - name: openbao-snapshot
+          boundAudiences:
+            - openbao
+          boundSubject: system:serviceaccount:openbao:openbao-snapshot
+          userClaim: sub
+          policies:
+            - openbao-snapshot
+          ttl: 15m
+  policies:
+    - name: openbao-snapshot
+      rules:
+        - path: sys/storage/raft/snapshot
+          capabilities:
+            - read
+  groups: []
+namespaces:
+  - name: prod
+    kv:
+      - path: kv
+        description: the environment's secrets
+        canary: restore-canary
+    pki:
+      - path: pki
+        description: service certificates
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-prod
+        issuers:
+          - name: example-prod
+            commonName: example.internal Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 0
+            nameConstraints:
+              permittedDnsDomains:
+                - example.internal
+                - cluster.local
+            signedBy:
+              mount: pki-int
+              issuer: example-int
+        roles:
+          - name: service
+            issuer: example-prod
+            allowedDomains:
+              - example.internal
+            allowBareDomains: false
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+    auth:
+      - path: jwt-cluster
+        description: the cluster's ServiceAccount tokens, here for the workloads that read and issue
+        discoveryUrl: https://oidc.cluster.example.com
+        roles:
+          - name: external-secrets
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:external-secrets:external-secrets
+            userClaim: sub
+            policies:
+              - eso-app
+            ttl: 1h
+          - name: example-private
+            boundAudiences:
+              - vault://example-private
+            boundSubject: system:serviceaccount:cert-manager:openbao-issuer
+            userClaim: sub
+            policies:
+              - pki-example-private
+            ttl: 15m
+      - path: jwt-people
+        description: people, through the directory's tokens for audience openbao
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: people
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+            ttl: 1h
+    policies:
+      - name: eso-app
+        rules:
+          - path: kv/data/app/*
+            capabilities:
+              - read
+          - path: kv/metadata/app/*
+            capabilities:
+              - list
+              - read
+      - name: pki-example-private
+        rules:
+          - path: pki/sign/service
+            capabilities:
+              - update
+      - name: prod:openbao:reader
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - read
+          - path: kv/metadata/*
+            capabilities:
+              - list
+              - read
+    groups:
+      - name: prod:openbao:reader
+        policies:
+          - prod:openbao:reader
+        doors:
+          - jwt-people
+identity:
+  primaryDoor: jwt-people
+  metadata:
+    source: example directory
+credentialMaxTtl: 1h

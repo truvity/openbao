@@ -1,0 +1,6 @@
+# The chart appends /api/v2/alerts, so the value is an origin. A host and
+# port with no scheme is not one, and the post would go nowhere.
+certificateExpiry:
+  enabled: true
+  alert:
+    alertmanager: {enabled: true, url: "alertmanager.example.svc:9093"}

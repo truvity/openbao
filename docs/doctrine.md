@@ -21,8 +21,8 @@ deployment's ordering.
 
 ## Storage and alerting are containers with a contract
 
-The chart does not know S3 or SNS. It knows a **container with a
-contract**, and ships an AWS preset as one implementation of each. The
+The chart does not know S3, SNS or Alertmanager. It knows a **container
+with a contract**, and ships presets as implementations of it. The
 contract is the one thing a replacement must honour:
 
 | Container | Reads | Environment | Must |
@@ -30,6 +30,23 @@ contract is the one thing a replacement must honour:
 | `snapshot.upload` | `/work/openbao.snap`, `/work/taken-at` | `SNAPSHOT_PREFIX`, `HOME` | store the bytes at `$SNAPSHOT_PREFIX<taken-at>.snap` |
 | `restoreCheck.fetch` | the store | `MAX_SNAPSHOT_AGE_SECONDS`, `HOME` | write the newest snapshot to `/work/openbao.snap` and its name to `/work/key`, and **fail** when it is older than the limit |
 | `certificateExpiry.alert` | `/work/status`: notAfter, the Ready status, its message, one per line | `ALERT_BEFORE_SECONDS`, `HOME` | alert and exit non-zero when fewer seconds than that are left |
+
+A preset is one implementation, and the only place a cloud or a channel
+is named. Alerting ships two, because an estate that has no SNS still has
+somewhere its alerts arrive:
+
+| Preset | Container | What it does |
+|---|---|---|
+| `snapshot.upload.s3` | `snapshot.upload` | `aws s3 cp` with a checksum |
+| `restoreCheck.fetch.s3` | `restoreCheck.fetch` | fetches the newest object under a prefix, and fails on one that is too old |
+| `certificateExpiry.alert.sns` | `certificateExpiry.alert` | one `aws sns publish` |
+| `certificateExpiry.alert.alertmanager` | `certificateExpiry.alert` | one POST to `<url>/api/v2/alerts`, carrying the labels the consumer sets: `alertname`, `severity` and the release |
+
+Two presets for one container are refused at render time: the job alerts
+once, so a second channel would be silently dropped. Both alerting presets
+are held to the contract by the same test, which renders the chart and
+runs the container's own script (`conformance/alert_test.go`) -- a preset
+only a reviewer has read is a preset nobody has run.
 
 ## The restored PKI is judged against a root you hold
 

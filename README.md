@@ -55,7 +55,8 @@ the server is reachable from its clients and the jobs from nothing.
 stores bounded by namespace conditions, writer stores that present the
 writer's own token, and cert-manager issuers whose roots are distributed as
 a trust bundle. Object storage and alerting are containers with a
-contract, with S3 and SNS as presets; see [docs/doctrine.md](docs/doctrine.md).
+contract, with S3, SNS and an Alertmanager webhook as presets; see
+[docs/doctrine.md](docs/doctrine.md).
 
 Inside the server, the **desired state** (`pkg/model`) is one level of
 namespaces -- root, and one per environment -- each holding the same

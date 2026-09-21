@@ -5,6 +5,43 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.5.0
+
+Not yet tagged. What a consumer with one cluster and no SNS needs: a
+second alerting implementation, the seal's cost written down, the
+single-cluster path, and a one-environment model example. `openbao-ops`
+renders exactly what v0.4.0 rendered unless the new preset is turned on,
+and nothing in `pkg/apply`, `pkg/ceremony`, `pkg/custody` or `openbaoctl`
+changes.
+
+- **`charts/openbao-ops`**: `certificateExpiry.alert.alertmanager`, a
+  second implementation of the alert contract beside `sns`. It posts one
+  alert to `<url>/api/v2/alerts` with the labels the consumer sets
+  (`alertname`, `severity`, `release`), a `runbook` annotation, and
+  cert-manager's Ready message escaped into the body; it carries its own
+  image, because `alert.image` defaults to the AWS CLI. New refusals,
+  each with a fixture: no `url`, a `url` that is not an `http(s)` origin,
+  and both presets at once.
+- **`conformance/`**: the alert contract is now proved by running it.
+  Both presets are rendered and their container's own script executed
+  over a `/work/status` inside and outside the window -- the SNS one
+  against a recording stand-in for the CLI it publishes with, the
+  Alertmanager one against a webhook that really receives the post. The
+  dev shell pins `curl` for it.
+- **`docs/server.md`**: what `seal "awskms"` costs. Each replica
+  round-trips `Encrypt`+`Decrypt` against the key on a timer; measured on
+  a five-replica cluster, about 960 KMS requests a day, ~192 per replica.
+  `replicas: 3` is the reference for that reason as well as quorum.
+- **`docs/adoption.md`**: a **Single cluster** section -- one cluster is
+  one token issuer, where each mount of that one door lives and why, the
+  values both charts give the same name, the two charts as one sync-wave
+  sequence, and what has to happen between the waves.
+- **`pkg/model/testdata/desired-one-env.yaml`**: the small example --
+  one environment on the cluster that runs the server -- which
+  [model.md](docs/model.md) now opens with, the two-environment file
+  staying as the whole shape. `conformance/` applies it to a real server
+  through the same capture-and-replay path as the roster example.
+
 ## v0.4.0
 
 The access-roster integration becomes one documented, tested contract.
