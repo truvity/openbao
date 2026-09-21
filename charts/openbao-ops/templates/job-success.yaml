@@ -134,6 +134,8 @@ spec:
                   : > /work/alert
                   : > /work/report
                   problems=0
+                  {{- /* A shell WORD, never shell: see ops.shellArg. */}}
+                  cluster={{ include "ops.shellArg" ($a.clusterName | default "") }}
 
                   look() {
                     name=$1; limit=$2; what=$3
@@ -174,14 +176,14 @@ spec:
                   }
 
                   {{- range $job := $a.cronJobs }}
-                  look {{ $job.name | quote }} {{ int $job.maxAgeSeconds }} {{ $job.description | default $job.name | quote }}
+                  look {{ include "ops.shellArg" $job.name }} {{ int $job.maxAgeSeconds }} {{ include "ops.shellArg" ($job.description | default $job.name) }}
                   {{- end }}
 
                   if [ "$problems" = 0 ]; then
                     exit 0
                   fi
                   {
-                    echo "{{ with $a.clusterName }}{{ . }}: {{ end }}$problems of {{ len $a.cronJobs }} OpenBAO job(s) have not succeeded lately"
+                    echo "${cluster:+$cluster: }$problems of {{ len $a.cronJobs }} OpenBAO job(s) have not succeeded lately"
                     echo "These are the jobs an install is judged on when it fails, and none of them is loud when it simply stops:"
                     cat /work/report
                     echo "Look at: kubectl -n {{ $ns }} get cronjob; kubectl -n {{ $ns }} get job --sort-by=.metadata.creationTimestamp; kubectl -n {{ $ns }} logs job/<the newest one> --all-containers."

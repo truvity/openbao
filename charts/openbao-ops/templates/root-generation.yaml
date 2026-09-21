@@ -93,24 +93,30 @@ spec:
                 - -ec
                 - |
                   : > /work/alert
+                  {{- /* Shell WORDS, never shell: see ops.shellArg. The
+                         mount and the role are what this watch is, so
+                         they are named in the report as well as used. */}}
+                  cluster={{ include "ops.shellArg" ($a.clusterName | default "") }}
+                  mount={{ include "ops.shellArg" $.Values.auth.mountPath }}
+                  role={{ include "ops.shellArg" $a.baoRole }}
 
                   # Nothing below exits non-zero: the alert container is
                   # the only thing that tells anyone, and it never runs if
                   # this one fails the pod.
                   blind() {
                     {
-                      echo "{{ with $a.clusterName }}{{ . }}: {{ end }}the root-token watch cannot see OpenBAO"
+                      echo "${cluster:+$cluster: }the root-token watch cannot see OpenBAO"
                       echo "$1: $(head -c 300 /work/why 2>/dev/null)"
-                      echo "This watch reads sys/generate-root-token/attempt as the role {{ $a.baoRole }} through the {{ $.Values.auth.mountPath }} mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
-                      echo "Look at: kubectl -n {{ $ns }} get pods -l {{ $serverSelector }}; bao status; bao read auth/{{ $.Values.auth.mountPath }}/role/{{ $a.baoRole }}; bao policy read <the policy bound to it>."
+                      echo "This watch reads sys/generate-root-token/attempt as the role $role through the $mount mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
+                      echo "Look at: kubectl -n {{ $ns }} get pods -l {{ $serverSelector }}; bao status; bao read auth/$mount/role/$role; bao policy read <the policy bound to it>."
                       echo "The way back: restore the role and its policy — read on sys/generate-root-token/attempt and nothing else — from the configuration that owns them, and re-run this job."
                     } > /work/alert
                     cat /work/alert
                     exit 0
                   }
 
-                  if ! bao write -field=token auth/{{ $.Values.auth.mountPath }}/login \
-                       role={{ $a.baoRole }} jwt=@{{ include "ops.tokenPath" $ }} \
+                  if ! bao write -field=token "auth/$mount/login" \
+                       "role=$role" jwt=@{{ include "ops.tokenPath" $ }} \
                        > /work/token 2> /work/why; then
                     blind "logging in failed"
                   fi
@@ -135,7 +141,7 @@ spec:
                   bao token revoke -self || true
 
                   {
-                    echo "{{ with $a.clusterName }}{{ . }}: {{ end }}a root token is being generated in OpenBAO"
+                    echo "${cluster:+$cluster: }a root token is being generated in OpenBAO"
                     echo "sys/generate-root-token/attempt reports started=true, $progress of $required key shares given, nonce $nonce. A root token is bound by no policy and expires on no schedule, and generating one needs a quorum of the recovery-key holders — so unless this is a ceremony you are in the room for, the recovery shares are being used by someone who should not have them."
                     echo "Look at: bao operator generate-root -status; the audit device on the server pods (kubectl -n {{ $ns }} logs -l {{ $serverSelector }} --tail=200 | grep generate-root) for who asked and from where."
                     echo "The way back: cancel it — bao operator generate-root -cancel — which invalidates the shares already given and this nonce. If it completed before you got here, revoke the token it produced (bao token revoke <token>, or list auth/token/accessors), then rotate the recovery key so the shares that were used are worth nothing."

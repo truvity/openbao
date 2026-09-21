@@ -109,6 +109,7 @@ spec:
                   : > /work/alert
                   : > /work/report
                   problems=0
+                  cluster='example-cluster'
 
                   look() {
                     name=$1; limit=$2; what=$3
@@ -147,13 +148,13 @@ spec:
                     fi
                     echo "$name: last succeeded $((age / 3600))h ago, under the $((limit / 3600))h limit"
                   }
-                  look "openbao-restore-check" 777600 "the weekly restore that proves a snapshot still opens"
+                  look 'openbao-restore-check' 777600 'the weekly restore that proves a snapshot still opens'
 
                   if [ "$problems" = 0 ]; then
                     exit 0
                   fi
                   {
-                    echo "example-cluster: $problems of 1 OpenBAO job(s) have not succeeded lately"
+                    echo "${cluster:+$cluster: }$problems of 1 OpenBAO job(s) have not succeeded lately"
                     echo "These are the jobs an install is judged on when it fails, and none of them is loud when it simply stops:"
                     cat /work/report
                     echo "Look at: kubectl -n openbao get cronjob; kubectl -n openbao get job --sort-by=.metadata.creationTimestamp; kubectl -n openbao logs job/<the newest one> --all-containers."
@@ -197,9 +198,9 @@ spec:
                   [
                     {
                       "labels": {
-                        "alertname": "OpenBAOJobNotSucceeding",
-                        "severity": "critical",
-                        "release": "openbao"
+                        "alertname": "$(escape "$OPENBAO_ALERTNAME")",
+                        "severity": "$(escape "$OPENBAO_SEVERITY")",
+                        "release": "$(escape "$OPENBAO_RELEASE")"
                       },
                       "annotations": {
                         "summary": "$(escape "$summary")",
@@ -211,11 +212,17 @@ spec:
                   curl --silent --show-error --fail --max-time 30 \
                     --header 'Content-Type: application/json' \
                     --data-binary @/tmp/alert.json \
-                    "http://alertmanager.example.svc:9093/api/v2/alerts"
+                    'http://alertmanager.example.svc:9093/api/v2/alerts'
                   exit 1
               env:
                 - name: HOME
                   value: /tmp
+                - name: OPENBAO_ALERTNAME
+                  value: "OpenBAOJobNotSucceeding"
+                - name: OPENBAO_SEVERITY
+                  value: "critical"
+                - name: OPENBAO_RELEASE
+                  value: "openbao"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -286,24 +293,27 @@ spec:
                 - -ec
                 - |
                   : > /work/alert
+                  cluster='example-cluster'
+                  mount='jwt'
+                  role='openbao-root-generation'
 
                   # Nothing below exits non-zero: the alert container is
                   # the only thing that tells anyone, and it never runs if
                   # this one fails the pod.
                   blind() {
                     {
-                      echo "example-cluster: the root-token watch cannot see OpenBAO"
+                      echo "${cluster:+$cluster: }the root-token watch cannot see OpenBAO"
                       echo "$1: $(head -c 300 /work/why 2>/dev/null)"
-                      echo "This watch reads sys/generate-root-token/attempt as the role openbao-root-generation through the jwt mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
-                      echo "Look at: kubectl -n openbao get pods -l app.kubernetes.io/name=openbao,component=server; bao status; bao read auth/jwt/role/openbao-root-generation; bao policy read <the policy bound to it>."
+                      echo "This watch reads sys/generate-root-token/attempt as the role $role through the $mount mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
+                      echo "Look at: kubectl -n openbao get pods -l app.kubernetes.io/name=openbao,component=server; bao status; bao read auth/$mount/role/$role; bao policy read <the policy bound to it>."
                       echo "The way back: restore the role and its policy — read on sys/generate-root-token/attempt and nothing else — from the configuration that owns them, and re-run this job."
                     } > /work/alert
                     cat /work/alert
                     exit 0
                   }
 
-                  if ! bao write -field=token auth/jwt/login \
-                       role=openbao-root-generation jwt=@/var/run/openbao/token \
+                  if ! bao write -field=token "auth/$mount/login" \
+                       "role=$role" jwt=@/var/run/openbao/token \
                        > /work/token 2> /work/why; then
                     blind "logging in failed"
                   fi
@@ -328,7 +338,7 @@ spec:
                   bao token revoke -self || true
 
                   {
-                    echo "example-cluster: a root token is being generated in OpenBAO"
+                    echo "${cluster:+$cluster: }a root token is being generated in OpenBAO"
                     echo "sys/generate-root-token/attempt reports started=true, $progress of $required key shares given, nonce $nonce. A root token is bound by no policy and expires on no schedule, and generating one needs a quorum of the recovery-key holders — so unless this is a ceremony you are in the room for, the recovery shares are being used by someone who should not have them."
                     echo "Look at: bao operator generate-root -status; the audit device on the server pods (kubectl -n openbao logs -l app.kubernetes.io/name=openbao,component=server --tail=200 | grep generate-root) for who asked and from where."
                     echo "The way back: cancel it — bao operator generate-root -cancel — which invalidates the shares already given and this nonce. If it completed before you got here, revoke the token it produced (bao token revoke <token>, or list auth/token/accessors), then rotate the recovery key so the shares that were used are worth nothing."
@@ -381,9 +391,9 @@ spec:
                   [
                     {
                       "labels": {
-                        "alertname": "OpenBAORootTokenGeneration",
-                        "severity": "critical",
-                        "release": "openbao"
+                        "alertname": "$(escape "$OPENBAO_ALERTNAME")",
+                        "severity": "$(escape "$OPENBAO_SEVERITY")",
+                        "release": "$(escape "$OPENBAO_RELEASE")"
                       },
                       "annotations": {
                         "summary": "$(escape "$summary")",
@@ -395,11 +405,17 @@ spec:
                   curl --silent --show-error --fail --max-time 30 \
                     --header 'Content-Type: application/json' \
                     --data-binary @/tmp/alert.json \
-                    "http://alertmanager.example.svc:9093/api/v2/alerts"
+                    'http://alertmanager.example.svc:9093/api/v2/alerts'
                   exit 1
               env:
                 - name: HOME
                   value: /tmp
+                - name: OPENBAO_ALERTNAME
+                  value: "OpenBAORootTokenGeneration"
+                - name: OPENBAO_SEVERITY
+                  value: "critical"
+                - name: OPENBAO_RELEASE
+                  value: "openbao"
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -517,6 +533,7 @@ spec:
                   : > /work/alert
                   : > /work/report
                   problems=0
+                  cluster='example-cluster'
 
                   # <taken-at> is `date -u +%Y%m%dT%H%M%SZ`, the name the
                   # upload contract gives an object. Hand `date` the form
@@ -560,13 +577,13 @@ spec:
                     fi
                     echo "$name: $newest, $((age / 3600))h old, under the $((limit / 3600))h limit"
                   }
-                  look "primary" "raft/" 43200 "the object store the snapshots are written to"
+                  look 'primary' 'raft/' 43200 'the object store the snapshots are written to'
 
                   if [ "$problems" = 0 ]; then
                     exit 0
                   fi
                   {
-                    echo "example-cluster: OpenBAO has no fresh backup in $problems of 1 store(s)"
+                    echo "${cluster:+$cluster: }OpenBAO has no fresh backup in $problems of 1 store(s)"
                     echo "A store with nothing fresh in it is what a restore would actually find, whatever the snapshot job's own status says:"
                     cat /work/report
                     echo "Look at: kubectl -n openbao get cronjob,job -l app.kubernetes.io/part-of=openbao; kubectl -n openbao logs -l app.kubernetes.io/name=openbao-snapshot --tail=50 --all-containers."
@@ -610,14 +627,14 @@ spec:
                   [
                     {
                       "labels": {
-                        "alertname": "OpenBAOSnapshotStale",
-                        "severity": "critical",
-                        "release": "openbao"
+                        "alertname": "$(escape "$OPENBAO_ALERTNAME")",
+                        "severity": "$(escape "$OPENBAO_SEVERITY")",
+                        "release": "$(escape "$OPENBAO_RELEASE")"
                       },
                       "annotations": {
                         "summary": "$(escape "$summary")",
                         "description": "$(escape "$description")",
-                        "runbook": "The way back is the restore runbook."
+                        "runbook": "$(escape "$OPENBAO_RUNBOOK")"
                       }
                     }
                   ]
@@ -625,11 +642,19 @@ spec:
                   curl --silent --show-error --fail --max-time 30 \
                     --header 'Content-Type: application/json' \
                     --data-binary @/tmp/alert.json \
-                    "http://alertmanager.example.svc:9093/api/v2/alerts"
+                    'http://alertmanager.example.svc:9093/api/v2/alerts'
                   exit 1
               env:
                 - name: HOME
                   value: /tmp
+                - name: OPENBAO_ALERTNAME
+                  value: "OpenBAOSnapshotStale"
+                - name: OPENBAO_SEVERITY
+                  value: "critical"
+                - name: OPENBAO_RELEASE
+                  value: "openbao"
+                - name: OPENBAO_RUNBOOK
+                  value: "The way back is the restore runbook."
               volumeMounts:
                 - name: work
                   mountPath: /work

@@ -42,6 +42,13 @@ type renderedCronJob struct {
 							Name    string   `yaml:"name"`
 							Image   string   `yaml:"image"`
 							Command []string `yaml:"command"`
+							// The other half of what the pod gives the
+							// script: the values it must not read as
+							// shell arrive here.
+							Env []struct {
+								Name  string `yaml:"name"`
+								Value string `yaml:"value"`
+							} `yaml:"env"`
 						} `yaml:"containers"`
 					} `yaml:"spec"`
 				} `yaml:"template"`
@@ -94,8 +101,20 @@ func TestCertificateExpiryAlertContract(t *testing.T) {
 
 				lines := strings.Split(sent.body, "\n")
 				assert.Equal(t, []string{"sns", "publish", "--topic-arn", "example-topic"}, lines[:4])
-				assert.Contains(t, sent.body, "days left")
-				assert.Contains(t, sent.body, readyMessage, "the Ready message reaches the channel")
+
+				// The message is handed over as a file rather than as an
+				// argument: it carries the certificate's own words and a
+				// runbook, and a shell that has to quote those is a shell
+				// that one day does not.
+				reference := lines[len(lines)-1]
+				assert.Equal(t, "--message", lines[len(lines)-2])
+				require.True(t, strings.HasPrefix(reference, "file://"), reference)
+
+				message, err := os.ReadFile(strings.TrimPrefix(reference, "file://"))
+				require.NoError(t, err)
+				assert.Contains(t, string(message), "days left")
+				assert.Contains(t, string(message), readyMessage, "the Ready message reaches the channel")
+				assert.Contains(t, string(message), "example-cluster", "and whose certificate it is")
 			},
 		},
 		{
@@ -144,10 +163,10 @@ func TestCertificateExpiryAlertContract(t *testing.T) {
 		t.Run(preset.name, func(t *testing.T) {
 			binDir := t.TempDir()
 			values, received := preset.open(t, binDir)
-			script := alertScript(t, helmBinary, values...)
+			script, environment := alertScript(t, helmBinary, values...)
 
 			t.Run("inside the window it alerts and fails the run", func(t *testing.T) {
-				code := runAlert(t, script, binDir, time.Now().Add(10*24*time.Hour))
+				code := runAlert(t, script, binDir, environment, time.Now().Add(10*24*time.Hour))
 				assert.NotEqual(t, 0, code, "a renewal that keeps failing must fail the job, not log")
 
 				sent := received()
@@ -158,7 +177,7 @@ func TestCertificateExpiryAlertContract(t *testing.T) {
 			t.Run("outside it says nothing and passes", func(t *testing.T) {
 				before := len(received())
 
-				code := runAlert(t, script, binDir, time.Now().Add(60*24*time.Hour))
+				code := runAlert(t, script, binDir, environment, time.Now().Add(60*24*time.Hour))
 				assert.Equal(t, 0, code)
 				assert.Len(t, received(), before, "no alert while there is time to renew")
 			})
@@ -188,7 +207,7 @@ func tool(t *testing.T, name string) string {
 // alertScript renders openbao-ops with the expiry check on and returns the
 // alert container's script. The renewal lead time is explicit because this
 // render carries no certificate of its own.
-func alertScript(t *testing.T, helmBinary string, values ...string) string {
+func alertScript(t *testing.T, helmBinary string, values ...string) (string, []string) {
 	t.Helper()
 
 	args := []string{
@@ -227,13 +246,18 @@ func alertScript(t *testing.T, helmBinary string, values ...string) string {
 
 			require.Len(t, container.Command, 3, "a preset's alert container is `/bin/sh -ec <script>`")
 
-			return container.Command[2]
+			environment := make([]string, 0, len(container.Env))
+			for _, e := range container.Env {
+				environment = append(environment, e.Name+"="+e.Value)
+			}
+
+			return container.Command[2], environment
 		}
 	}
 
 	t.Fatal("the render has no alert container")
 
-	return ""
+	return "", nil
 }
 
 // runAlert runs the alert container's script over the status the read
@@ -242,7 +266,7 @@ func alertScript(t *testing.T, helmBinary string, values ...string) string {
 // The pod's absolute paths are relocated into a temporary directory: a
 // test cannot write /work, and those paths are the only thing about the
 // script a shell on this machine cannot honour as the pod does.
-func runAlert(t *testing.T, script, binDir string, notAfter time.Time) int {
+func runAlert(t *testing.T, script, binDir string, environment []string, notAfter time.Time) int {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -255,10 +279,12 @@ func runAlert(t *testing.T, script, binDir string, notAfter time.Time) int {
 	local := strings.NewReplacer(
 		"/work/", work+string(os.PathSeparator),
 		"/tmp/alert.json", filepath.Join(dir, "alert.json"),
+		"/tmp/message", filepath.Join(dir, "message"),
 	).Replace(script)
 
 	command := exec.Command("/bin/sh", "-ec", local)
-	command.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	command.Env = append(os.Environ(), environment...)
+	command.Env = append(command.Env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	out, err := command.CombinedOutput()
 	t.Logf("the alert container said:\n%s", out)
