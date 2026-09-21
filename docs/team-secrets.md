@@ -168,14 +168,34 @@ login=$(jq -n --arg jwt "$token" '{role: "roster", jwt: $jwt}' |
   curl -fsS -H "X-Vault-Namespace: dev" -X POST --data @- "$BAO_ADDR/v1/auth/jwt-roster/login")
 ```
 
-An issuer-side CLI is the right home for those four calls as one verb that
-renders an `.env` file — this page describes the shape, not a command,
-because at the time of writing no such verb is released and a documented
-command that does not exist is worse than none. Whoever writes it: the
-file is `0600` and ignored by git, only the **names** are printed, a
-second run rewrites the file, and a run that reads **zero** keys fails
-rather than writing an empty file. An empty `.env` is the failure mode
-nobody notices; it looks like a stack that is merely misconfigured.
+Those four calls are one verb on the issuer's own CLI, `accessctl secrets
+env`, since accessctl 1.22.0:
+
+```sh
+accessctl secrets env --namespace dev --prefix orders/local-dev/checkout --out .env
+```
+
+It makes the same exchange and login, lists the prefix's metadata, reads
+every leaf below it, writes the file and revokes the token on the way
+out. The properties to know, because a repository's `make secrets` target
+is the whole integration:
+
+- the file is `0600` and belongs in `.gitignore`; a second run rewrites
+  it, so a rotation is picked up by running it again;
+- only the **names** are printed, to stderr, with the file and the count —
+  never a value, there or in any failure;
+- **a run that reads zero keys fails** and leaves whatever file was there
+  alone. An empty `.env` is the failure mode nobody notices: the stack
+  starts, every variable is unset, and it reads as a service that is
+  merely misconfigured, days later and never at the fetch;
+- a `403` is reported as a `403` with the group named, because
+  "permission denied" on a path reads as a mistake in the path and almost
+  never is.
+
+The four calls are still the contract; the verb is one implementation of
+them, and anything that can exchange, log in, list and read is another
+([its reference](https://github.com/truvity/access-roster/blob/master/docs/reference/accessctl.md)
+has the flags and the file's shape).
 
 The same four calls are what a CI job makes, with the job's own identity
 and its own one-path grant
