@@ -248,6 +248,9 @@ _, err := custody.Deploy(ctx, custody.Args{
   — the access-roster issuer, end to end: the two doors, groups to
   policies, the operators' door, the credential paths, CI, and every
   failure mode
+- [docs/team-secrets.md](docs/team-secrets.md) — a team's shared
+  secrets on one KV prefix: the three groups, the paths, the fetch,
+  rotation, what revocation does and does not do, and what never goes in
 - [CHANGELOG.md](CHANGELOG.md) — what changed for a consumer, per version
 
 ## The rule that makes this repository public

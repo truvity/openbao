@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -50,6 +51,8 @@ const (
 	uiSecret        = "conformance-ui-secret"
 
 	person   = "person@example.com"
+	deployer = "deployer@example.com"
+	approver = "approver@example.com"
 	operator = "operator@example.com"
 	job      = "ci:example-release"
 )
@@ -281,6 +284,95 @@ func TestRosterContract(t *testing.T) {
 
 		_, err = bao.Call(ctx, http.MethodGet, roster.Environment, roster.KVMount+"/data/"+roster.ReleaseSecret, nil)
 		requireStatus(t, err, http.StatusForbidden, "a revoked login reads nothing")
+	})
+
+	// A team's shared secrets, which docs/team-secrets.md is this subtest
+	// in prose: a project's engineers read its prefix, its deployers and
+	// approvers write it, and a repository is a path segment inside it.
+	// A tutorial that has never executed is a tutorial that lies -- so
+	// every claim that page makes about who may do what is made here, to
+	// a real server, and a change that breaks one breaks this test.
+	t.Run("a project's prefix: the deployers write it, the engineers read it", func(t *testing.T) {
+		secret := roster.KVMount + "/data/" + roster.ProjectSecret
+		names := roster.KVMount + "/metadata/" + path.Dir(roster.ProjectSecret) + "?list=true"
+
+		writes := c.as(t, deployer, roster.ProjectDeployer)
+		_, err := writes.Call(ctx, http.MethodPost, roster.Environment, secret,
+			map[string]any{"data": map[string]any{"value": "example-value"}})
+		require.NoError(t, err)
+
+		reads := c.as(t, person, roster.ProjectViewer)
+
+		answer, err := reads.Call(ctx, http.MethodGet, roster.Environment, secret, nil)
+		require.NoError(t, err)
+		data, _ := answer["data"].(map[string]any)
+		assert.Equal(t, map[string]any{"value": "example-value"}, data["data"], "the viewer reads what the deployer wrote")
+
+		// The names, without the values: read on the data path alone tells
+		// nobody what there is to read, which is why the viewer's policy
+		// carries the metadata path too.
+		listing, err := reads.Call(ctx, http.MethodGet, roster.Environment, names, nil)
+		require.NoError(t, err)
+		listed, _ := listing["data"].(map[string]any)
+		assert.Equal(t, []string{path.Base(roster.ProjectSecret)}, strings2(listed["keys"]))
+
+		_, err = reads.Call(ctx, http.MethodPost, roster.Environment, secret,
+			map[string]any{"data": map[string]any{"value": "not-the-viewer's"}})
+		requireStatus(t, err, http.StatusForbidden, "the viewer reads the prefix and writes none of it")
+
+		_, err = reads.Call(ctx, http.MethodGet, roster.Environment, roster.KVMount+"/data/another-project/local-dev/service/API_TOKEN", nil)
+		requireStatus(t, err, http.StatusForbidden, "the prefix is the boundary: another project is another grant")
+
+		// Which is how the two are told apart: inside the prefix a secret
+		// that is not there is a 404, outside it the same call is a 403.
+		_, err = reads.Call(ctx, http.MethodGet, roster.Environment, secret+"-ABSENT", nil)
+		requireStatus(t, err, http.StatusNotFound, "a policy that reaches the path, and nothing written there")
+
+		// Rotation: the owner writes a new version and every reader has it
+		// on their next read. Nothing is granted again.
+		_, err = writes.Call(ctx, http.MethodPost, roster.Environment, secret,
+			map[string]any{"data": map[string]any{"value": "rotated-value"}})
+		require.NoError(t, err)
+
+		answer, err = reads.Call(ctx, http.MethodGet, roster.Environment, secret, nil)
+		require.NoError(t, err)
+		data, _ = answer["data"].(map[string]any)
+		assert.Equal(t, map[string]any{"value": "rotated-value"}, data["data"])
+
+		// An approver writes the same prefix: two groups, one policy shape,
+		// so an approval path needs no second prefix.
+		_, err = c.as(t, approver, roster.ProjectApprover).Call(ctx, http.MethodPost, roster.Environment, secret,
+			map[string]any{"data": map[string]any{"value": "approver-value"}})
+		require.NoError(t, err)
+	})
+
+	t.Run("membership is the issuer's: the next token decides the next read", func(t *testing.T) {
+		secret := roster.KVMount + "/data/" + roster.ProjectSecret
+
+		// Taken off the project at the issuer, still an engineer elsewhere:
+		// the next token carries no project group, and the login that
+		// follows holds no policy for the prefix.
+		elsewhere := c.as(t, person, roster.SSHUser)
+
+		_, err := elsewhere.Call(ctx, http.MethodGet, roster.Environment, secret, nil)
+		requireStatus(t, err, http.StatusForbidden, "a group not in the token is a policy not held")
+
+		// Taken out of the issuer's groups altogether.
+		auth := c.login(t, roster.Environment, model.RosterMount, c.token(person, model.RosterAudience))
+		assert.Empty(t, strings2(auth["identity_policies"]))
+
+		_, err = (&replay.Server{Address: c.address, Token: fmt.Sprint(auth["client_token"])}).
+			Call(ctx, http.MethodGet, roster.Environment, secret, nil)
+		requireStatus(t, err, http.StatusForbidden, "no group, no policy, no read")
+
+		// A group nobody declared to OpenBAO: the login succeeds with the
+		// default policy alone, and every call it makes is a 403. It is
+		// the silent one -- a name misspelt in the estate's declaration
+		// reads as a refusal at the first read, never at the login.
+		misspelt := c.as(t, person, roster.Environment+":"+roster.Project+":viewers")
+
+		_, err = misspelt.Call(ctx, http.MethodGet, roster.Environment, secret, nil)
+		requireStatus(t, err, http.StatusForbidden, "a group OpenBAO holds no policy for opens nothing")
 	})
 }
 

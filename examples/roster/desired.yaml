@@ -170,6 +170,37 @@ namespaces:
             capabilities:
               - list
               - read
+      - name: dev:orders:approver
+        rules:
+          - path: kv/data/orders/*
+            capabilities:
+              - create
+              - read
+              - update
+          - path: kv/metadata/orders/*
+            capabilities:
+              - list
+              - read
+      - name: dev:orders:deployer
+        rules:
+          - path: kv/data/orders/*
+            capabilities:
+              - create
+              - read
+              - update
+          - path: kv/metadata/orders/*
+            capabilities:
+              - list
+              - read
+      - name: dev:orders:viewer
+        rules:
+          - path: kv/data/orders/*
+            capabilities:
+              - read
+          - path: kv/metadata/orders/*
+            capabilities:
+              - list
+              - read
       - name: dev:ssh:admin
         rules:
           - path: ssh/sign/admin
@@ -195,6 +226,24 @@ namespaces:
       - name: dev:openbao:reader
         policies:
           - dev:openbao:reader
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:orders:approver
+        policies:
+          - dev:orders:approver
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:orders:deployer
+        policies:
+          - dev:orders:deployer
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:orders:viewer
+        policies:
+          - dev:orders:viewer
         doors:
           - jwt-roster
           - oidc
