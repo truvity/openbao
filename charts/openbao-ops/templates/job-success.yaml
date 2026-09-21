@@ -1,0 +1,212 @@
+{{- if .Values.jobSuccess.enabled }}
+{{- $a := .Values.jobSuccess }}
+{{- $ns := include "ops.namespace" . }}
+{{- if not $a.cronJobs }}
+{{- fail "jobSuccess.cronJobs is empty — a watch over no job is a job that always passes" }}
+{{- end }}
+{{- $seen := dict }}
+{{- range $job := $a.cronJobs }}
+{{- if not $job.name }}
+{{- fail "every jobSuccess.cronJobs entry needs a name: it is read from the API and granted by name in the Role" }}
+{{- end }}
+{{- if hasKey $seen $job.name }}
+{{- fail (printf "jobSuccess.cronJobs has two entries named %q" $job.name) }}
+{{- end }}
+{{- $seen = set $seen $job.name true }}
+{{- if not $job.maxAgeSeconds }}
+{{- fail (printf "jobSuccess.cronJobs[%s].maxAgeSeconds is required: without it there is no answer to \"how long is too long\", and the threshold is the job's own period plus the slack a late run needs" $job.name) }}
+{{- end }}
+{{- end }}
+{{- include "ops.alertRefusals" (dict "part" "jobSuccess" "alert" $a.alert) }}
+---
+{{- /* Reading a CronJob's status needs the API, so this job keeps the
+       default token — and its Role grants `get` on the named CronJobs and
+       nothing else. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" (mergeOverwrite (deepCopy ($a.annotations | default dict)) ($a.serviceAccountAnnotations | default dict))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    resourceNames:
+      {{- range $job := $a.cronJobs }}
+      - {{ $job.name | quote }}
+      {{- end }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $a.name }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $a.name }}
+---
+{{- /* Has each of these jobs SUCCEEDED lately?
+
+       Not "did one fail": a CronJob that stops being scheduled at all —
+       suspended by a hand, orphaned by a controller, deleted with the
+       release that owned it — never produces a failed Job, so "no
+       failures" is not "working". `status.lastSuccessfulTime` is the one
+       field that answers the question that was asked, and it is missing
+       in exactly the case that matters.
+
+       This is what a metrics pipeline would give an estate for free, over
+       every job it runs. Where there is one, turn this off and let the
+       fleet-wide rule cover these jobs with the rest; where there is not,
+       an install should still not be able to stop backing itself up in
+       silence. */}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $a.schedule | quote }}
+  timeZone: {{ $a.timeZone }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $a.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $a.backoffLimit }}
+      activeDeadlineSeconds: {{ $a.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ $a.name }}
+        spec:
+          serviceAccountName: {{ $a.name }}
+          restartPolicy: Never
+          {{- with $a.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $a.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ops.podSecurityContext" $ | nindent 12 }}
+          initContainers:
+            - name: read
+              {{- include "ops.imageLines" $a.read.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  now=$(date -u +%s)
+                  : > /work/alert
+                  : > /work/report
+                  problems=0
+
+                  look() {
+                    name=$1; limit=$2; what=$3
+                    if ! kubectl -n {{ $ns }} get cronjob "$name" \
+                         -o jsonpath='{.spec.suspend}{"\n"}{.status.lastSuccessfulTime}{"\n"}' \
+                         > /work/answer 2> /work/why; then
+                      echo "  $name ($what) could not be read: $(head -c 300 /work/why). A job that is not there is not running." >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    suspended=$(sed -n 1p /work/answer)
+                    last=$(sed -n 2p /work/answer)
+                    if [ "$suspended" = "true" ]; then
+                      echo "  $name ($what) is SUSPENDED: spec.suspend is true, so it will not run again until someone unsets it." >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    if [ -z "$last" ]; then
+                      echo "  $name ($what) has never recorded a successful run." >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    # busybox's date does not read RFC 3339: hand it the
+                    # form it parses.
+                    when=$(date -u -d "$(echo "$last" | sed -e 's/T/ /' -e 's/Z$//')" +%s 2>/dev/null) || when=""
+                    if [ -z "$when" ]; then
+                      echo "  $name ($what) reports status.lastSuccessfulTime $last, which is not a time this can read." >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    age=$((now - when))
+                    if [ "$age" -ge "$limit" ]; then
+                      echo "  $name ($what) last succeeded $((age / 3600))h ago, at $last; more than the $((limit / 3600))h it is allowed." >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    echo "$name: last succeeded $((age / 3600))h ago, under the $((limit / 3600))h limit"
+                  }
+
+                  {{- range $job := $a.cronJobs }}
+                  look {{ $job.name | quote }} {{ int $job.maxAgeSeconds }} {{ $job.description | default $job.name | quote }}
+                  {{- end }}
+
+                  if [ "$problems" = 0 ]; then
+                    exit 0
+                  fi
+                  {
+                    echo "{{ with $a.clusterName }}{{ . }}: {{ end }}$problems of {{ len $a.cronJobs }} OpenBAO job(s) have not succeeded lately"
+                    echo "These are the jobs an install is judged on when it fails, and none of them is loud when it simply stops:"
+                    cat /work/report
+                    echo "Look at: kubectl -n {{ $ns }} get cronjob; kubectl -n {{ $ns }} get job --sort-by=.metadata.creationTimestamp; kubectl -n {{ $ns }} logs job/<the newest one> --all-containers."
+                    echo "The way back: run it by hand and read it — kubectl -n {{ $ns }} create job --from=cronjob/<name> <name>-now. If it was suspended on purpose, unsuspend it or take it off jobSuccess.cronJobs; a watch nobody can silence is a watch everybody ignores."
+                  } > /work/alert
+                  cat /work/alert
+              env:
+                {{- /* kubectl's discovery cache; the root filesystem is
+                       read-only. */}}
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                {{- toYaml $a.read.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          containers:
+            {{- include "ops.alertContainer" (dict "root" $ "part" "jobSuccess" "alert" $a.alert) | nindent 12 }}
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+{{- end }}

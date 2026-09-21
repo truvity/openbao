@@ -61,6 +61,77 @@ certificateExpiry:
       topicArn: example-topic
       region: eu-example-1
       runbook: "The way back is the break-glass certificate: see the runbook."
+snapshotAge:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  serviceAccountAnnotations:
+    example.com/role: openbao-snapshot-age
+  nodeSelector:
+    example.com/pool: batch
+  clusterName: example-cluster
+  # Every 6 hours to the primary, so 12 hours is two missed runs; the copy
+  # another region keeps is allowed the same plus what it takes to arrive.
+  stores:
+    - name: primary
+      description: the backup account in the primary region
+      prefix: raft/
+      maxAgeSeconds: 43200
+      s3:
+        enabled: true
+        bucket: example-openbao-backups
+        region: eu-example-1
+    - name: replica
+      description: the copy replication keeps in the DR region
+      prefix: raft/
+      maxAgeSeconds: 50400
+      s3:
+        enabled: true
+        bucket: example-openbao-backups-replica
+        region: eu-example-2
+  alert:
+    sns:
+      enabled: true
+      topicArn: example-topic
+      region: eu-example-1
+      runbook: "The way back is the restore runbook."
+jobSuccess:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  nodeSelector:
+    example.com/pool: batch
+  clusterName: example-cluster
+  cronJobs:
+    - name: openbao-snapshot
+      description: the every-6-hours snapshot
+      # 12 hours: two missed runs.
+      maxAgeSeconds: 43200
+    - name: openbao-snapshot-weekly
+      description: the weekly copy
+      # Nine days: weekly, plus two for a run that starts late.
+      maxAgeSeconds: 777600
+    - name: openbao-restore-check
+      description: the weekly restore that proves a snapshot still opens
+      maxAgeSeconds: 777600
+  alert:
+    sns:
+      enabled: true
+      topicArn: example-topic
+      region: eu-example-1
+rootGeneration:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  nodeSelector:
+    example.com/pool: batch
+  clusterName: example-cluster
+  alert:
+    sns:
+      enabled: true
+      topicArn: example-topic
+      region: eu-example-1
+      runbook: "The way back is `bao operator generate-root -cancel`."
 networkPolicy:
   enabled: true
   annotations:

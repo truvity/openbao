@@ -1,0 +1,186 @@
+{{- if .Values.rootGeneration.enabled }}
+{{- $a := .Values.rootGeneration }}
+{{- $ns := include "ops.namespace" . }}
+{{- include "ops.alertRefusals" (dict "part" "rootGeneration" "alert" $a.alert) }}
+{{- $serverSelector := list }}
+{{- range $k, $v := .Values.server.podLabels }}
+{{- $serverSelector = append $serverSelector (printf "%s=%s" $k $v) }}
+{{- end }}
+{{- $serverSelector = join "," $serverSelector }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" (mergeOverwrite (deepCopy ($a.annotations | default dict)) ($a.serviceAccountAnnotations | default dict))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- /* The default token is neither audience-scoped nor short-lived. The
+       job projects its own instead (see the login volume). */}}
+automountServiceAccountToken: false
+---
+{{- /* Is a root token being generated?
+
+       A root token is the one credential in OpenBAO that no policy bounds,
+       and generating one needs a quorum of the recovery-key holders rather
+       than any existing token — so it is the move that both a legitimate
+       break-glass and a successful theft of the recovery shares look like.
+       It should be rare enough that a false alarm is cheap and a real one
+       is worth waking up for.
+
+       `sys/generate-root-token/attempt` is the signal, read with a token
+       that may read that one path. It reports an attempt that is OPEN: the
+       ceremony is deliberately slow, because it takes a share from each of
+       several people, so a poll faster than the ceremony sees it. It does
+       NOT see one that started and finished between two runs, and there is
+       no state left behind afterwards to find — the record of a completed
+       generation is in the audit device, and reading that needs somewhere
+       to keep the audit stream. Watch this AND keep the audit log; neither
+       is the other.
+
+       The watch failing is itself an alert. Being unable to ask is what it
+       looks like when the role or its policy is taken away, which is a
+       thing to do BEFORE generating a root token. */}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $a.schedule | quote }}
+  timeZone: {{ $a.timeZone }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $a.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $a.backoffLimit }}
+      activeDeadlineSeconds: {{ $a.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ $a.name }}
+        spec:
+          serviceAccountName: {{ $a.name }}
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          {{- with $a.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $a.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ops.podSecurityContext" $ | nindent 12 }}
+          initContainers:
+            - name: read
+              {{- include "ops.imageLines" $a.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  : > /work/alert
+
+                  # Nothing below exits non-zero: the alert container is
+                  # the only thing that tells anyone, and it never runs if
+                  # this one fails the pod.
+                  blind() {
+                    {
+                      echo "{{ with $a.clusterName }}{{ . }}: {{ end }}the root-token watch cannot see OpenBAO"
+                      echo "$1: $(head -c 300 /work/why 2>/dev/null)"
+                      echo "This watch reads sys/generate-root-token/attempt as the role {{ $a.baoRole }} through the {{ $.Values.auth.mountPath }} mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
+                      echo "Look at: kubectl -n {{ $ns }} get pods -l {{ $serverSelector }}; bao status; bao read auth/{{ $.Values.auth.mountPath }}/role/{{ $a.baoRole }}; bao policy read <the policy bound to it>."
+                      echo "The way back: restore the role and its policy — read on sys/generate-root-token/attempt and nothing else — from the configuration that owns them, and re-run this job."
+                    } > /work/alert
+                    cat /work/alert
+                    exit 0
+                  }
+
+                  if ! bao write -field=token auth/{{ $.Values.auth.mountPath }}/login \
+                       role={{ $a.baoRole }} jwt=@{{ include "ops.tokenPath" $ }} \
+                       > /work/token 2> /work/why; then
+                    blind "logging in failed"
+                  fi
+                  BAO_TOKEN="$(cat /work/token)"
+                  export BAO_TOKEN
+                  rm -f /work/token
+
+                  if ! bao read -field=started sys/generate-root-token/attempt \
+                       > /work/started 2> /work/why; then
+                    blind "reading sys/generate-root-token/attempt failed"
+                  fi
+
+                  if [ "$(cat /work/started)" != "true" ]; then
+                    echo "no root-token generation in progress"
+                    bao token revoke -self || true
+                    exit 0
+                  fi
+
+                  progress=$(bao read -field=progress sys/generate-root-token/attempt || echo "?")
+                  required=$(bao read -field=required sys/generate-root-token/attempt || echo "?")
+                  nonce=$(bao read -field=nonce sys/generate-root-token/attempt || echo "?")
+                  bao token revoke -self || true
+
+                  {
+                    echo "{{ with $a.clusterName }}{{ . }}: {{ end }}a root token is being generated in OpenBAO"
+                    echo "sys/generate-root-token/attempt reports started=true, $progress of $required key shares given, nonce $nonce. A root token is bound by no policy and expires on no schedule, and generating one needs a quorum of the recovery-key holders — so unless this is a ceremony you are in the room for, the recovery shares are being used by someone who should not have them."
+                    echo "Look at: bao operator generate-root -status; the audit device on the server pods (kubectl -n {{ $ns }} logs -l {{ $serverSelector }} --tail=200 | grep generate-root) for who asked and from where."
+                    echo "The way back: cancel it — bao operator generate-root -cancel — which invalidates the shares already given and this nonce. If it completed before you got here, revoke the token it produced (bao token revoke <token>, or list auth/token/accessors), then rotate the recovery key so the shares that were used are worth nothing."
+                  } > /work/alert
+                  cat /work/alert
+              env:
+                - name: BAO_ADDR
+                  value: {{ include "ops.serverAddress" $ }}
+                - name: BAO_CACERT
+                  value: /tls/{{ $.Values.server.caKey }}
+                {{- with $.Values.server.tlsServerName }}
+                {{- /* Dial the active pod, verify the name the serving
+                       certificate carries. */}}
+                - name: BAO_TLS_SERVER_NAME
+                  value: {{ . | quote }}
+                {{- end }}
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: {{ $.Values.auth.tokenMountPath }}
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                {{- toYaml $a.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          containers:
+            {{- include "ops.alertContainer" (dict "root" $ "part" "rootGeneration" "alert" $a.alert) | nindent 12 }}
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+            - {{- include "ops.loginVolume" $ | nindent 14 }}
+            - name: ca
+              secret:
+                secretName: {{ $.Values.server.tlsSecretName }}
+                items:
+                  - key: {{ $.Values.server.caKey }}
+                    path: {{ $.Values.server.caKey }}
+{{- end }}

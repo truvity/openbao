@@ -7,7 +7,7 @@ from.
 
 | Artifact | What | Status |
 |---|---|---|
-| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
+| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, watches for the failures that are otherwise silent, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
 | `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | unreleased |
 | `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format | unreleased |
 | `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region | unreleased |
@@ -50,7 +50,9 @@ operational life: a snapshot is taken, verified and only then stored; a
 weekly restore opens the newest one in a throwaway server, reads a canary
 back in every namespace and walks the restored PKI from a root you
 committed; a daily check alerts weeks before the serving certificate ends;
-the server is reachable from its clients and the jobs from nothing.
+watches say when the store has no fresh backup in it, when a job has quietly
+stopped succeeding and when someone is generating a root token; the server
+is reachable from its clients and the jobs from nothing.
 **openbao-consumers** sits on every cluster that uses the server: reader
 stores bounded by namespace conditions, writer stores that present the
 writer's own token, and cert-manager issuers whose roots are distributed as
@@ -97,6 +99,27 @@ restoreCheck:
       kms_key_id = "alias/openbao-unseal"
     }
 certificateExpiry:
+  enabled: true
+  alert:
+    sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }
+snapshotAge:                        # is there a fresh backup where the backups are kept?
+  enabled: true
+  stores:
+    - name: primary
+      description: the object store the snapshots are written to
+      prefix: raft/
+      maxAgeSeconds: 43200          # every 6 hours above, so this is two missed runs
+      s3: { enabled: true, bucket: example-openbao-backups, region: eu-example-1 }
+  alert:
+    sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }
+jobSuccess:                         # have these jobs actually succeeded lately?
+  enabled: true
+  cronJobs:
+    - name: openbao-restore-check
+      maxAgeSeconds: 777600         # weekly, plus two days for a run that starts late
+  alert:
+    sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }
+rootGeneration:                     # is someone generating a root token?
   enabled: true
   alert:
     sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }

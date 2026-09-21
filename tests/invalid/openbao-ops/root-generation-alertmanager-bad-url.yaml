@@ -1,0 +1,6 @@
+# An origin, not an endpoint: the chart appends the v2 API's path, and a
+# value that is not an http(s) origin is a job that posts nowhere.
+rootGeneration:
+  enabled: true
+  alert:
+    alertmanager: {enabled: true, url: alertmanager.example.svc:9093}

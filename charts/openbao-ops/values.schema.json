@@ -177,7 +177,50 @@
             "resources": { "type": "object" }
           }
         },
-        "alert": {
+        "alert": { "$ref": "#/definitions/alertContract" }
+      }
+    },
+    "snapshotAge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "serviceAccountAnnotations": { "$ref": "#/definitions/stringMap" },
+        "clusterName": { "type": "string" },
+        "schedule": { "type": "string", "minLength": 1 },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "stores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "prefix", "maxAgeSeconds"],
+            "properties": {
+              "name": { "$ref": "#/definitions/name" },
+              "description": { "type": "string" },
+              "prefix": { "type": "string" },
+              "maxAgeSeconds": { "type": "integer", "minimum": 600 },
+              "env": { "type": "array", "items": { "type": "object" } },
+              "s3": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean" },
+                  "bucket": { "type": "string" },
+                  "region": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "list": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -185,32 +228,80 @@
             "command": { "type": "array", "items": { "type": "string" } },
             "args": { "type": "array", "items": { "type": "string" } },
             "env": { "type": "array", "items": { "type": "object" } },
-            "resources": { "type": "object" },
-            "sns": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "topicArn": { "type": "string" },
-                "region": { "type": "string" },
-                "runbook": { "type": "string" }
-              }
-            },
-            "alertmanager": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "url": { "type": "string" },
-                "alertname": { "type": "string", "minLength": 1 },
-                "severity": { "type": "string", "minLength": 1 },
-                "release": { "type": "string" },
-                "runbook": { "type": "string" },
-                "image": { "$ref": "#/definitions/image" }
-              }
+            "resources": { "type": "object" }
+          }
+        },
+        "check": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": { "$ref": "#/definitions/image" },
+            "resources": { "type": "object" }
+          }
+        },
+        "alert": { "$ref": "#/definitions/alertContract" }
+      }
+    },
+    "jobSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "serviceAccountAnnotations": { "$ref": "#/definitions/stringMap" },
+        "clusterName": { "type": "string" },
+        "schedule": { "type": "string", "minLength": 1 },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "cronJobs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "maxAgeSeconds"],
+            "properties": {
+              "name": { "$ref": "#/definitions/name" },
+              "description": { "type": "string" },
+              "maxAgeSeconds": { "type": "integer", "minimum": 600 }
             }
           }
-        }
+        },
+        "read": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": { "$ref": "#/definitions/image" },
+            "resources": { "type": "object" }
+          }
+        },
+        "alert": { "$ref": "#/definitions/alertContract" }
+      }
+    },
+    "rootGeneration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "serviceAccountAnnotations": { "$ref": "#/definitions/stringMap" },
+        "clusterName": { "type": "string" },
+        "schedule": { "type": "string", "minLength": 1 },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "baoRole": { "type": "string", "minLength": 1 },
+        "image": { "$ref": "#/definitions/image" },
+        "resources": { "type": "object" },
+        "alert": { "$ref": "#/definitions/alertContract" }
       }
     },
     "networkPolicy": {
@@ -225,7 +316,10 @@
           "properties": {
             "serverIngress": { "type": "string", "minLength": 1 },
             "restoreCheckIngress": { "type": "string", "minLength": 1 },
-            "certificateExpiryIngress": { "type": "string", "minLength": 1 }
+            "certificateExpiryIngress": { "type": "string", "minLength": 1 },
+            "snapshotAgeIngress": { "type": "string", "minLength": 1 },
+            "jobSuccessIngress": { "type": "string", "minLength": 1 },
+            "rootGenerationIngress": { "type": "string", "minLength": 1 }
           }
         },
         "clientCidrs": { "type": "array", "items": { "type": "string" } },
@@ -313,6 +407,40 @@
         "tag": { "type": "string" },
         "digest": { "type": "string" },
         "pullPolicy": { "type": "string", "enum": ["", "Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "alertContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "array", "items": { "type": "object" } },
+        "resources": { "type": "object" },
+        "sns": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "topicArn": { "type": "string" },
+            "region": { "type": "string" },
+            "runbook": { "type": "string" }
+          }
+        },
+        "alertmanager": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "url": { "type": "string" },
+            "alertname": { "type": "string", "minLength": 1 },
+            "severity": { "type": "string", "minLength": 1 },
+            "release": { "type": "string" },
+            "runbook": { "type": "string" },
+            "image": { "$ref": "#/definitions/image" }
+          }
+        }
       }
     },
     "containerContract": {

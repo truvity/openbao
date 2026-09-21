@@ -5,6 +5,60 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.6.0
+
+Not yet tagged. The failures an install dies of that nothing was looking
+at: a store with no fresh backup in it, a job that has quietly stopped
+succeeding, and a root token being generated. Three watches in
+`openbao-ops`, all off by default -- an existing values file renders
+byte-for-byte what v0.5.0 rendered -- and nothing in `pkg/apply`,
+`pkg/ceremony`, `pkg/custody`, `pkg/model` or `openbaoctl` changes.
+
+- **`charts/openbao-ops`**: `snapshotAge` asks the STORE, not the snapshot
+  job, whether there is a fresh backup in it: one `list` container per
+  store writes the newest object's name, a `check` container reads the
+  `<taken-at>` out of it -- the name the upload contract gives an object --
+  and reports every store that is over its own limit. Several stores is
+  also how replication is watched: a copy that stops getting newer is a
+  stalled replication seen from the data's side, and needs a listing
+  rather than a metric the object store has to publish. The `s3` preset
+  lists one prefix and reads no object, which is less than the snapshot
+  job's write and less than the restore check's read.
+- **`charts/openbao-ops`**: `jobSuccess` reads `status.lastSuccessfulTime`
+  of the CronJobs it is given, granted by name in its Role. Not "did one
+  fail": a CronJob that stops being scheduled -- suspended, orphaned,
+  deleted with the release that owned it -- never produces a failed Job,
+  and that is the case this sees. An estate with a metrics pipeline gets
+  this fleet-wide and should prefer that; this is for one that has none.
+- **`charts/openbao-ops`**: `rootGeneration` reads
+  `sys/generate-root-token/attempt` as a role whose policy is that one
+  read, and reports an attempt that is open, with `generate-root -cancel`
+  as the way back. It is the logical path, not the unauthenticated
+  `sys/generate-root/attempt` that `bao operator generate-root -status`
+  uses and that OpenBAO 2.6 does not answer -- so the watch needs no root
+  token, no recovery share and no unauthenticated endpoint. It sees an
+  attempt while it is OPEN, which the ceremony's own pace makes the common
+  case; a completed one is recorded in the audit device and nowhere else.
+- **`charts/openbao-ops`**: one alert contract for all three
+  (`/work/alert`: the first line a summary, the rest the description),
+  with the same `sns` and `alertmanager` presets `certificateExpiry`
+  ships, so an estate configures one channel and not three. A probe never
+  fails the pod -- a store it cannot list, an API that refuses, a role
+  that was taken away each become an alert rather than a crash, because an
+  initContainer that exits non-zero takes the alert container down with
+  it. Fourteen new refusals, each with a fixture.
+- **`conformance/watch_test.go`**: every script the watches render is RUN.
+  The snapshot check over fabricated listings (fresh, stale, empty,
+  unlistable, and an object whose name carries no `<taken-at>`); the list
+  preset against a stand-in for the CLI, including the failure it must
+  turn into an answer; the job read against a stand-in for kubectl,
+  including a suspended CronJob that every other signal calls healthy; and
+  the root watch against a real `bao server -dev` behind a real JWT login,
+  with an attempt really opened and the policy really taken away.
+- **`docs/doctrine.md`**: what a watch is for, the three rules they share,
+  the new container contracts and presets, and what a watch does not
+  replace -- a metrics pipeline, or the audit device.
+
 ## v0.5.0
 
 Not yet tagged. What a consumer with one cluster and no SNS needs: a

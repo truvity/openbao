@@ -1,0 +1,10 @@
+# The name is the container that lists the store, the file it writes and
+# the store in the alert.
+snapshotAge:
+  enabled: true
+  stores:
+    - prefix: raft/
+      maxAgeSeconds: 43200
+      s3: {enabled: true, bucket: example-openbao-backups, region: eu-example-1}
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

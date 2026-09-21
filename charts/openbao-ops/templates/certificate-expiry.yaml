@@ -4,27 +4,7 @@
 {{- $cert := $e.certificateName | default .Values.server.tlsSecretName }}
 {{- $alert := $e.alert }}
 {{- $am := $alert.alertmanager }}
-{{- if and $alert.sns.enabled $am.enabled }}
-{{- fail "certificateExpiry.alert has both presets on: sns and alertmanager are two implementations of one contract, and the job alerts once" }}
-{{- end }}
-{{- if and (not $alert.sns.enabled) (not $am.enabled) (not $alert.command) }}
-{{- fail "certificateExpiry.alert needs a preset (sns, alertmanager) or an explicit command — an expiry check that tells nobody is a log line" }}
-{{- end }}
-{{- if and $alert.sns.enabled (not $alert.sns.topicArn) }}
-{{- fail "certificateExpiry.alert.sns.topicArn is required when the sns preset is on" }}
-{{- end }}
-{{- if and $alert.sns.enabled (not $alert.sns.region) }}
-{{- fail "certificateExpiry.alert.sns.region is required when the sns preset is on" }}
-{{- end }}
-{{- if and $am.enabled (not $am.url) }}
-{{- fail "certificateExpiry.alert.alertmanager.url is required when the alertmanager preset is on" }}
-{{- end }}
-{{- /* The path is the v2 API's and the chart appends it, so what is
-       configured is an origin, not an endpoint: a value that is not one
-       is a job that posts nowhere, and nobody is told. */}}
-{{- if and $am.enabled (not (regexMatch `^https?://\S+$` $am.url)) }}
-{{- fail (printf "certificateExpiry.alert.alertmanager.url must be an http(s) URL Alertmanager answers at, not %q — the alert goes to <url>/api/v2/alerts" $am.url) }}
-{{- end }}
+{{- include "ops.alertRefusals" (dict "part" "certificateExpiry" "alert" $alert) }}
 {{- $alertImage := $alert.image }}
 {{- if $am.enabled }}
 {{- $alertImage = $am.image }}

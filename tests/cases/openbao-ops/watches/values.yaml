@@ -1,0 +1,51 @@
+# The three watches alone, on a cluster whose alerts arrive through
+# Alertmanager: an install that runs the jobs elsewhere — or not at all —
+# and only wants to be told when something has gone quiet.
+#
+# The store is reached by a command rather than a preset, which is the
+# whole of what a store this chart does not know has to do.
+namespace: openbao
+snapshotAge:
+  enabled: true
+  clusterName: example-cluster
+  schedule: "*/30 * * * *"
+  stores:
+    - name: primary
+      description: the object store the snapshots are written to
+      prefix: raft/
+      maxAgeSeconds: 43200
+      env:
+        - name: OBJECT_STORE
+          value: objects.example.internal
+  list:
+    image:
+      repository: objects.example.internal/tools/store-client
+      tag: "3.1.0"
+    command: ["/usr/local/bin/newest-object"]
+    args: ["--quiet"]
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
+      runbook: "The way back is the restore runbook."
+jobSuccess:
+  enabled: true
+  clusterName: example-cluster
+  cronJobs:
+    - name: openbao-restore-check
+      description: the weekly restore that proves a snapshot still opens
+      maxAgeSeconds: 777600
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093/
+      release: openbao
+rootGeneration:
+  enabled: true
+  clusterName: example-cluster
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao

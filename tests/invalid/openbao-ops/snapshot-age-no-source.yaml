@@ -1,0 +1,10 @@
+# No preset and no command: the chart will not invent a way to look in a
+# store.
+snapshotAge:
+  enabled: true
+  stores:
+    - name: primary
+      prefix: raft/
+      maxAgeSeconds: 43200
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

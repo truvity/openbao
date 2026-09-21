@@ -1,0 +1,8 @@
+# Without a limit there is no answer to "how long is too long", and the
+# threshold is the job's own period plus the slack a late run needs.
+jobSuccess:
+  enabled: true
+  cronJobs:
+    - name: openbao-restore-check
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}
