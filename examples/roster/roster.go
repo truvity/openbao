@@ -4,6 +4,10 @@
 // one environment namespace whose internal groups sign SSH user
 // certificates, sign database client certificates and read KV secrets.
 //
+// One project's secrets are here too, as a team keeps them
+// (../../docs/team-secrets.md): its engineers read its prefix, its
+// deployers and approvers write it.
+//
 // It is the state the conformance test (conformance/roster_test.go) applies
 // to a real server and signs against, and desired.yaml beside it is its
 // golden, so the example a reader copies is the one that is proven.
@@ -45,6 +49,17 @@ const (
 	SSHAdminPrincipal = "example-admin"
 	// ReleaseSecret is the KV path the CI job reads.
 	ReleaseSecret = "ci/release"
+
+	// Project is the one project whose secrets a team shares, and
+	// ProjectViewer, ProjectDeployer and ProjectApprover the three groups
+	// that reach its prefix: the viewer reads it, the other two write it.
+	Project         = "orders"
+	ProjectViewer   = Environment + ":" + Project + ":viewer"
+	ProjectDeployer = Environment + ":" + Project + ":deployer"
+	ProjectApprover = Environment + ":" + Project + ":approver"
+	// ProjectSecret is one repository's secret under the project's prefix:
+	// what the values are for, the repository, and then the variable.
+	ProjectSecret = Project + "/local-dev/checkout/API_TOKEN"
 
 	// RootIssuer and EnvironmentIssuer are the credential chain: a root in
 	// root's PKIRootMount, and the environment's issuing CA it signs.
@@ -124,6 +139,11 @@ func Desired(p Params) *model.Desired {
 	grant(people.Grant(Reader,
 		model.Rule{Path: KVMount + "/data/*", Capabilities: []string{model.CapRead}},
 		model.Rule{Path: KVMount + "/metadata/*", Capabilities: []string{model.CapList, model.CapRead}}))
+	// The project's three groups, on one prefix: a repository is a path
+	// segment inside it, so onboarding one grants nothing new.
+	grant(people.Grant(ProjectApprover, writeProject(Project)...))
+	grant(people.Grant(ProjectDeployer, writeProject(Project)...))
+	grant(people.Grant(ProjectViewer, readProject(Project)...))
 	grant(people.Grant(SSHAdmin, sign(SSHMount, SSHAdminRole)))
 	grant(people.Grant(SSHUser, sign(SSHMount, SSHUserRole)))
 	// One read of one path, nothing else: no metadata, no list.
@@ -145,6 +165,29 @@ func sshRole(name, principal string) model.SSHRole {
 		Name: name, AllowedUsers: []string{principal}, DefaultUser: principal,
 		KeyTypes: []string{"ed25519"}, KeyIDFormat: "{{token_display_name}}",
 		Extensions: []string{"permit-pty"}, TTL: "30m", MaxTTL: "1h",
+	}
+}
+
+// readProject is a project's prefix, read: the values, and the metadata
+// that lets a person list the names -- `read` on the data path alone tells
+// nobody what is there to read. The `data/` and `metadata/` segments are
+// KV v2's API paths, not the ones `bao kv` prints: a policy written on
+// `kv/<project>/*` grants nothing at all.
+func readProject(project string) []model.Rule {
+	return []model.Rule{
+		{Path: KVMount + "/data/" + project + "/*", Capabilities: []string{model.CapRead}},
+		{Path: KVMount + "/metadata/" + project + "/*", Capabilities: []string{model.CapList, model.CapRead}},
+	}
+}
+
+// writeProject is the same prefix, written: a new secret needs `create`
+// and a new version of one `update`. Neither `delete` nor the metadata's
+// destroy is here -- retiring a value is rarer than writing one, and a
+// destroyed version does not come back.
+func writeProject(project string) []model.Rule {
+	return []model.Rule{
+		{Path: KVMount + "/data/" + project + "/*", Capabilities: []string{model.CapCreate, model.CapRead, model.CapUpdate}},
+		{Path: KVMount + "/metadata/" + project + "/*", Capabilities: []string{model.CapList, model.CapRead}},
 	}
 }
 

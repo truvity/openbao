@@ -13,6 +13,8 @@ succeeding, and a root token being generated. Three watches in
 `openbao-ops`, all off by default -- an existing values file renders
 byte-for-byte what v0.5.0 rendered -- and nothing in `pkg/apply`,
 `pkg/ceremony`, `pkg/custody`, `pkg/model` or `openbaoctl` changes.
+Beside them, a guide to a team's shared secrets on one KV prefix, and the
+grants and conformance case that prove it.
 
 - **`charts/openbao-ops`**: `snapshotAge` asks the STORE, not the snapshot
   job, whether there is a fresh backup in it: one `list` container per
@@ -55,6 +57,22 @@ byte-for-byte what v0.5.0 rendered -- and nothing in `pkg/apply`,
   including a suspended CronJob that every other signal calls healthy; and
   the root watch against a real `bao server -dev` behind a real JWT login,
   with an attempt really opened and the policy really taken away.
+- **`docs/team-secrets.md`**: a team's shared development credentials on
+  one KV prefix, as three grants of the access-roster contract -- the
+  project's viewer reading `kv/data/<project>/*`, its deployer and
+  approver writing it, and a repository as a path segment inside it. The
+  paths, the four calls a person's fetch makes, rotation, what revocation
+  at the issuer does and does not reach, and why production values are
+  not what the pattern is for. `examples/roster` gains the three groups,
+  so the prefix a reader copies is one that is applied to a server.
+- **`conformance/roster_test.go`**: the guide, executed. A deployer writes
+  a secret and a viewer reads that value back and lists the names; the
+  viewer's write is refused; a read outside the prefix is refused and a
+  missing path inside it is a 404, which is how the two are told apart; a
+  rotation is picked up by the next read; and the same person without the
+  group, with no groups, and with a group name OpenBAO was never told
+  about logs in every time and is refused the read every time. A tutorial
+  that has never executed is a tutorial that lies.
 - **`docs/doctrine.md`**: what a watch is for, the three rules they share,
   the new container contracts and presets, and what a watch does not
   replace -- a metrics pipeline, or the audit device.

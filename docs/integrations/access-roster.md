@@ -176,6 +176,10 @@ policy. The name is the whole mapping; nothing re-maps it.
   its policy is one read of one path, and it has no `@oidc` twin.
 - The role attaches no policy of its own, so **who holds a group is
   decided in one place**: the issuer's policy file.
+- A whole team on one KV prefix -- a project's engineers reading it, its
+  deployers and approvers writing it, a repository as a path segment
+  inside it -- is three such grants:
+  [team-secrets.md](../team-secrets.md).
 
 ## 4. The operators' door
 
