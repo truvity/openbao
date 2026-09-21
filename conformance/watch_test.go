@@ -65,6 +65,14 @@ type watchCronJob struct {
 type watchContainer struct {
 	Name    string   `yaml:"name"`
 	Command []string `yaml:"command"`
+	// Env is half of what the pod gives the script: since 2026-09-21 the
+	// values a script must not read as shell arrive this way, so a test
+	// that ran the command without the environment would be running
+	// something the pod never runs.
+	Env []struct {
+		Name  string `yaml:"name"`
+		Value string `yaml:"value"`
+	} `yaml:"env"`
 }
 
 // TestSnapshotAgeAsksTheStore runs the check container's script over
@@ -73,7 +81,7 @@ type watchContainer struct {
 // after it is delivery.
 func TestSnapshotAgeAsksTheStore(t *testing.T) {
 	helmBinary := tool(t, "helm")
-	script := containerScript(t, helmBinary, "openbao-snapshot-age", "check", snapshotAgeValues()...)
+	script, environment := containerScript(t, helmBinary, "openbao-snapshot-age", "check", snapshotAgeValues()...)
 
 	stamp := func(at time.Time) string { return "raft/" + at.UTC().Format("20060102T150405Z") + ".snap" }
 
@@ -134,7 +142,7 @@ func TestSnapshotAgeAsksTheStore(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(work, "error", store), []byte(why), 0o644))
 			}
 
-			out, code := runScript(t, script, work, "", nil)
+			out, code := runScript(t, script, work, "", environment)
 			assert.Equal(t, 0, code, "the check never fails the pod: the alert container is the only thing that tells anyone")
 
 			report, err := os.ReadFile(filepath.Join(work, "alert"))
@@ -170,13 +178,13 @@ func TestSnapshotAgeAsksTheStore(t *testing.T) {
 // an answer, not a crash.
 func TestSnapshotAgeListRefusesToFailThePod(t *testing.T) {
 	helmBinary := tool(t, "helm")
-	script := containerScript(t, helmBinary, "openbao-snapshot-age", "list-primary", snapshotAgeValues()...)
+	script, environment := containerScript(t, helmBinary, "openbao-snapshot-age", "list-primary", snapshotAgeValues()...)
 
 	t.Run("the newest key becomes this store's answer", func(t *testing.T) {
 		work, binDir := t.TempDir(), t.TempDir()
 		writeShim(t, binDir, "aws", "printf 'raft/20260921T051700Z.snap\\n'", 0)
 
-		_, code := runScript(t, script, work, binDir, nil)
+		_, code := runScript(t, script, work, binDir, environment)
 		require.Equal(t, 0, code)
 
 		answer, err := os.ReadFile(filepath.Join(work, "newest", "primary"))
@@ -190,7 +198,7 @@ func TestSnapshotAgeListRefusesToFailThePod(t *testing.T) {
 		// What the AWS CLI prints for a query that matched nothing.
 		writeShim(t, binDir, "aws", "printf 'None\\n'", 0)
 
-		_, code := runScript(t, script, work, binDir, nil)
+		_, code := runScript(t, script, work, binDir, environment)
 		require.Equal(t, 0, code)
 
 		answer, err := os.ReadFile(filepath.Join(work, "newest", "primary"))
@@ -202,7 +210,7 @@ func TestSnapshotAgeListRefusesToFailThePod(t *testing.T) {
 		work, binDir := t.TempDir(), t.TempDir()
 		writeShim(t, binDir, "aws", "echo 'An error occurred (AccessDenied) when calling ListObjectsV2' >&2", 1)
 
-		_, code := runScript(t, script, work, binDir, nil)
+		_, code := runScript(t, script, work, binDir, environment)
 		require.Equal(t, 0, code, "a probe that fails the pod tells nobody")
 
 		why, err := os.ReadFile(filepath.Join(work, "error", "primary"))
@@ -221,7 +229,7 @@ func TestSnapshotAgeListRefusesToFailThePod(t *testing.T) {
 // Job, so "no failures" is not "working".
 func TestJobSuccessAsksWhenEachJobLastSucceeded(t *testing.T) {
 	helmBinary := tool(t, "helm")
-	script := containerScript(t, helmBinary, "openbao-job-success", "read", jobSuccessValues()...)
+	script, environment := containerScript(t, helmBinary, "openbao-job-success", "read", jobSuccessValues()...)
 
 	answered := func(suspend, last string) string {
 		return fmt.Sprintf("printf '%s\\n%s\\n'", suspend, last)
@@ -267,7 +275,7 @@ func TestJobSuccessAsksWhenEachJobLastSucceeded(t *testing.T) {
 			work, binDir := t.TempDir(), t.TempDir()
 			writeShim(t, binDir, "kubectl", c.shim, c.code)
 
-			out, code := runScript(t, script, work, binDir, nil)
+			out, code := runScript(t, script, work, binDir, environment)
 			assert.Equal(t, 0, code, "the read never fails the pod")
 
 			report, err := os.ReadFile(filepath.Join(work, "alert"))
@@ -351,11 +359,14 @@ func TestRootGenerationWatchesARealServer(t *testing.T) {
 		Subject: "system:serviceaccount:openbao:openbao-root-generation", Audience: rootWatchAudience,
 	})), 0o644))
 
-	script := containerScript(t, helmBinary, "openbao-root-generation", "read", rootGenerationValues()...)
+	script, environment := containerScript(t, helmBinary, "openbao-root-generation", "read", rootGenerationValues()...)
 	// The pod's own address and login path are the two things a shell on
-	// this machine cannot honour as the pod does.
+	// this machine cannot honour as the pod does, so the render's
+	// BAO_ADDR and BAO_CACERT are overridden after it.
 	script = strings.NewReplacer("/var/run/openbao/token", tokenFile).Replace(script)
-	environment := []string{"BAO_ADDR=" + address, "BAO_CACERT=", "PATH=" + filepath.Dir(binary) + string(os.PathListSeparator) + os.Getenv("PATH")}
+	environment = append(environment,
+		"BAO_ADDR="+address, "BAO_CACERT=",
+		"PATH="+filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	t.Run("nothing is happening and it says nothing", func(t *testing.T) {
 		work := t.TempDir()
@@ -511,14 +522,14 @@ func TestWatchAlertContract(t *testing.T) {
 		t.Run(preset.name, func(t *testing.T) {
 			binDir := t.TempDir()
 			values, received := preset.open(t, binDir)
-			script := containerScript(t, helmBinary, "openbao-snapshot-age", "alert",
+			script, environment := containerScript(t, helmBinary, "openbao-snapshot-age", "alert",
 				append(snapshotAgeStores(), values...)...)
 
 			t.Run("an empty report says nothing and passes", func(t *testing.T) {
 				work := t.TempDir()
 				require.NoError(t, os.WriteFile(filepath.Join(work, "alert"), nil, 0o644))
 
-				_, code := runScript(t, script, work, binDir, nil)
+				_, code := runScript(t, script, work, binDir, environment)
 				assert.Equal(t, 0, code)
 				assert.Empty(t, received(), "silence is what a healthy run delivers")
 			})
@@ -529,7 +540,7 @@ func TestWatchAlertContract(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(work, "alert"),
 					[]byte(summary+"\n"+detail+"\n"), 0o644))
 
-				_, code := runScript(t, script, work, binDir, nil)
+				_, code := runScript(t, script, work, binDir, environment)
 				assert.NotEqual(t, 0, code, "a watch that found something must fail the job, not log")
 
 				sent := received()
@@ -602,7 +613,7 @@ func rootGenerationValues() []string {
 // containerScript renders openbao-ops and returns the script of one
 // container of one CronJob -- an initContainer or the main one, since a
 // watch is a probe and a delivery and both are the chart's.
-func containerScript(t *testing.T, helmBinary, cronJob, container string, values ...string) string {
+func containerScript(t *testing.T, helmBinary, cronJob, container string, values ...string) (string, []string) {
 	t.Helper()
 
 	args := []string{"template", "watch", opsChart, "--namespace", watchNamespace}
@@ -638,13 +649,18 @@ func containerScript(t *testing.T, helmBinary, cronJob, container string, values
 
 			require.Len(t, candidate.Command, 3, "the chart's own containers are `/bin/sh -ec <script>`")
 
-			return candidate.Command[2]
+			environment := make([]string, 0, len(candidate.Env))
+			for _, e := range candidate.Env {
+				environment = append(environment, e.Name+"="+e.Value)
+			}
+
+			return candidate.Command[2], environment
 		}
 	}
 
 	t.Fatalf("the render has no container %q in CronJob %q", container, cronJob)
 
-	return ""
+	return "", nil
 }
 
 // runScript runs a rendered container's script and answers with what it
@@ -692,4 +708,116 @@ func writeShim(t *testing.T, binDir, name, body string, code int) {
 
 	shim := fmt.Sprintf("#!/bin/sh\n%s\nexit %d\n", body, code)
 	require.NoError(t, os.WriteFile(filepath.Join(binDir, name), []byte(shim), 0o755))
+}
+
+// TestValuesAreNeverRunAsShell renders every watch with values that would
+// execute if anything read them as shell, runs the scripts, and looks for
+// what those values would have left behind.
+//
+// The bug this holds shut was live: a runbook that named a command in
+// backticks -- the ordinary way to write one -- was rendered into the
+// alert container's script, so the shell RAN it, the command failed, and
+// the one sentence that says how to stop what is being reported never
+// reached the alert. Helm's `quote` is a double-quoted string, and a
+// double-quoted string is still read by the shell.
+//
+// A value is data. The test is written the way an operator would find out:
+// the values here are the shapes a real runbook or description has -- a
+// command in backticks, a path in $( ) -- plus a marker that writes a file
+// if it is ever evaluated.
+func TestValuesAreNeverRunAsShell(t *testing.T) {
+	helmBinary := tool(t, "helm")
+	proof := filepath.Join(t.TempDir(), "executed")
+
+	// Each of these is a value a person might really write, with one
+	// addition that leaves evidence. `sh -c` would create the file.
+	hostile := func(what string) string {
+		return what + " `touch " + proof + "` and $(touch " + proof + ")"
+	}
+
+	cluster := hostile("kernel")
+	runbook := hostile("cancel it with bao operator generate-root -cancel")
+	description := hostile("the backup account")
+
+	values := []string{
+		"snapshotAge.enabled=true",
+		"snapshotAge.clusterName=" + cluster,
+		"snapshotAge.stores[0].name=primary",
+		"snapshotAge.stores[0].description=" + description,
+		"snapshotAge.stores[0].prefix=raft/",
+		"snapshotAge.stores[0].maxAgeSeconds=43200",
+		"snapshotAge.stores[0].s3.enabled=true",
+		"snapshotAge.stores[0].s3.bucket=example-openbao-backups",
+		"snapshotAge.stores[0].s3.region=eu-example-1",
+		"snapshotAge.alert.sns.enabled=true",
+		"snapshotAge.alert.sns.topicArn=example-topic",
+		"snapshotAge.alert.sns.region=eu-example-1",
+		"snapshotAge.alert.sns.runbook=" + runbook,
+	}
+
+	t.Run("a store's description reaches the report as text", func(t *testing.T) {
+		script, environment := containerScript(t, helmBinary, "openbao-snapshot-age", "check", values...)
+
+		work := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(work, "newest"), 0o755))
+		require.NoError(t, os.Mkdir(filepath.Join(work, "error"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(work, "newest", "primary"),
+			[]byte("raft/20200101T000000Z.snap"), 0o644))
+
+		out, code := runScript(t, script, work, "", environment)
+		require.Equal(t, 0, code, out)
+
+		report, err := os.ReadFile(filepath.Join(work, "alert"))
+		require.NoError(t, err)
+		assert.Contains(t, string(report), description, "the description a person wrote is what the report says")
+		assert.Contains(t, string(report), cluster, "and so is the cluster's name")
+		assert.NoFileExists(t, proof, "a value was evaluated by the shell that was meant to print it")
+	})
+
+	t.Run("a runbook reaches the channel as text", func(t *testing.T) {
+		script, environment := containerScript(t, helmBinary, "openbao-snapshot-age", "alert", values...)
+
+		binDir := t.TempDir()
+		received := commandShim(t, binDir, "aws")
+
+		work := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(work, "alert"), []byte("a summary\nand why\n"), 0o644))
+
+		_, code := runScript(t, script, work, binDir, environment)
+		assert.NotEqual(t, 0, code, "a report delivered fails the run")
+
+		sent := received()
+		require.Len(t, sent, 1)
+
+		reference := strings.TrimPrefix(strings.Split(sent[0].body, "\n")[7], "file://")
+		message, err := os.ReadFile(reference)
+		require.NoError(t, err)
+		assert.Contains(t, string(message), runbook, "the runbook is delivered, backticks and all")
+		assert.NoFileExists(t, proof, "the runbook was evaluated by the shell that was meant to send it")
+	})
+
+	t.Run("the root watch names its role and mount as text", func(t *testing.T) {
+		script, environment := containerScript(t, helmBinary, "openbao-root-generation", "read",
+			"rootGeneration.enabled=true",
+			"rootGeneration.clusterName="+cluster,
+			"rootGeneration.alert.sns.enabled=true",
+			"rootGeneration.alert.sns.topicArn=example-topic",
+			"rootGeneration.alert.sns.region=eu-example-1",
+		)
+
+		binDir := t.TempDir()
+		// A login that fails is the blind path, which is the one that
+		// quotes the role, the mount and the cluster back at the reader.
+		writeShim(t, binDir, "bao", "echo 'connection refused' >&2", 1)
+
+		work := t.TempDir()
+
+		out, code := runScript(t, script, work, binDir, environment)
+		require.Equal(t, 0, code, out)
+
+		report, err := os.ReadFile(filepath.Join(work, "alert"))
+		require.NoError(t, err)
+		assert.Contains(t, string(report), cluster)
+		assert.NoFileExists(t, proof, "a value was evaluated by the shell that was meant to print it")
+	})
 }

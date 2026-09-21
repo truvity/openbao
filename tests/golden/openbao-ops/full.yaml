@@ -455,20 +455,28 @@ spec:
                   ready=$(sed -n 2p /work/status)
                   reason=$(sed -n 3p /work/status)
                   [ -n "$not_after" ] || { echo "openbao/openbao-tls has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  cluster='example-cluster'
                   left=$(( $(date -u -d "$not_after" +%s) - $(date -u +%s) ))
                   echo "openbao-tls: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
                   if [ "$left" -ge 1814400 ]; then
                     exit 0
                   fi
-                  aws sns publish --topic-arn "example-topic" \
+                  {
+                    printf '%s' "openbao/openbao-tls${cluster:+ on $cluster} ends at ${not_after} ($((left / 86400)) days left). "
+                    printf '%s' "It renews through OpenBAO 30 days before its end, so renewal has been failing for $(( (2592000 - left) / 86400 )) days. "
+                    printf '%s\n' "Certificate Ready=${ready}: ${reason}"
+                    printf '%s\n' "Look at: kubectl -n openbao get certificaterequest; kubectl -n cert-manager logs deploy/cert-manager."
+                    printf '%s\n' "$OPENBAO_RUNBOOK"
+                  } > /tmp/message
+                  aws sns publish --topic-arn 'example-topic' \
                     --subject "OpenBAO's certificate ends in $((left / 86400)) days" \
-                    --message "openbao/openbao-tls on example-cluster ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO 30 days before its end, so renewal has been failing for $(( (2592000 - left) / 86400 )) days. Certificate Ready=${ready}: ${reason}
-                  Look at: kubectl -n openbao get certificaterequest; kubectl -n cert-manager logs deploy/cert-manager.
-                  The way back is the break-glass certificate: see the runbook."
+                    --message file:///tmp/message
                   exit 1
               env:
                 - name: AWS_REGION
                   value: eu-example-1
+                - name: OPENBAO_RUNBOOK
+                  value: "The way back is the break-glass certificate: see the runbook."
                 - name: HOME
                   value: /tmp
               volumeMounts:
@@ -548,6 +556,7 @@ spec:
                   : > /work/alert
                   : > /work/report
                   problems=0
+                  cluster='example-cluster'
 
                   look() {
                     name=$1; limit=$2; what=$3
@@ -586,15 +595,15 @@ spec:
                     fi
                     echo "$name: last succeeded $((age / 3600))h ago, under the $((limit / 3600))h limit"
                   }
-                  look "openbao-snapshot" 43200 "the every-6-hours snapshot"
-                  look "openbao-snapshot-weekly" 777600 "the weekly copy"
-                  look "openbao-restore-check" 777600 "the weekly restore that proves a snapshot still opens"
+                  look 'openbao-snapshot' 43200 'the every-6-hours snapshot'
+                  look 'openbao-snapshot-weekly' 777600 'the weekly copy'
+                  look 'openbao-restore-check' 777600 'the weekly restore that proves a snapshot still opens'
 
                   if [ "$problems" = 0 ]; then
                     exit 0
                   fi
                   {
-                    echo "example-cluster: $problems of 3 OpenBAO job(s) have not succeeded lately"
+                    echo "${cluster:+$cluster: }$problems of 3 OpenBAO job(s) have not succeeded lately"
                     echo "These are the jobs an install is judged on when it fails, and none of them is loud when it simply stops:"
                     cat /work/report
                     echo "Look at: kubectl -n openbao get cronjob; kubectl -n openbao get job --sort-by=.metadata.creationTimestamp; kubectl -n openbao logs job/<the newest one> --all-containers."
@@ -632,7 +641,7 @@ spec:
                   fi
                   cat /work/alert
                   cp /work/alert /tmp/message
-                  aws sns publish --topic-arn "example-topic" \
+                  aws sns publish --topic-arn 'example-topic' \
                     --subject "$(sed -n 1p /work/alert | cut -c1-99)" \
                     --message file:///tmp/message
                   exit 1
@@ -1009,24 +1018,27 @@ spec:
                 - -ec
                 - |
                   : > /work/alert
+                  cluster='example-cluster'
+                  mount='jwt-example'
+                  role='openbao-root-generation'
 
                   # Nothing below exits non-zero: the alert container is
                   # the only thing that tells anyone, and it never runs if
                   # this one fails the pod.
                   blind() {
                     {
-                      echo "example-cluster: the root-token watch cannot see OpenBAO"
+                      echo "${cluster:+$cluster: }the root-token watch cannot see OpenBAO"
                       echo "$1: $(head -c 300 /work/why 2>/dev/null)"
-                      echo "This watch reads sys/generate-root-token/attempt as the role openbao-root-generation through the jwt-example mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
-                      echo "Look at: kubectl -n openbao get pods -l app.kubernetes.io/name=openbao,component=server; bao status; bao read auth/jwt-example/role/openbao-root-generation; bao policy read <the policy bound to it>."
+                      echo "This watch reads sys/generate-root-token/attempt as the role $role through the $mount mount, and it can no longer do so. Taking that away is a step someone would take before generating a root token, so it is reported as loudly as an attempt itself — and it is equally what a sealed or unreachable server looks like."
+                      echo "Look at: kubectl -n openbao get pods -l app.kubernetes.io/name=openbao,component=server; bao status; bao read auth/$mount/role/$role; bao policy read <the policy bound to it>."
                       echo "The way back: restore the role and its policy — read on sys/generate-root-token/attempt and nothing else — from the configuration that owns them, and re-run this job."
                     } > /work/alert
                     cat /work/alert
                     exit 0
                   }
 
-                  if ! bao write -field=token auth/jwt-example/login \
-                       role=openbao-root-generation jwt=@/var/run/openbao/token \
+                  if ! bao write -field=token "auth/$mount/login" \
+                       "role=$role" jwt=@/var/run/openbao/token \
                        > /work/token 2> /work/why; then
                     blind "logging in failed"
                   fi
@@ -1051,7 +1063,7 @@ spec:
                   bao token revoke -self || true
 
                   {
-                    echo "example-cluster: a root token is being generated in OpenBAO"
+                    echo "${cluster:+$cluster: }a root token is being generated in OpenBAO"
                     echo "sys/generate-root-token/attempt reports started=true, $progress of $required key shares given, nonce $nonce. A root token is bound by no policy and expires on no schedule, and generating one needs a quorum of the recovery-key holders — so unless this is a ceremony you are in the room for, the recovery shares are being used by someone who should not have them."
                     echo "Look at: bao operator generate-root -status; the audit device on the server pods (kubectl -n openbao logs -l app.kubernetes.io/name=openbao,component=server --tail=200 | grep generate-root) for who asked and from where."
                     echo "The way back: cancel it — bao operator generate-root -cancel — which invalidates the shares already given and this nonce. If it completed before you got here, revoke the token it produced (bao token revoke <token>, or list auth/token/accessors), then rotate the recovery key so the shares that were used are worth nothing."
@@ -1098,8 +1110,8 @@ spec:
                   fi
                   cat /work/alert
                   cp /work/alert /tmp/message
-                  printf '\n%s\n' "The way back is `bao operator generate-root -cancel`." >> /tmp/message
-                  aws sns publish --topic-arn "example-topic" \
+                  printf '\n%s\n' "$OPENBAO_RUNBOOK" >> /tmp/message
+                  aws sns publish --topic-arn 'example-topic' \
                     --subject "$(sed -n 1p /work/alert | cut -c1-99)" \
                     --message file:///tmp/message
                   exit 1
@@ -1108,6 +1120,8 @@ spec:
                   value: eu-example-1
                 - name: HOME
                   value: /tmp
+                - name: OPENBAO_RUNBOOK
+                  value: "The way back is `bao operator generate-root -cancel`."
               volumeMounts:
                 - name: work
                   mountPath: /work
@@ -1198,18 +1212,18 @@ spec:
                 - |
                   mkdir -p /work/newest /work/error
                   if aws s3api list-objects-v2 \
-                       --bucket "example-openbao-backups" \
-                       --prefix "raft/" \
+                       --bucket 'example-openbao-backups' \
+                       --prefix "$SNAPSHOT_PREFIX" \
                        --query 'Contents[-1].Key' --output text \
                        > /work/answer 2> /work/why; then
                     key=$(cat /work/answer)
                     if [ "$key" = "None" ]; then key=""; fi
-                    printf '%s' "$key" > "/work/newest/primary"
+                    printf '%s' "$key" > "/work/newest/$STORE_NAME"
                   else
-                    : > "/work/newest/primary"
-                    head -c 400 /work/why > "/work/error/primary"
+                    : > "/work/newest/$STORE_NAME"
+                    head -c 400 /work/why > "/work/error/$STORE_NAME"
                   fi
-                  echo "primary: $(cat "/work/newest/primary")$(cat "/work/error/primary" 2>/dev/null)"
+                  echo "$STORE_NAME: $(cat "/work/newest/$STORE_NAME")$(cat "/work/error/$STORE_NAME" 2>/dev/null)"
               env:
                 - name: AWS_REGION
                   value: eu-example-1
@@ -1242,18 +1256,18 @@ spec:
                 - |
                   mkdir -p /work/newest /work/error
                   if aws s3api list-objects-v2 \
-                       --bucket "example-openbao-backups-replica" \
-                       --prefix "raft/" \
+                       --bucket 'example-openbao-backups-replica' \
+                       --prefix "$SNAPSHOT_PREFIX" \
                        --query 'Contents[-1].Key' --output text \
                        > /work/answer 2> /work/why; then
                     key=$(cat /work/answer)
                     if [ "$key" = "None" ]; then key=""; fi
-                    printf '%s' "$key" > "/work/newest/replica"
+                    printf '%s' "$key" > "/work/newest/$STORE_NAME"
                   else
-                    : > "/work/newest/replica"
-                    head -c 400 /work/why > "/work/error/replica"
+                    : > "/work/newest/$STORE_NAME"
+                    head -c 400 /work/why > "/work/error/$STORE_NAME"
                   fi
-                  echo "replica: $(cat "/work/newest/replica")$(cat "/work/error/replica" 2>/dev/null)"
+                  echo "$STORE_NAME: $(cat "/work/newest/$STORE_NAME")$(cat "/work/error/$STORE_NAME" 2>/dev/null)"
               env:
                 - name: AWS_REGION
                   value: eu-example-2
@@ -1288,6 +1302,7 @@ spec:
                   : > /work/alert
                   : > /work/report
                   problems=0
+                  cluster='example-cluster'
 
                   # <taken-at> is `date -u +%Y%m%dT%H%M%SZ`, the name the
                   # upload contract gives an object. Hand `date` the form
@@ -1331,14 +1346,14 @@ spec:
                     fi
                     echo "$name: $newest, $((age / 3600))h old, under the $((limit / 3600))h limit"
                   }
-                  look "primary" "raft/" 43200 "the backup account in the primary region"
-                  look "replica" "raft/" 50400 "the copy replication keeps in the DR region"
+                  look 'primary' 'raft/' 43200 'the backup account in the primary region'
+                  look 'replica' 'raft/' 50400 'the copy replication keeps in the DR region'
 
                   if [ "$problems" = 0 ]; then
                     exit 0
                   fi
                   {
-                    echo "example-cluster: OpenBAO has no fresh backup in $problems of 2 store(s)"
+                    echo "${cluster:+$cluster: }OpenBAO has no fresh backup in $problems of 2 store(s)"
                     echo "A store with nothing fresh in it is what a restore would actually find, whatever the snapshot job's own status says:"
                     cat /work/report
                     echo "Look at: kubectl -n openbao get cronjob,job -l app.kubernetes.io/part-of=openbao; kubectl -n openbao logs -l app.kubernetes.io/name=openbao-snapshot --tail=50 --all-containers."
@@ -1376,8 +1391,8 @@ spec:
                   fi
                   cat /work/alert
                   cp /work/alert /tmp/message
-                  printf '\n%s\n' "The way back is the restore runbook." >> /tmp/message
-                  aws sns publish --topic-arn "example-topic" \
+                  printf '\n%s\n' "$OPENBAO_RUNBOOK" >> /tmp/message
+                  aws sns publish --topic-arn 'example-topic' \
                     --subject "$(sed -n 1p /work/alert | cut -c1-99)" \
                     --message file:///tmp/message
                   exit 1
@@ -1386,6 +1401,8 @@ spec:
                   value: eu-example-1
                 - name: HOME
                   value: /tmp
+                - name: OPENBAO_RUNBOOK
+                  value: "The way back is the restore runbook."
               volumeMounts:
                 - name: work
                   mountPath: /work

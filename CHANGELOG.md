@@ -5,9 +5,44 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.6.1
+
+A value is data. `charts/openbao-ops` rendered several of a values file's
+strings straight into the shell scripts its jobs run, and Helm's `quote`
+is a DOUBLE-quoted string — so a value carrying a backtick or a `$(` was
+EXECUTED by the container that was meant to print it.
+
+Found in an install, not in a review: a runbook that said to cancel a
+ceremony with `bao operator generate-root -cancel` — backticks being the
+ordinary way to write a command — ran `bao` inside the alert container,
+where there is no `bao`. The command failed, and the one sentence that
+says how to stop what the alert is reporting never reached the alert.
+
+- **`charts/openbao-ops`**: every value a script uses is now either a
+  single-quoted shell WORD (the new `ops.shellArg`) or an environment
+  variable, which a shell never looks at twice. That covers a store's and
+  a CronJob's `description`, `clusterName`, `prefix`, `name`, a bucket, a
+  topic ARN, an Alertmanager URL, the JWT mount and role the root watch
+  logs in as, and — in both presets and in `certificateExpiry` — the
+  `runbook`, `alertname`, `severity` and `release`. The Alertmanager body
+  is built in a heredoc that expands, so its values arrive through the
+  environment and go out through the same JSON escaper the alert's own
+  words already used.
+- **`charts/openbao-ops`**: `certificateExpiry`'s SNS message is handed to
+  the CLI as a FILE, as every other alert here already was. It was the
+  last one built as a shell argument.
+- **`conformance/watch_test.go`**: `TestValuesAreNeverRunAsShell` renders
+  the watches with the values a person really writes — a command in
+  backticks, a path in `$( )` — plus a marker that leaves a file behind if
+  anything evaluates it, runs the scripts, and looks for the file. Against
+  the previous release it fails, and the file is there.
+- **`conformance`**: the harness now runs each script with the environment
+  its container declares. A test that ran the command without it was
+  running something the pod never runs.
+
 ## v0.6.0
 
-Not yet tagged. The failures an install dies of that nothing was looking
+The failures an install dies of that nothing was looking
 at: a store with no fresh backup in it, a job that has quietly stopped
 succeeding, and a root token being generated. Three watches in
 `openbao-ops`, all off by default -- an existing values file renders

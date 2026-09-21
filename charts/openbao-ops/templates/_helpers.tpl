@@ -11,6 +11,25 @@ The server itself stays upstream's. What is here is what an install is
 actually judged on when it fails.
 */}}
 
+{{/*
+A value as one POSIX shell WORD: single-quoted, with any single quote in it
+closed, escaped and reopened.
+
+Helm's `quote` renders a DOUBLE-quoted string, and a double-quoted string is
+still read by the shell: a value carrying a backtick or a $( is EXECUTED by
+the container that was meant to print it. Found live on 2026-09-21, when a
+runbook that said `bao operator generate-root -cancel` ran `bao` inside the
+alert container, failed, and left the alert without the one sentence that
+says how to stop what it is reporting.
+
+So: nothing a values file carries is code. Every value this chart puts into
+a script goes through here, or into the container's environment, where the
+shell never looks at it twice.
+*/}}
+{{- define "ops.shellArg" -}}
+'{{ . | toString | replace "'" "'\\''" }}'
+{{- end -}}
+
 {{- define "ops.annotations" -}}
 {{- mergeOverwrite (deepCopy (.root.Values.commonAnnotations | default dict)) (.extra | default dict) | toYaml -}}
 {{- end -}}
@@ -247,9 +266,13 @@ presets, and the escape hatch for a channel this chart does not know.
              not. An SNS subject is one line of at most 100 characters. */}}
       cp /work/alert /tmp/message
       {{- with $a.sns.runbook }}
-      printf '\n%s\n' {{ . | quote }} >> /tmp/message
+      {{- /* From the environment, where the shell never looks at it
+             twice. It was rendered into the script until 2026-09-21,
+             when a runbook naming a command in backticks RAN that
+             command here and the sentence never reached the alert. */}}
+      printf '\n%s\n' "$OPENBAO_RUNBOOK" >> /tmp/message
       {{- end }}
-      aws sns publish --topic-arn {{ $a.sns.topicArn | quote }} \
+      aws sns publish --topic-arn {{ include "ops.shellArg" $a.sns.topicArn }} \
         --subject "$(sed -n 1p /work/alert | cut -c1-99)" \
         --message file:///tmp/message
       exit 1
@@ -258,6 +281,10 @@ presets, and the escape hatch for a channel this chart does not know.
       value: {{ $a.sns.region }}
     - name: HOME
       value: /tmp
+    {{- with $a.sns.runbook }}
+    - name: OPENBAO_RUNBOOK
+      value: {{ . | quote }}
+    {{- end }}
     {{- with $a.env }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -283,14 +310,14 @@ presets, and the escape hatch for a channel this chart does not know.
       [
         {
           "labels": {
-            "alertname": {{ $am.alertname | quote }},
-            "severity": {{ $am.severity | quote }}{{ if $am.release }},
-            "release": {{ $am.release | quote }}{{ end }}
+            "alertname": "$(escape "$OPENBAO_ALERTNAME")",
+            "severity": "$(escape "$OPENBAO_SEVERITY")"{{ if $am.release }},
+            "release": "$(escape "$OPENBAO_RELEASE")"{{ end }}
           },
           "annotations": {
             "summary": "$(escape "$summary")",
             "description": "$(escape "$description")"{{ with $am.runbook }},
-            "runbook": {{ . | quote }}{{ end }}
+            "runbook": "$(escape "$OPENBAO_RUNBOOK")"{{ end }}
           }
         }
       ]
@@ -298,11 +325,27 @@ presets, and the escape hatch for a channel this chart does not know.
       curl --silent --show-error --fail --max-time 30 \
         --header 'Content-Type: application/json' \
         --data-binary @/tmp/alert.json \
-        {{ printf "%s/api/v2/alerts" (trimSuffix "/" $am.url) | quote }}
+        {{ include "ops.shellArg" (printf "%s/api/v2/alerts" (trimSuffix "/" $am.url)) }}
       exit 1
   env:
     - name: HOME
       value: /tmp
+    {{- /* The JSON body is built in a heredoc that EXPANDS, so every
+           value in it arrives through the environment and goes out
+           through the same escaper the alert's own words do. A label
+           carrying a backtick used to run it here. */}}
+    - name: OPENBAO_ALERTNAME
+      value: {{ $am.alertname | quote }}
+    - name: OPENBAO_SEVERITY
+      value: {{ $am.severity | quote }}
+    {{- with $am.release }}
+    - name: OPENBAO_RELEASE
+      value: {{ . | quote }}
+    {{- end }}
+    {{- with $am.runbook }}
+    - name: OPENBAO_RUNBOOK
+      value: {{ . | quote }}
+    {{- end }}
     {{- with $a.env }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

@@ -141,22 +141,41 @@ spec:
                   ready=$(sed -n 2p /work/status)
                   reason=$(sed -n 3p /work/status)
                   [ -n "$not_after" ] || { echo "{{ $ns }}/{{ $cert }} has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  {{- /* A shell WORD, never shell: see ops.shellArg. */}}
+                  cluster={{ include "ops.shellArg" ($e.clusterName | default "") }}
                   left=$(( $(date -u -d "$not_after" +%s) - $(date -u +%s) ))
                   echo "{{ $cert }}: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
                   if [ "$left" -ge {{ $alertBefore }} ]; then
                     exit 0
                   fi
-                  aws sns publish --topic-arn {{ $alert.sns.topicArn | quote }} \
+                  {{- /* The message is built in a file rather than in an
+                         argument, and the cluster name and the runbook
+                         arrive through the environment: both are prose
+                         from a values file, and prose in a double-quoted
+                         shell string is prose the shell RUNS. A runbook
+                         naming a command in backticks did exactly that on
+                         2026-09-21, in the watches that share this
+                         shape. */}}
+                  {
+                    printf '%s' "{{ $ns }}/{{ $cert }}${cluster:+ on $cluster} ends at ${not_after} ($((left / 86400)) days left). "
+                    printf '%s' "It renews through OpenBAO {{ div $renewBefore 86400 }} days before its end, so renewal has been failing for $(( ({{ $renewBefore }} - left) / 86400 )) days. "
+                    printf '%s\n' "Certificate Ready=${ready}: ${reason}"
+                    printf '%s\n' "Look at: kubectl -n {{ $ns }} get certificaterequest; kubectl -n {{ $e.certManagerNamespace }} logs deploy/cert-manager."
+                    {{- if $alert.sns.runbook }}
+                    printf '%s\n' "$OPENBAO_RUNBOOK"
+                    {{- end }}
+                  } > /tmp/message
+                  aws sns publish --topic-arn {{ include "ops.shellArg" $alert.sns.topicArn }} \
                     --subject "OpenBAO's certificate ends in $((left / 86400)) days" \
-                    --message "{{ $ns }}/{{ $cert }}{{ with $e.clusterName }} on {{ . }}{{ end }} ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO {{ div $renewBefore 86400 }} days before its end, so renewal has been failing for $(( ({{ $renewBefore }} - left) / 86400 )) days. Certificate Ready=${ready}: ${reason}
-                  Look at: kubectl -n {{ $ns }} get certificaterequest; kubectl -n {{ $e.certManagerNamespace }} logs deploy/cert-manager.
-                  {{- with $alert.sns.runbook }}
-                  {{ . }}
-                  {{- end }}"
+                    --message file:///tmp/message
                   exit 1
               env:
                 - name: AWS_REGION
                   value: {{ $alert.sns.region }}
+                {{- with $alert.sns.runbook }}
+                - name: OPENBAO_RUNBOOK
+                  value: {{ . | quote }}
+                {{- end }}
                 - name: HOME
                   value: /tmp
                 {{- with $alert.env }}

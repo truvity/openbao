@@ -118,6 +118,11 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
+                  {{- /* $SNAPSHOT_PREFIX and $STORE_NAME below are the
+                         two the contract above names, set for every
+                         list container alike: this preset reads a
+                         store's values the way a replacement command
+                         does, and neither reads one as shell. */}}
                   mkdir -p /work/newest /work/error
                   {{- /* S3 lists keys in ascending UTF-8 order, and the
                          upload contract names an object
@@ -125,18 +130,18 @@ spec:
                          that sorts chronologically — so the last key is
                          the newest snapshot, and no object is read. */}}
                   if aws s3api list-objects-v2 \
-                       --bucket {{ $s3.bucket | quote }} \
-                       --prefix {{ $store.prefix | quote }} \
+                       --bucket {{ include "ops.shellArg" $s3.bucket }} \
+                       --prefix "$SNAPSHOT_PREFIX" \
                        --query 'Contents[-1].Key' --output text \
                        > /work/answer 2> /work/why; then
                     key=$(cat /work/answer)
                     if [ "$key" = "None" ]; then key=""; fi
-                    printf '%s' "$key" > "/work/newest/{{ $store.name }}"
+                    printf '%s' "$key" > "/work/newest/$STORE_NAME"
                   else
-                    : > "/work/newest/{{ $store.name }}"
-                    head -c 400 /work/why > "/work/error/{{ $store.name }}"
+                    : > "/work/newest/$STORE_NAME"
+                    head -c 400 /work/why > "/work/error/$STORE_NAME"
                   fi
-                  echo "{{ $store.name }}: $(cat "/work/newest/{{ $store.name }}")$(cat "/work/error/{{ $store.name }}" 2>/dev/null)"
+                  echo "$STORE_NAME: $(cat "/work/newest/$STORE_NAME")$(cat "/work/error/$STORE_NAME" 2>/dev/null)"
               env:
                 - name: AWS_REGION
                   value: {{ $s3.region }}
@@ -182,6 +187,9 @@ spec:
                   : > /work/alert
                   : > /work/report
                   problems=0
+                  {{- /* Every value from here on is a shell WORD, not
+                         shell: see ops.shellArg. */}}
+                  cluster={{ include "ops.shellArg" ($a.clusterName | default "") }}
 
                   # <taken-at> is `date -u +%Y%m%dT%H%M%SZ`, the name the
                   # upload contract gives an object. Hand `date` the form
@@ -227,14 +235,14 @@ spec:
                   }
 
                   {{- range $store := $a.stores }}
-                  look {{ $store.name | quote }} {{ $store.prefix | quote }} {{ int $store.maxAgeSeconds }} {{ $store.description | default $store.name | quote }}
+                  look {{ include "ops.shellArg" $store.name }} {{ include "ops.shellArg" $store.prefix }} {{ int $store.maxAgeSeconds }} {{ include "ops.shellArg" ($store.description | default $store.name) }}
                   {{- end }}
 
                   if [ "$problems" = 0 ]; then
                     exit 0
                   fi
                   {
-                    echo "{{ with $a.clusterName }}{{ . }}: {{ end }}OpenBAO has no fresh backup in $problems of {{ len $a.stores }} store(s)"
+                    echo "${cluster:+$cluster: }OpenBAO has no fresh backup in $problems of {{ len $a.stores }} store(s)"
                     echo "A store with nothing fresh in it is what a restore would actually find, whatever the snapshot job's own status says:"
                     cat /work/report
                     echo "Look at: kubectl -n {{ $ns }} get cronjob,job -l app.kubernetes.io/part-of=openbao; kubectl -n {{ $ns }} logs -l app.kubernetes.io/name={{ $.Values.snapshot.serviceAccountName }} --tail=50 --all-containers."
