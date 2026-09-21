@@ -1,0 +1,9 @@
+snapshotAge:
+  enabled: true
+  stores:
+    - name: primary
+      prefix: raft/
+      maxAgeSeconds: 43200
+      s3: {enabled: true, region: eu-example-1}
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

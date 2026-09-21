@@ -1,0 +1,4 @@
+# A root-token watch that tells nobody is a log line in a pod that is
+# deleted an hour later.
+rootGeneration:
+  enabled: true

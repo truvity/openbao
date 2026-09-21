@@ -11,6 +11,17 @@
 {{- if $.Values.certificateExpiry.enabled }}
 {{- $isolated = append $isolated (dict "name" $np.names.certificateExpiryIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.certificateExpiry.name)) }}
 {{- end }}
+{{- /* The watches serve nothing either: each one reads something and
+       posts one alert. */}}
+{{- if $.Values.snapshotAge.enabled }}
+{{- $isolated = append $isolated (dict "name" $np.names.snapshotAgeIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.snapshotAge.name)) }}
+{{- end }}
+{{- if $.Values.jobSuccess.enabled }}
+{{- $isolated = append $isolated (dict "name" $np.names.jobSuccessIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.jobSuccess.name)) }}
+{{- end }}
+{{- if $.Values.rootGeneration.enabled }}
+{{- $isolated = append $isolated (dict "name" $np.names.rootGenerationIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.rootGeneration.name)) }}
+{{- end }}
 {{- range $i := $np.isolated }}
 {{- if not (and $i.name $i.podSelector) }}
 {{- fail "every entry of networkPolicy.isolated needs a name and a podSelector — an empty selector would isolate every pod in the namespace" }}
@@ -63,6 +74,15 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: {{ $.Values.snapshot.serviceAccountName }}
+      ports:
+        - port: {{ $.Values.server.apiPort }}
+          protocol: TCP
+    {{- end }}
+    {{- if $.Values.rootGeneration.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Values.rootGeneration.name }}
       ports:
         - port: {{ $.Values.server.apiPort }}
           protocol: TCP

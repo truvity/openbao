@@ -1,0 +1,5 @@
+jobSuccess:
+  enabled: true
+  cronJobs:
+    - name: openbao-restore-check
+      maxAgeSeconds: 777600

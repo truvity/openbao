@@ -1,0 +1,6 @@
+# A watch over no job passes for ever.
+jobSuccess:
+  enabled: true
+  cronJobs: []
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

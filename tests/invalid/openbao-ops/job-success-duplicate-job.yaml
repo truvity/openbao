@@ -1,0 +1,9 @@
+jobSuccess:
+  enabled: true
+  cronJobs:
+    - name: openbao-restore-check
+      maxAgeSeconds: 777600
+    - name: openbao-restore-check
+      maxAgeSeconds: 86400
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

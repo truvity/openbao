@@ -158,3 +158,179 @@ Requires shareProcessNamespace: true on the server pod.
   securityContext:
     {{- include "ops.containerSecurityContext" . | nindent 4 }}
 {{- end -}}
+
+{{/*
+The alert contract, and the two implementations of it this chart ships.
+
+`certificateExpiry.alert` came first and reads the thing it is alerting
+about (`/work/status`) itself, so every implementation of it has to do the
+same arithmetic. The parts that came after it — the watches — separate the
+two halves instead: a probe decides whether something is wrong and writes
+the whole report, and the alert container only delivers it.
+
+  Container   Reads         Environment   Must
+  ------------------------------------------------------------------
+  <part>.alert  /work/alert  HOME          deliver the report and exit
+                                           non-zero; an empty or absent
+                                           file means nothing is wrong,
+                                           and then it must exit zero
+
+`/work/alert` is the report: the first line is a one-line summary, the
+rest is the description — what broke, what to look at, and the way back.
+A probe writes it and nothing else; that is what makes one alert
+container serve every watch, and one preset serve every channel.
+*/}}
+
+{{/*
+The refusals every `<part>.alert` shares. Two presets for one container are
+refused because the job alerts once, so a second channel would be silently
+dropped.
+
+  {{- include "ops.alertRefusals" (dict "part" "snapshotAge" "alert" $a.alert) }}
+*/}}
+{{- define "ops.alertRefusals" -}}
+{{- $part := .part -}}
+{{- $a := .alert -}}
+{{- $am := $a.alertmanager -}}
+{{- if and $a.sns.enabled $am.enabled -}}
+{{- fail (printf "%s.alert has both presets on: sns and alertmanager are two implementations of one contract, and the job alerts once" $part) -}}
+{{- end -}}
+{{- if and (not $a.sns.enabled) (not $am.enabled) (not $a.command) -}}
+{{- fail (printf "%s.alert needs a preset (sns, alertmanager) or an explicit command — a check that tells nobody is a log line" $part) -}}
+{{- end -}}
+{{- if and $a.sns.enabled (not $a.sns.topicArn) -}}
+{{- fail (printf "%s.alert.sns.topicArn is required when the sns preset is on" $part) -}}
+{{- end -}}
+{{- if and $a.sns.enabled (not $a.sns.region) -}}
+{{- fail (printf "%s.alert.sns.region is required when the sns preset is on" $part) -}}
+{{- end -}}
+{{- if and $am.enabled (not $am.url) -}}
+{{- fail (printf "%s.alert.alertmanager.url is required when the alertmanager preset is on" $part) -}}
+{{- end -}}
+{{- /* The path is the v2 API's and the chart appends it, so what is
+       configured is an origin, not an endpoint: a value that is not one
+       is a job that posts nowhere, and nobody is told. */ -}}
+{{- if and $am.enabled (not (regexMatch `^https?://\S+$` $am.url)) -}}
+{{- fail (printf "%s.alert.alertmanager.url must be an http(s) URL Alertmanager answers at, not %q — the alert goes to <url>/api/v2/alerts" $part $am.url) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The alert container of a watch, as a containers[] entry. Both shipped
+presets, and the escape hatch for a channel this chart does not know.
+
+  {{- include "ops.alertContainer" (dict "root" $ "part" "snapshotAge" "alert" $a.alert) | nindent 12 }}
+*/}}
+{{- define "ops.alertContainer" -}}
+{{- $part := .part -}}
+{{- $a := .alert -}}
+{{- $am := $a.alertmanager -}}
+{{- $img := $a.image -}}
+{{- if $am.enabled -}}
+{{- $img = $am.image -}}
+{{- end -}}
+- name: alert
+  {{- include "ops.imageLines" $img | nindent 2 }}
+  {{- if $a.sns.enabled }}
+  command:
+    - /bin/sh
+    - -ec
+    - |
+      if [ ! -s /work/alert ]; then
+        echo "{{ $part }}: nothing to report"
+        exit 0
+      fi
+      cat /work/alert
+      {{- /* The report is handed over as a file, not as an argument: it
+             carries newlines and the words of whatever failed, and a
+             shell that has to quote those is a shell that one day does
+             not. An SNS subject is one line of at most 100 characters. */}}
+      cp /work/alert /tmp/message
+      {{- with $a.sns.runbook }}
+      printf '\n%s\n' {{ . | quote }} >> /tmp/message
+      {{- end }}
+      aws sns publish --topic-arn {{ $a.sns.topicArn | quote }} \
+        --subject "$(sed -n 1p /work/alert | cut -c1-99)" \
+        --message file:///tmp/message
+      exit 1
+  env:
+    - name: AWS_REGION
+      value: {{ $a.sns.region }}
+    - name: HOME
+      value: /tmp
+    {{- with $a.env }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- else if $am.enabled }}
+  command:
+    - /bin/sh
+    - -ec
+    - |
+      if [ ! -s /work/alert ]; then
+        echo "{{ $part }}: nothing to report"
+        exit 0
+      fi
+      cat /work/alert
+      summary=$(sed -n 1p /work/alert)
+      {{- /* A JSON string cannot carry a raw newline and the description
+             is several lines, so they are folded into one. The words of
+             whatever failed go into that body, and one quote in them
+             would make it something Alertmanager rejects — and then
+             nobody is told at all. */}}
+      description=$(sed -n '2,$p' /work/alert | tr '\n\t' '  ')
+      escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+      cat > /tmp/alert.json <<JSON
+      [
+        {
+          "labels": {
+            "alertname": {{ $am.alertname | quote }},
+            "severity": {{ $am.severity | quote }}{{ if $am.release }},
+            "release": {{ $am.release | quote }}{{ end }}
+          },
+          "annotations": {
+            "summary": "$(escape "$summary")",
+            "description": "$(escape "$description")"{{ with $am.runbook }},
+            "runbook": {{ . | quote }}{{ end }}
+          }
+        }
+      ]
+      JSON
+      curl --silent --show-error --fail --max-time 30 \
+        --header 'Content-Type: application/json' \
+        --data-binary @/tmp/alert.json \
+        {{ printf "%s/api/v2/alerts" (trimSuffix "/" $am.url) | quote }}
+      exit 1
+  env:
+    - name: HOME
+      value: /tmp
+    {{- with $a.env }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- else }}
+  {{- /* The contract for a replacement: read /work/alert — the first line
+         a summary, the rest the description — and when it is not empty,
+         deliver it and exit non-zero. */}}
+  command:
+    {{- toYaml $a.command | nindent 4 }}
+  {{- with $a.args }}
+  args:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  env:
+    - name: HOME
+      value: /tmp
+    {{- with $a.env }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+  volumeMounts:
+    - name: work
+      mountPath: /work
+      readOnly: true
+    - name: tmp
+      mountPath: /tmp
+  resources:
+    {{- toYaml $a.resources | nindent 4 }}
+  securityContext:
+    {{- include "ops.containerSecurityContext" .root | nindent 4 }}
+{{- end -}}

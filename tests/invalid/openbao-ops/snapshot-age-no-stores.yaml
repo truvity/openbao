@@ -1,0 +1,6 @@
+# A freshness check that looks in no store passes for ever.
+snapshotAge:
+  enabled: true
+  stores: []
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

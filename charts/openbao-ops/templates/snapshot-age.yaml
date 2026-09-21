@@ -1,0 +1,263 @@
+{{- if .Values.snapshotAge.enabled }}
+{{- $a := .Values.snapshotAge }}
+{{- $ns := include "ops.namespace" . }}
+{{- if not $a.stores }}
+{{- fail "snapshotAge.stores is empty — a freshness check that looks in no store is a job that always passes" }}
+{{- end }}
+{{- $seen := dict }}
+{{- range $store := $a.stores }}
+{{- if not $store.name }}
+{{- fail "every snapshotAge.stores entry needs a name: it names the container that lists it, the file it writes and the store in the alert" }}
+{{- end }}
+{{- if hasKey $seen $store.name }}
+{{- fail (printf "snapshotAge.stores has two entries named %q — the second would overwrite the first's answer and one store would go unwatched" $store.name) }}
+{{- end }}
+{{- $seen = set $seen $store.name true }}
+{{- $s3 := $store.s3 | default dict }}
+{{- if and (not $s3.enabled) (not $a.list.command) }}
+{{- fail (printf "snapshotAge.stores[%s] has no s3 preset and snapshotAge.list.command is empty — the chart will not invent a way to look in your store" $store.name) }}
+{{- end }}
+{{- if and $s3.enabled (not $s3.bucket) }}
+{{- fail (printf "snapshotAge.stores[%s].s3.bucket is required when the s3 preset is on" $store.name) }}
+{{- end }}
+{{- if and $s3.enabled (not $s3.region) }}
+{{- fail (printf "snapshotAge.stores[%s].s3.region is required when the s3 preset is on" $store.name) }}
+{{- end }}
+{{- end }}
+{{- include "ops.alertRefusals" (dict "part" "snapshotAge" "alert" $a.alert) }}
+---
+{{- /* No Kubernetes API is read here, so no token is mounted. What this
+       job needs is the store's own credential, which on most clouds is
+       attached to the ServiceAccount by an annotation. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" (mergeOverwrite (deepCopy ($a.annotations | default dict)) ($a.serviceAccountAnnotations | default dict))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+{{- /* Is there a fresh backup where the backups are kept?
+
+       Every other way of asking watches the snapshot job instead: its exit
+       code, its Job status, the schedule it was meant to run on. Each of
+       those can be green while the store is empty — a job that uploaded to
+       the wrong prefix, a credential that lost its write, a bucket whose
+       lifecycle expired faster than the schedule refills it. The store is
+       the only place the answer is not an inference, and it is also the
+       place a restore will look.
+
+       Several stores are listed rather than one, because a copy in another
+       region only counts if it is arriving. Replication has no signal of
+       its own here unless the object store publishes one; what it does
+       have is a copy that stops getting newer, which is the same failure
+       seen from the data's side, and needs nothing but a listing. */}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $a.schedule | quote }}
+  timeZone: {{ $a.timeZone }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $a.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      {{- /* A retry would deliver the same alert again, and the next run is
+             minutes away. */}}
+      backoffLimit: {{ $a.backoffLimit }}
+      activeDeadlineSeconds: {{ $a.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ $a.name }}
+        spec:
+          serviceAccountName: {{ $a.name }}
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          {{- with $a.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $a.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ops.podSecurityContext" $ | nindent 12 }}
+          initContainers:
+            {{- range $store := $a.stores }}
+            {{- /* The container's contract: with $SNAPSHOT_PREFIX and
+                   $STORE_NAME, write the name of the NEWEST object under
+                   that prefix to /work/newest/$STORE_NAME (an empty file
+                   when the store holds none), and exit ZERO even when the
+                   store cannot be reached, leaving the reason in
+                   /work/error/$STORE_NAME. A probe that fails the pod
+                   tells nobody: the alert container never runs, and a
+                   store nothing can reach is exactly the case worth
+                   hearing about. */}}
+            {{- $s3 := $store.s3 | default dict }}
+            - name: list-{{ $store.name }}
+              {{- include "ops.imageLines" $a.list.image | nindent 14 }}
+              {{- if $s3.enabled }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  mkdir -p /work/newest /work/error
+                  {{- /* S3 lists keys in ascending UTF-8 order, and the
+                         upload contract names an object
+                         <prefix><taken-at>.snap with <taken-at> in a form
+                         that sorts chronologically — so the last key is
+                         the newest snapshot, and no object is read. */}}
+                  if aws s3api list-objects-v2 \
+                       --bucket {{ $s3.bucket | quote }} \
+                       --prefix {{ $store.prefix | quote }} \
+                       --query 'Contents[-1].Key' --output text \
+                       > /work/answer 2> /work/why; then
+                    key=$(cat /work/answer)
+                    if [ "$key" = "None" ]; then key=""; fi
+                    printf '%s' "$key" > "/work/newest/{{ $store.name }}"
+                  else
+                    : > "/work/newest/{{ $store.name }}"
+                    head -c 400 /work/why > "/work/error/{{ $store.name }}"
+                  fi
+                  echo "{{ $store.name }}: $(cat "/work/newest/{{ $store.name }}")$(cat "/work/error/{{ $store.name }}" 2>/dev/null)"
+              env:
+                - name: AWS_REGION
+                  value: {{ $s3.region }}
+              {{- else }}
+              command:
+                {{- toYaml $a.list.command | nindent 16 }}
+              {{- with $a.list.args }}
+              args:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              env:
+              {{- end }}
+                - name: SNAPSHOT_PREFIX
+                  value: {{ $store.prefix | quote }}
+                - name: STORE_NAME
+                  value: {{ $store.name | quote }}
+                - name: HOME
+                  value: /work
+                {{- with $a.list.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+                {{- with $store.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                {{- toYaml $a.list.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+            {{- end }}
+            {{- /* The report, written once for whichever channel carries
+                   it. It runs no cloud call: any image with a POSIX shell
+                   and a `date` that reads "YYYY-MM-DD hh:mm:ss" does. */}}
+            - name: check
+              {{- include "ops.imageLines" $a.check.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  now=$(date -u +%s)
+                  : > /work/alert
+                  : > /work/report
+                  problems=0
+
+                  # <taken-at> is `date -u +%Y%m%dT%H%M%SZ`, the name the
+                  # upload contract gives an object. Hand `date` the form
+                  # every implementation of it parses: busybox's does not
+                  # read the basic ISO form.
+                  taken_at() {
+                    case "$1" in
+                      ????????T??????Z) ;;
+                      *) return 1 ;;
+                    esac
+                    date -u -d "$(echo "$1" | cut -c1-4)-$(echo "$1" | cut -c5-6)-$(echo "$1" | cut -c7-8) $(echo "$1" | cut -c10-11):$(echo "$1" | cut -c12-13):$(echo "$1" | cut -c14-15)" +%s 2>/dev/null
+                  }
+
+                  look() {
+                    name=$1; prefix=$2; limit=$3; where=$4
+                    newest=$(cat "/work/newest/$name" 2>/dev/null || true)
+                    why=$(cat "/work/error/$name" 2>/dev/null || true)
+                    if [ -n "$why" ]; then
+                      echo "  $name ($where) could not be listed: $why" >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    if [ -z "$newest" ]; then
+                      echo "  $name ($where) holds no snapshot at all under $prefix" >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    stamp=${newest##*/}
+                    stamp=${stamp%.snap}
+                    taken=$(taken_at "$stamp") || taken=""
+                    if [ -z "$taken" ]; then
+                      echo "  $name ($where) holds $newest, whose name carries no <taken-at>: nothing here can say how old it is" >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    age=$((now - taken))
+                    if [ "$age" -ge "$limit" ]; then
+                      echo "  $name ($where) is $((age / 3600))h behind: its newest is $newest, and more than $((limit / 3600))h old" >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    echo "$name: $newest, $((age / 3600))h old, under the $((limit / 3600))h limit"
+                  }
+
+                  {{- range $store := $a.stores }}
+                  look {{ $store.name | quote }} {{ $store.prefix | quote }} {{ int $store.maxAgeSeconds }} {{ $store.description | default $store.name | quote }}
+                  {{- end }}
+
+                  if [ "$problems" = 0 ]; then
+                    exit 0
+                  fi
+                  {
+                    echo "{{ with $a.clusterName }}{{ . }}: {{ end }}OpenBAO has no fresh backup in $problems of {{ len $a.stores }} store(s)"
+                    echo "A store with nothing fresh in it is what a restore would actually find, whatever the snapshot job's own status says:"
+                    cat /work/report
+                    echo "Look at: kubectl -n {{ $ns }} get cronjob,job -l app.kubernetes.io/part-of=openbao; kubectl -n {{ $ns }} logs -l app.kubernetes.io/name={{ $.Values.snapshot.serviceAccountName }} --tail=50 --all-containers."
+                    echo "The way back: take one by hand and read its upload container{{ if and $.Values.snapshot.enabled $.Values.snapshot.jobs }} — kubectl -n {{ $ns }} create job --from=cronjob/{{ (first $.Values.snapshot.jobs).name }} {{ (first $.Values.snapshot.jobs).name }}-now{{ end }}. A store that is behind while another is fresh is a copy that has stopped arriving, not a snapshot that was never taken."
+                  } > /work/alert
+                  cat /work/alert
+              env:
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                {{- toYaml $a.check.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          containers:
+            {{- include "ops.alertContainer" (dict "root" $ "part" "snapshotAge" "alert" $a.alert) | nindent 12 }}
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+{{- end }}

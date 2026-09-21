@@ -1,0 +1,11 @@
+# The job alerts once, so the second channel would be silently dropped.
+snapshotAge:
+  enabled: true
+  stores:
+    - name: primary
+      prefix: raft/
+      maxAgeSeconds: 43200
+      s3: {enabled: true, bucket: example-openbao-backups, region: eu-example-1}
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}
+    alertmanager: {enabled: true, url: http://alertmanager.example.svc:9093}

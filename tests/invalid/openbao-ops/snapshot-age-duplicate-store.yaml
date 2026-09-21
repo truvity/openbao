@@ -1,0 +1,15 @@
+# The second would overwrite the first's answer, and one store would go
+# unwatched while the report claimed to cover both.
+snapshotAge:
+  enabled: true
+  stores:
+    - name: primary
+      prefix: raft/
+      maxAgeSeconds: 43200
+      s3: {enabled: true, bucket: example-openbao-backups, region: eu-example-1}
+    - name: primary
+      prefix: weekly/
+      maxAgeSeconds: 691200
+      s3: {enabled: true, bucket: example-openbao-backups, region: eu-example-1}
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

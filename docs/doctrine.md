@@ -7,8 +7,8 @@ The **server** is upstream's `openbao/openbao` chart and is not here
 charts are what an install is judged on when it fails:
 
 - **openbao-ops** runs beside the server: snapshots, the restore check,
-  the serving certificate's expiry check, network policies, the serving
-  certificate and the sidecar that reloads it.
+  the serving certificate's expiry check, the watches, network policies,
+  the serving certificate and the sidecar that reloads it.
 - **openbao-consumers** runs on every cluster that consumes the server:
   External Secrets stores for readers and writers, cert-manager issuers
   backed by OpenBAO's PKI, the trust anchors and bundle, and certificates.
@@ -30,6 +30,8 @@ contract is the one thing a replacement must honour:
 | `snapshot.upload` | `/work/openbao.snap`, `/work/taken-at` | `SNAPSHOT_PREFIX`, `HOME` | store the bytes at `$SNAPSHOT_PREFIX<taken-at>.snap` |
 | `restoreCheck.fetch` | the store | `MAX_SNAPSHOT_AGE_SECONDS`, `HOME` | write the newest snapshot to `/work/openbao.snap` and its name to `/work/key`, and **fail** when it is older than the limit |
 | `certificateExpiry.alert` | `/work/status`: notAfter, the Ready status, its message, one per line | `ALERT_BEFORE_SECONDS`, `HOME` | alert and exit non-zero when fewer seconds than that are left |
+| `snapshotAge.list` | the store | `SNAPSHOT_PREFIX`, `STORE_NAME`, `HOME` | write the NAME of the newest object under that prefix to `/work/newest/$STORE_NAME` — empty when there is none — and **exit zero even when the store cannot be reached**, leaving the reason in `/work/error/$STORE_NAME` |
+| `<watch>.alert` | `/work/alert`: the first line a summary, the rest the description | `HOME` | deliver it and exit non-zero; an empty or absent file is silence, and then exit zero |
 
 A preset is one implementation, and the only place a cloud or a channel
 is named. Alerting ships two, because an estate that has no SNS still has
@@ -41,12 +43,62 @@ somewhere its alerts arrive:
 | `restoreCheck.fetch.s3` | `restoreCheck.fetch` | fetches the newest object under a prefix, and fails on one that is too old |
 | `certificateExpiry.alert.sns` | `certificateExpiry.alert` | one `aws sns publish` |
 | `certificateExpiry.alert.alertmanager` | `certificateExpiry.alert` | one POST to `<url>/api/v2/alerts`, carrying the labels the consumer sets: `alertname`, `severity` and the release |
+| `snapshotAge.list.s3` | `snapshotAge.list` | one `aws s3api list-objects-v2` over a prefix, reading no object |
+| `<watch>.alert.sns` | `<watch>.alert` | one `aws sns publish`, the report handed over as a file |
+| `<watch>.alert.alertmanager` | `<watch>.alert` | one POST to `<url>/api/v2/alerts`, the same labels |
 
 Two presets for one container are refused at render time: the job alerts
-once, so a second channel would be silently dropped. Both alerting presets
-are held to the contract by the same test, which renders the chart and
-runs the container's own script (`conformance/alert_test.go`) -- a preset
-only a reviewer has read is a preset nobody has run.
+once, so a second channel would be silently dropped. Every alerting preset
+is held to its contract by a test that renders the chart and runs the
+container's own script (`conformance/alert_test.go`,
+`conformance/watch_test.go`) -- a preset only a reviewer has read is a
+preset nobody has run.
+
+`certificateExpiry.alert` came first and reads the thing it is alerting
+about, so every implementation of it repeats the same arithmetic. The
+watches split the two halves instead: a probe decides whether something is
+wrong and writes the whole report to `/work/alert`, and the alert
+container only delivers it. That is what lets one alert container serve
+every watch and one preset serve every channel, and it is the shape a new
+check should take.
+
+## A watch is for a failure that is otherwise silent
+
+Three of the ways an install dies leave no trace anyone is looking at, and
+each has a part of its own:
+
+| Watch | Asks | Because |
+|---|---|---|
+| `snapshotAge` | is there a fresh backup where the backups are kept? | the snapshot job can be green while the store is empty — a wrong prefix, a credential that lost its write, a lifecycle that expires faster than the schedule refills. The store is where a restore will look, so it is where the question belongs |
+| `jobSuccess` | have these jobs actually SUCCEEDED lately? | a CronJob that stops being scheduled never produces a failed Job, so "no failures" is not "working". `status.lastSuccessfulTime` is missing in exactly that case |
+| `rootGeneration` | is someone generating a root token? | a root token is bound by no policy, and generating one uses a quorum of the recovery-key holders rather than any credential that could be revoked |
+
+Three rules they share, each learned from a way a check can be worse than
+none:
+
+- **A probe never fails the pod.** The alert container is the only thing
+  that tells anyone, and an initContainer that exits non-zero takes it
+  down. A store nothing can reach, an API that refuses, a role that was
+  taken away: each becomes an alert, not a crash.
+- **Being unable to ask is itself the alert.** Removing the watch's access
+  is a step someone would take before doing the thing it watches for.
+- **A report says what broke, what to look at and the way back.** It is
+  read by whoever is woken by it, who may not be whoever wrote the values.
+
+`snapshotAge` lists several stores rather than one, and that is also how
+replication is watched: a copy in another region only counts if it is
+still arriving, and a replica that stops getting newer is the same failure
+seen from the data's side. It needs nothing but a listing, where a
+replication metric needs the object store to publish one.
+
+What a watch does NOT replace is a metrics pipeline. An estate that has
+one gets `jobSuccess` fleet-wide, over every job it runs, and should
+prefer that; these exist so that an install with no such pipeline still
+cannot stop backing itself up in silence. Nor does `rootGeneration`
+replace the audit device: it sees an attempt that is OPEN, because the
+ceremony takes a share from each of several people and is therefore slow,
+but the record of a COMPLETED one is in the audit stream and nowhere
+else.
 
 ## The restored PKI is judged against a root you hold
 
@@ -129,6 +181,9 @@ The charts assume, and do not create, a least-privilege split:
 | `snapshot` | read `sys/storage/raft/snapshot` | write under the prefixes; no list, no read | none (no token automounted) |
 | `restoreCheck` | on the RESTORED copy: read the canaries, issue from `pki.role` | read the newest snapshot; decrypt with the seal's key | none |
 | `certificateExpiry` | none | publish to one topic | `get` on one Certificate (the chart's Role) |
+| `snapshotAge` | none | LIST one prefix; no read, no write | none (no token automounted) |
+| `jobSuccess` | none | publish to one topic | `get` on the named CronJobs (the chart's Role) |
+| `rootGeneration` | read `sys/generate-root-token/attempt` | publish to one topic | none (no token automounted) |
 | issuers | `pki.issuers[].role`, bound to the issuer's audience | — | cert-manager mints the login's tokens (the chart's Role) |
 | stores | `stores[].role` / `writers[].name` | — | the presented ServiceAccount's token |
 
