@@ -214,7 +214,10 @@
                 "properties": {
                   "enabled": { "type": "boolean" },
                   "bucket": { "type": "string" },
-                  "region": { "type": "string" }
+                  "region": { "type": "string" },
+                  "endpoint": { "type": "string" },
+                  "pathStyle": { "type": "boolean" },
+                  "existingSecret": { "type": "string" }
                 }
               }
             }
@@ -459,6 +462,9 @@
             "enabled": { "type": "boolean" },
             "bucket": { "type": "string" },
             "region": { "type": "string" },
+            "endpoint": { "type": "string" },
+            "pathStyle": { "type": "boolean" },
+            "existingSecret": { "type": "string" },
             "prefix": { "type": "string" },
             "checksumAlgorithm": { "type": "string" }
           }

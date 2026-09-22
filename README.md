@@ -125,6 +125,25 @@ rootGeneration:                     # is someone generating a root token?
     sns: { enabled: true, topicArn: example-topic-arn, region: eu-example-1 }
 ```
 
+The S3 presets reach any store that speaks the S3 API. Three values, all
+inert by default, say which: `endpoint` (empty keeps AWS), `pathStyle`
+(the bucket as `endpoint/bucket/key`, a property of the store's
+certificate) and `existingSecret` (static keys through `envFrom`, for a
+store with no pod identity). The same on every preset, once per store:
+
+```yaml
+snapshot:
+  upload:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: example                 # MinIO, Ceph RGW: as the store is configured
+      endpoint: https://objects.example.internal
+      pathStyle: true                 # its certificate covers the host, not a bucket subdomain
+      existingSecret: openbao-backup-keys   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# Cloudflare R2: endpoint https://<account>.r2.cloudflarestorage.com, region auto
+```
+
 The serving-certificate reload is a fragment for the upstream chart
 ([docs/safety.md](docs/safety.md#a-renewed-certificate-that-nothing-loads)
 says why, [docs/server.md](docs/server.md) shows the rest of the server's

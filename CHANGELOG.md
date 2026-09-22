@@ -7,6 +7,28 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Added
+
+- **openbao-ops: the S3 presets reach any store that speaks the S3 API.**
+  `snapshot.upload.s3`, `restoreCheck.fetch.s3` and every
+  `snapshotAge.stores[].s3` drive the AWS CLI, which reaches AWS unless
+  told otherwise, so the presets were AWS-only by omission: a caller
+  whose backups sit in MinIO, Ceph RGW or Cloudflare R2 had no way to say
+  so, and no way to give the jobs credentials on a store with no pod
+  identity. Three values on each preset, all inert by default, so an
+  existing values file renders byte-for-byte what v0.6.1 rendered:
+  `endpoint` (empty keeps AWS; set, it is `AWS_ENDPOINT_URL_S3`, and the
+  CLI's default request and response checksums are turned down to
+  `when_required`, which a store that is not AWS may not implement),
+  `pathStyle` (the bucket as `endpoint/bucket/key`; the CLI reads that
+  from its config file alone, so the script writes the one line and
+  `AWS_CONFIG_FILE` names it) and `existingSecret` (static keys through
+  `envFrom`, so a session token is carried too). An `endpoint` that is
+  not an `http(s)` URL is refused at render time. The upload's
+  `--checksum-algorithm SHA256` is unchanged and still sent. Proved by
+  `conformance/watch_test.go`: the list container is run against a
+  stand-in for the CLI, which must be handed the file the script wrote.
+
 ### Fixed
 
 - **openbao-ops: a limit under an hour prints in minutes.** The

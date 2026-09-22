@@ -73,6 +73,24 @@ type watchContainer struct {
 		Name  string `yaml:"name"`
 		Value string `yaml:"value"`
 	} `yaml:"env"`
+	// EnvFrom is the other half: the Secret an S3 preset takes static
+	// keys from on a store with no pod identity.
+	EnvFrom []struct {
+		SecretRef struct {
+			Name string `yaml:"name"`
+		} `yaml:"secretRef"`
+	} `yaml:"envFrom"`
+}
+
+// env is the value of one variable the pod would set, or "" and false.
+func (c watchContainer) env(name string) (string, bool) {
+	for _, e := range c.Env {
+		if e.Name == name {
+			return e.Value, true
+		}
+	}
+
+	return "", false
 }
 
 // TestSnapshotAgeAsksTheStore runs the check container's script over
@@ -220,6 +238,77 @@ func TestSnapshotAgeListRefusesToFailThePod(t *testing.T) {
 		answer, err := os.ReadFile(filepath.Join(work, "newest", "primary"))
 		require.NoError(t, err)
 		assert.Empty(t, string(answer))
+	})
+}
+
+// TestSnapshotAgeListReachesAStoreThatIsNotAWS renders the s3 preset for
+// a store reached by its own endpoint, by path, with keys from a Secret,
+// and runs the list container against a stand-in for the CLI that reports
+// what it was given. What is proved is the half a render alone cannot: the
+// config file the script writes is the one the CLI is pointed at, and it
+// says path-style. And the other half, that an AWS caller sees none of it:
+// the same render without the three values carries no endpoint, no config
+// file and no Secret.
+func TestSnapshotAgeListReachesAStoreThatIsNotAWS(t *testing.T) {
+	helmBinary := tool(t, "helm")
+
+	t.Run("an AWS caller renders none of it", func(t *testing.T) {
+		container := renderedContainer(t, helmBinary, "openbao-snapshot-age", "list-primary", snapshotAgeValues()...)
+
+		for _, name := range []string{"AWS_ENDPOINT_URL_S3", "AWS_REQUEST_CHECKSUM_CALCULATION", "AWS_RESPONSE_CHECKSUM_VALIDATION", "AWS_CONFIG_FILE"} {
+			_, set := container.env(name)
+			assert.False(t, set, "%s is set on an AWS render", name)
+		}
+
+		assert.Empty(t, container.EnvFrom, "an AWS render takes the pod's own identity")
+		assert.NotContains(t, container.Command[2], "addressing_style")
+	})
+
+	values := append(snapshotAgeValues(),
+		"snapshotAge.stores[0].s3.endpoint=https://objects.example.internal",
+		"snapshotAge.stores[0].s3.pathStyle=true",
+		"snapshotAge.stores[0].s3.existingSecret=openbao-backup-keys",
+	)
+	container := renderedContainer(t, helmBinary, "openbao-snapshot-age", "list-primary", values...)
+	script, environment := containerScript(t, helmBinary, "openbao-snapshot-age", "list-primary", values...)
+
+	t.Run("the CLI is told the endpoint, the checksum mode and the keys", func(t *testing.T) {
+		endpoint, _ := container.env("AWS_ENDPOINT_URL_S3")
+		assert.Equal(t, "https://objects.example.internal", endpoint)
+
+		for _, name := range []string{"AWS_REQUEST_CHECKSUM_CALCULATION", "AWS_RESPONSE_CHECKSUM_VALIDATION"} {
+			mode, _ := container.env(name)
+			assert.Equal(t, "when_required", mode, "%s: a store that is not AWS may not implement the CLI's default checksums", name)
+		}
+
+		require.Len(t, container.EnvFrom, 1)
+		assert.Equal(t, "openbao-backup-keys", container.EnvFrom[0].SecretRef.Name)
+	})
+
+	t.Run("the config file the script writes is the one the CLI reads", func(t *testing.T) {
+		work, binDir := t.TempDir(), t.TempDir()
+
+		// The pod's absolute paths, relocated as runScript relocates the
+		// script's: the file the environment names must be the file the
+		// script wrote.
+		local := make([]string, 0, len(environment))
+		for _, e := range environment {
+			local = append(local, strings.ReplaceAll(e, "/work/", work+string(os.PathSeparator)))
+		}
+
+		writeShim(t, binDir, "aws",
+			fmt.Sprintf("cat \"$AWS_CONFIG_FILE\" > %s\nprintf 'raft/20260921T051700Z.snap\\n'", filepath.Join(work, "seen-config")), 0)
+
+		_, code := runScript(t, script, work, binDir, local)
+		require.Equal(t, 0, code)
+
+		seen, err := os.ReadFile(filepath.Join(work, "seen-config"))
+		require.NoError(t, err, "the CLI was pointed at a file the script never wrote")
+		assert.Equal(t, "[default]\ns3 =\n  addressing_style = path\n", string(seen))
+
+		answer, err := os.ReadFile(filepath.Join(work, "newest", "primary"))
+		require.NoError(t, err)
+		assert.Equal(t, "raft/20260921T051700Z.snap", string(answer), "and the listing still becomes the store's answer")
 	})
 }
 
@@ -616,6 +705,23 @@ func rootGenerationValues() []string {
 func containerScript(t *testing.T, helmBinary, cronJob, container string, values ...string) (string, []string) {
 	t.Helper()
 
+	candidate := renderedContainer(t, helmBinary, cronJob, container, values...)
+
+	require.Len(t, candidate.Command, 3, "the chart's own containers are `/bin/sh -ec <script>`")
+
+	environment := make([]string, 0, len(candidate.Env))
+	for _, e := range candidate.Env {
+		environment = append(environment, e.Name+"="+e.Value)
+	}
+
+	return candidate.Command[2], environment
+}
+
+// renderedContainer renders openbao-ops and returns one container of one
+// CronJob as the pod would run it.
+func renderedContainer(t *testing.T, helmBinary, cronJob, container string, values ...string) watchContainer {
+	t.Helper()
+
 	args := []string{"template", "watch", opsChart, "--namespace", watchNamespace}
 	for _, value := range values {
 		args = append(args, "--set", value)
@@ -643,24 +749,15 @@ func containerScript(t *testing.T, helmBinary, cronJob, container string, values
 		spec := object.Spec.JobTemplate.Spec.Template.Spec
 
 		for _, candidate := range append(append([]watchContainer{}, spec.InitContainers...), spec.Containers...) {
-			if candidate.Name != container {
-				continue
+			if candidate.Name == container {
+				return candidate
 			}
-
-			require.Len(t, candidate.Command, 3, "the chart's own containers are `/bin/sh -ec <script>`")
-
-			environment := make([]string, 0, len(candidate.Env))
-			for _, e := range candidate.Env {
-				environment = append(environment, e.Name+"="+e.Value)
-			}
-
-			return candidate.Command[2], environment
 		}
 	}
 
 	t.Fatalf("the render has no container %q in CronJob %q", container, cronJob)
 
-	return "", nil
+	return watchContainer{}
 }
 
 // runScript runs a rendered container's script and answers with what it

@@ -68,7 +68,10 @@ Every part is off until enabled, so one install can carry any subset.
 | `upload.resources` | 10m / 128Mi, limit 512Mi | |
 | `upload.s3.enabled` | `false` | The S3 preset: `aws s3 cp` with a checksum. |
 | `upload.s3.bucket`, `upload.s3.region` | `""` | Required with the preset. |
-| `upload.s3.checksumAlgorithm` | `SHA256` | Sent with every object. |
+| `upload.s3.endpoint` | `""` | Any store that speaks the S3 API. Empty keeps the AWS endpoint; set, it is `AWS_ENDPOINT_URL_S3`, and the CLI's default request and response checksums are turned down to `when_required`, which a store that is not AWS may not implement. Must be an `http(s)` URL. MinIO and Ceph RGW: the store's own URL; Cloudflare R2: `https://<account>.r2.cloudflarestorage.com` with `region: auto`. |
+| `upload.s3.pathStyle` | `false` | Address the bucket as `endpoint/bucket/key` rather than `bucket.endpoint/key`: a property of the store's certificate, so its own switch. The CLI reads it from its config file alone; the script writes that one line and `AWS_CONFIG_FILE` names it. |
+| `upload.s3.existingSecret` | `""` | A Secret holding `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_SESSION_TOKEN`), given through `envFrom`, for a store with no pod identity. Empty keeps the pod's ambient identity. |
+| `upload.s3.checksumAlgorithm` | `SHA256` | Sent with every object, whatever the store. |
 
 ### restoreCheck
 
@@ -93,7 +96,7 @@ Every part is off until enabled, so one install can carry any subset.
 | `serverEnv` | none | The scratch server's environment (e.g. the seal's region). |
 | `serverResources` | 50m / 128Mi, limit 512Mi | |
 | `resources` | 10m / 64Mi, limit 256Mi | The check container. |
-| `fetch.*` | as `snapshot.upload` | The fetcher: `image`, `command`, `args`, `env`, `resources`, and the S3 preset `s3.enabled`, `s3.bucket`, `s3.region`, `s3.prefix` (`raft/`: the tier it restores from). |
+| `fetch.*` | as `snapshot.upload` | The fetcher: `image`, `command`, `args`, `env`, `resources`, and the S3 preset `s3.enabled`, `s3.bucket`, `s3.region`, `s3.endpoint`, `s3.pathStyle`, `s3.existingSecret`, `s3.prefix` (`raft/`: the tier it restores from). |
 | `canary.enabled` | `true` | Read a canary back in every namespace. At least one of `canary` and `pki` must be on. |
 | `canary.kvMount` | `kv` | The KV v2 mount holding the canary. |
 | `canary.path` | `restore-canary` | Its path. Its data must be exactly `{namespace: <the namespace's name>}`. |

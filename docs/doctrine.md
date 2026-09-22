@@ -39,7 +39,7 @@ somewhere its alerts arrive:
 
 | Preset | Container | What it does |
 |---|---|---|
-| `snapshot.upload.s3` | `snapshot.upload` | `aws s3 cp` with a checksum |
+| `snapshot.upload.s3` | `snapshot.upload` | `aws s3 cp` with a checksum, to AWS or to any store that speaks the S3 API (`endpoint`, `pathStyle`, `existingSecret`; the same three on every S3 preset) |
 | `restoreCheck.fetch.s3` | `restoreCheck.fetch` | fetches the newest object under a prefix, and fails on one that is too old |
 | `certificateExpiry.alert.sns` | `certificateExpiry.alert` | one `aws sns publish` |
 | `certificateExpiry.alert.alertmanager` | `certificateExpiry.alert` | one POST to `<url>/api/v2/alerts`, carrying the labels the consumer sets: `alertname`, `severity` and the release |

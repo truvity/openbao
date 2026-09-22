@@ -17,12 +17,7 @@
 {{- if and (not $s3.enabled) (not $a.list.command) }}
 {{- fail (printf "snapshotAge.stores[%s] has no s3 preset and snapshotAge.list.command is empty — the chart will not invent a way to look in your store" $store.name) }}
 {{- end }}
-{{- if and $s3.enabled (not $s3.bucket) }}
-{{- fail (printf "snapshotAge.stores[%s].s3.bucket is required when the s3 preset is on" $store.name) }}
-{{- end }}
-{{- if and $s3.enabled (not $s3.region) }}
-{{- fail (printf "snapshotAge.stores[%s].s3.region is required when the s3 preset is on" $store.name) }}
-{{- end }}
+{{- include "ops.s3Refusals" (dict "part" (printf "snapshotAge.stores[%s].s3" $store.name) "s3" $s3) }}
 {{- end }}
 {{- include "ops.alertRefusals" (dict "part" "snapshotAge" "alert" $a.alert) }}
 ---
@@ -123,6 +118,9 @@ spec:
                          list container alike: this preset reads a
                          store's values the way a replacement command
                          does, and neither reads one as shell. */}}
+                  {{- with include "ops.s3Configure" (dict "s3" $s3 "configFile" "/work/aws-config") }}
+                  {{ . }}
+                  {{- end }}
                   mkdir -p /work/newest /work/error
                   {{- /* S3 lists keys in ascending UTF-8 order, and the
                          upload contract names an object
@@ -145,6 +143,9 @@ spec:
               env:
                 - name: AWS_REGION
                   value: {{ $s3.region }}
+                {{- with include "ops.s3Env" (dict "s3" $s3 "configFile" "/work/aws-config") | trim }}
+                {{- . | nindent 16 }}
+                {{- end }}
               {{- else }}
               command:
                 {{- toYaml $a.list.command | nindent 16 }}
@@ -166,6 +167,11 @@ spec:
                 {{- with $store.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
+              {{- with $s3.existingSecret }}
+              envFrom:
+                - secretRef:
+                    name: {{ . }}
+              {{- end }}
               volumeMounts:
                 - name: work
                   mountPath: /work

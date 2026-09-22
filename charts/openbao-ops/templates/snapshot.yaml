@@ -8,12 +8,7 @@
 {{- if and (not $upload.s3.enabled) (not $upload.command) }}
 {{- fail "snapshot.upload needs either s3.enabled or an explicit command — the chart will not invent a place to put your backups" }}
 {{- end }}
-{{- if and $upload.s3.enabled (not $upload.s3.bucket) }}
-{{- fail "snapshot.upload.s3.bucket is required when the s3 preset is on" }}
-{{- end }}
-{{- if and $upload.s3.enabled (not $upload.s3.region) }}
-{{- fail "snapshot.upload.s3.region is required when the s3 preset is on" }}
-{{- end }}
+{{- include "ops.s3Refusals" (dict "part" "snapshot.upload.s3" "s3" $upload.s3) }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -129,16 +124,31 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
+                  {{- with include "ops.s3Configure" (dict "s3" $upload.s3 "configFile" "/tmp/aws-config") }}
+                  {{ . }}
+                  {{- end }}
                   key="{{ $job.prefix }}$(cat /work/taken-at).snap"
                   aws s3 cp /work/openbao.snap "s3://{{ $upload.s3.bucket }}/${key}" --checksum-algorithm {{ $upload.s3.checksumAlgorithm }} --no-progress
               env:
                 - name: AWS_REGION
                   value: {{ $upload.s3.region }}
+                {{- with include "ops.s3Env" (dict "s3" $upload.s3 "configFile" "/tmp/aws-config") | trim }}
+                {{- . | nindent 16 }}
+                {{- end }}
                 - name: HOME
                   value: /tmp
                 {{- with $upload.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
+              {{- with $upload.s3.existingSecret }}
+              {{- /* A store with no pod identity supplies keys here. envFrom
+                     rather than named env so a session token is carried
+                     too, without the chart naming every variable the CLI
+                     may read. */}}
+              envFrom:
+                - secretRef:
+                    name: {{ . }}
+              {{- end }}
               {{- else }}
               {{- /* The contract for a replacement: read /work/openbao.snap
                      and /work/taken-at, store the bytes under
