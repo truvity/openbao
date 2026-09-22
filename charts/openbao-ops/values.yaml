@@ -132,6 +132,38 @@ snapshot:
       enabled: false
       bucket: ""
       region: ""
+      # ANY STORE THAT SPEAKS THE S3 API. Empty keeps the AWS endpoint, so
+      # nothing changes for an AWS caller; set, it is AWS_ENDPOINT_URL_S3,
+      # which the CLI honours for `aws s3` and `aws s3api` alike, and the
+      # CLI's default request and response checksums are turned down to
+      # when_required, because a store that is not AWS may not implement
+      # them (the CRC32 the CLI adds since 2.23 broke uploads to R2 in early
+      # 2025). The checksum this preset asks for by name is still sent.
+      #
+      #   MinIO:          https://minio.example.internal, region as it is
+      #                   configured (any value when it is not), and usually
+      #                   pathStyle: true
+      #   Ceph RGW:       https://rgw.example.internal, the same
+      #   Cloudflare R2:  https://<account>.r2.cloudflarestorage.com with
+      #                   region "auto" -- R2 serves one region and answers
+      #                   no bucket-location lookup
+      endpoint: ""
+      # Address the bucket as endpoint/bucket/key rather than
+      # bucket.endpoint/key. A property of the store's certificate -- does
+      # its wildcard cover a bucket subdomain? -- not of the endpoint, so it
+      # is its own switch. The CLI reads it from its config file alone, so
+      # the script writes that one line into its scratch space.
+      pathStyle: false
+      # Static credentials for a store with no pod identity, as
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (and optionally
+      # AWS_SESSION_TOKEN) in an existing Secret, given through envFrom.
+      # Empty keeps the pod's ambient identity, which is the right default
+      # on AWS: asking for keys there would be asking for the thing IRSA
+      # exists to remove.
+      existingSecret: ""
+      # Sent with every object, whatever the store: SHA256 is the one the
+      # S3-compatible stores agree on, where the CLI's own default (CRC32,
+      # on every request, since 2.23) is not.
       checksumAlgorithm: SHA256
 
 # ---------------------------------------------------------------------------
@@ -220,6 +252,10 @@ restoreCheck:
       enabled: false
       bucket: ""
       region: ""
+      # As snapshot.upload.s3: the same store, reached the same way.
+      endpoint: ""
+      pathStyle: false
+      existingSecret: ""
       prefix: raft/
 
   # Read a known value back in every namespace. Judging a restore on the
@@ -442,6 +478,11 @@ snapshotAge:
   #      enabled: true
   #      bucket: ""
   #      region: ""
+  #      # As snapshot.upload.s3; per store, because a copy can be kept
+  #      # somewhere the primary is not.
+  #      endpoint: ""
+  #      pathStyle: false
+  #      existingSecret: ""
   #    # For a `list.command` that reaches more than one store.
   #    env: []
 

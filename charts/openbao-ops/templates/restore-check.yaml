@@ -7,12 +7,7 @@
 {{- if and (not $fetch.s3.enabled) (not $fetch.command) }}
 {{- fail "restoreCheck.fetch needs either s3.enabled or an explicit command — the chart will not guess where your backups are" }}
 {{- end }}
-{{- if and $fetch.s3.enabled (not $fetch.s3.bucket) }}
-{{- fail "restoreCheck.fetch.s3.bucket is required when the s3 preset is on" }}
-{{- end }}
-{{- if and $fetch.s3.enabled (not $fetch.s3.region) }}
-{{- fail "restoreCheck.fetch.s3.region is required when the s3 preset is on" }}
-{{- end }}
+{{- include "ops.s3Refusals" (dict "part" "restoreCheck.fetch.s3" "s3" $fetch.s3) }}
 {{- if not $rc.sealConfig }}
 {{- fail "restoreCheck.sealConfig is required — a snapshot opens only under the seal that wrapped its keyring (the same key, or a replica of it)" }}
 {{- end }}
@@ -151,6 +146,9 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
+                  {{- with include "ops.s3Configure" (dict "s3" $fetch.s3 "configFile" "/tmp/aws-config") }}
+                  {{ . }}
+                  {{- end }}
                   newest=$(aws s3api list-objects-v2 --bucket {{ $fetch.s3.bucket }} --prefix {{ $fetch.s3.prefix }} \
                     --query 'sort_by(Contents, &LastModified)[-1].[Key, LastModified]' --output text)
                   set -- $newest
@@ -166,11 +164,19 @@ spec:
               env:
                 - name: AWS_REGION
                   value: {{ $fetch.s3.region }}
+                {{- with include "ops.s3Env" (dict "s3" $fetch.s3 "configFile" "/tmp/aws-config") | trim }}
+                {{- . | nindent 16 }}
+                {{- end }}
                 - name: HOME
                   value: /tmp
                 {{- with $fetch.env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
+              {{- with $fetch.s3.existingSecret }}
+              envFrom:
+                - secretRef:
+                    name: {{ . }}
+              {{- end }}
               {{- else }}
               {{- /* The contract for a replacement: write the newest
                      snapshot to /work/openbao.snap and its name to

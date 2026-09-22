@@ -1,0 +1,6 @@
+# The CLI dials the endpoint as it stands, so a host with no scheme is a
+# job that fails on every run. Empty is not an endpoint: it is AWS.
+snapshot:
+  enabled: true
+  upload:
+    s3: {enabled: true, bucket: b, region: r, endpoint: "objects.example.internal"}

@@ -210,6 +210,7 @@ happens, and its tests run every refusal against a KMS double.
 | snapshots enabled with no jobs | an enabled backup that runs on no schedule |
 | a snapshot upload or restore fetch with neither the S3 preset nor a command | the chart inventing where backups go, or guessing where they are |
 | the S3 preset with no bucket or no region | the same, one level down |
+| the S3 preset with an `endpoint` that is not an `http(s)` URL | a job that dials nothing on every run; empty is not an endpoint, it is AWS |
 | a restore check with no `sealConfig` | a scratch server that cannot open a snapshot sealed by a key |
 | a restore check with neither `canary` nor `pki` on | a restore judged on nothing |
 | the PKI walk with no trust anchor, intermediate, issuer prefix, namespaces or domain | a walk that starts from the restored copy, or proves no issuing CA |

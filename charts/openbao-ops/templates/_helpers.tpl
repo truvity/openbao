@@ -377,3 +377,85 @@ presets, and the escape hatch for a channel this chart does not know.
   securityContext:
     {{- include "ops.containerSecurityContext" .root | nindent 4 }}
 {{- end -}}
+
+{{/*
+The S3 preset, on any store that speaks the S3 API.
+
+The preset drives the AWS CLI, which reaches AWS unless told otherwise, so
+the chart was AWS-only by omission: a caller whose backups sit in Cloudflare
+R2, MinIO or Ceph RGW had no way to say so. Three values say so, and every
+one of them is inert when left at its default, so an AWS caller renders
+what it always did:
+
+  endpoint        empty keeps the AWS endpoint; set, it is AWS_ENDPOINT_URL_S3,
+                  which `aws s3` and `aws s3api` both honour. A store that is
+                  not AWS also gets AWS_REQUEST_CHECKSUM_CALCULATION and
+                  AWS_RESPONSE_CHECKSUM_VALIDATION set to when_required: the
+                  CLI's default since 2.23 is to add a CRC32 checksum to every
+                  request and expect one on every response, which broke
+                  uploads to several S3-compatible stores in early 2025. `--checksum-algorithm` on the
+                  upload is explicit and still sent.
+  pathStyle       false; true addresses the bucket as endpoint/bucket/key
+                  rather than bucket.endpoint/key. The CLI has no environment
+                  variable for that, only its config file, so the script
+                  writes one line of config into its scratch space and
+                  AWS_CONFIG_FILE names it. A property of the store's
+                  CERTIFICATE (does its wildcard cover a bucket subdomain?),
+                  not of the endpoint, which is why it is its own switch.
+  existingSecret  empty keeps the pod's ambient identity; set, it is a Secret
+                  holding AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (and
+                  optionally AWS_SESSION_TOKEN), given through envFrom.
+
+  {{- include "ops.s3Refusals" (dict "part" "snapshot.upload.s3" "s3" $s3) }}
+  {{- with include "ops.s3Configure" (dict "s3" $s3 "configFile" "/tmp/aws-config") }}
+  {{ . }}
+  {{- end }}
+  {{- with include "ops.s3Env" (dict "s3" $s3 "configFile" "/tmp/aws-config") | trim }}
+  {{- . | nindent 16 }}
+  {{- end }}
+  {{- with $s3.existingSecret }}
+  envFrom:
+    - secretRef:
+        name: {{ . }}
+  {{- end }}
+*/}}
+
+{{/* What every S3 preset refuses. `part` is the values path of the preset. */}}
+{{- define "ops.s3Refusals" -}}
+{{- $part := .part -}}
+{{- $s3 := .s3 -}}
+{{- if and $s3.enabled (not $s3.bucket) -}}
+{{- fail (printf "%s.bucket is required when the s3 preset is on" $part) -}}
+{{- end -}}
+{{- if and $s3.enabled (not $s3.region) -}}
+{{- fail (printf "%s.region is required when the s3 preset is on" $part) -}}
+{{- end -}}
+{{- /* The CLI takes the value as it stands, so one it cannot dial is a job
+       that fails on every run. Empty is not an endpoint: it is AWS. */ -}}
+{{- if and $s3.enabled $s3.endpoint (not (regexMatch `^https?://\S+$` $s3.endpoint)) -}}
+{{- fail (printf "%s.endpoint must be an http(s) URL the store answers at, not %q — empty keeps the AWS endpoint" $part $s3.endpoint) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The line a preset's script starts with when the bucket is addressed by path. */}}
+{{- define "ops.s3Configure" -}}
+{{- if .s3.pathStyle -}}
+printf '[default]\ns3 =\n  addressing_style = path\n' > {{ .configFile }}
+{{- end -}}
+{{- end -}}
+
+{{/* The env entries a store that is not AWS needs, after AWS_REGION. */}}
+{{- define "ops.s3Env" -}}
+{{- with .s3.endpoint }}
+- name: AWS_ENDPOINT_URL_S3
+  value: {{ . | quote }}
+- name: AWS_REQUEST_CHECKSUM_CALCULATION
+  value: when_required
+- name: AWS_RESPONSE_CHECKSUM_VALIDATION
+  value: when_required
+{{- end }}
+{{- if .s3.pathStyle }}
+- name: AWS_CONFIG_FILE
+  value: {{ .configFile }}
+{{- end }}
+{{- end -}}

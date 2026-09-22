@@ -1,0 +1,63 @@
+# The S3 presets on a store that is not AWS: an in-house MinIO reached by
+# path (its certificate covers the host, not a bucket subdomain) with keys
+# from a Secret, and a copy kept in a hosted S3-compatible store reached by
+# its own endpoint with region "auto". Every other install renders exactly
+# what it did before these three values existed.
+auth:
+  mountPath: jwt-example
+snapshot:
+  enabled: true
+  upload:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: example
+      endpoint: https://objects.example.internal
+      pathStyle: true
+      existingSecret: openbao-backup-keys
+restoreCheck:
+  enabled: true
+  sealConfig: |
+    seal "transit" {
+      address    = "https://transit.example.internal:8200"
+      key_name   = "openbao-unseal"
+      mount_path = "transit/"
+    }
+  fetch:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: example
+      endpoint: https://objects.example.internal
+      pathStyle: true
+      existingSecret: openbao-backup-keys
+snapshotAge:
+  enabled: true
+  clusterName: example-cluster
+  stores:
+    - name: primary
+      description: the in-house object store the snapshots are written to
+      prefix: raft/
+      maxAgeSeconds: 43200
+      s3:
+        enabled: true
+        bucket: example-openbao-backups
+        region: example
+        endpoint: https://objects.example.internal
+        pathStyle: true
+        existingSecret: openbao-backup-keys
+    - name: offsite
+      description: the copy kept off site
+      prefix: raft/
+      maxAgeSeconds: 50400
+      s3:
+        enabled: true
+        bucket: example-openbao-backups-offsite
+        region: auto
+        endpoint: https://example-account.objects.example.net
+        existingSecret: openbao-offsite-keys
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
