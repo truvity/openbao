@@ -5,6 +5,17 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Fixed
+
+- **openbao-ops: a limit under an hour prints in minutes.** The
+  job-success and snapshot-age watches printed every span in whole
+  hours, so the root-generation watch's thirty-minute limit read as
+  "last succeeded 0h ago, under the 0h limit" — an impossible bar.
+  Minutes under an hour, hours above, in the report and the alert
+  alike. Cosmetic; no values change.
+
 ## v0.6.1
 
 A value is data. `charts/openbao-ops` rendered several of a values file's
