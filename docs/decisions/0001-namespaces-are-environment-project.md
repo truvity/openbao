@@ -28,11 +28,19 @@ widening who enforces it.
 
 ## Decision
 
-Namespaces become `<environment>/<project>`. Every project — the
-operators' own infrastructure, a business project, a partner
-organisation's project — gets one, always, so there is exactly one shape
-to reason about, rather than "namespaced for a partner, policy-path for
-everyone else."
+Namespaces become `<environment>/<project>`. Every project — a business
+project, a partner organisation's project — gets one, always, so there is
+exactly one shape to reason about, rather than "namespaced for a partner,
+policy-path for everyone else."
+
+> **Amended 2026-09-28.** This sentence originally listed the operator's
+> own infrastructure alongside a business project and a partner project as
+> something that gets a project namespace too. It does not: see the
+> amendment at the end of this record. The environment namespace is
+> itself the operator's platform — it already holds the platform's own
+> mounts, not only logins, policies and identity groups — so there is
+> nothing left for a project namespace named for the operator's
+> infrastructure to hold.
 
 **Logins, policies and identity groups live only at `<environment>`.** A
 project namespace holds mounts and nothing that admits anybody: a KV v2
@@ -75,6 +83,11 @@ before every apply, never against OpenBAO's own `sys` API.
 There is no project that stays outside this shape because it happens to
 belong to the operators; the operators' own infrastructure is a project
 like any other, so the rule has no silent exception to remember.
+
+> **Amended 2026-09-28.** Superseded: the operator's own infrastructure is
+> not a project and gets no project namespace. It is what the environment
+> namespace itself already is — see the amendment at the end of this
+> record.
 
 **Deleting a project deletes its namespace**, after deleting its
 children — OpenBAO refuses to delete a namespace that still has
@@ -145,3 +158,60 @@ project segment first would put one project's `stage` and `prod` data
 one namespace-hop apart from each other, rather than one hop apart from
 every other project's `stage` — the wrong thing to make cheap to
 conflate.
+
+## Amendment (2026-09-28)
+
+An operator running this record's shape asked the question this record
+had left implicit: what is the environment namespace itself, once every
+project — including the operator's own infrastructure, by the original
+wording above — has moved into a project namespace beneath it? The
+answer decided here is that the environment namespace **is** the
+operator's platform. Besides the logins, policies and identity groups
+this record always kept there, it holds the platform's own mounts too:
+its KV (platform secrets stay directly at `<environment>/kv/<kind>`, one
+level up from where a tenant's would sit), the environment's own issuing
+CAs, and the SSH user and host CAs. None of that is a project's mounts
+sitting in a project namespace named for the operator; it is what the
+environment namespace already is.
+
+**Project namespaces are for tenants only** — a business project, a
+partner organisation's project — never for the operator's own
+infrastructure. There is therefore no project namespace carved out to
+hold the platform's own mounts under some name chosen for it: doing so
+would give the platform two homes for the same kind of thing (mounts
+directly under the environment, and mounts under an environment/project
+pair invented to mean "not a tenant"), where one is enough. The two
+sentences amended above are wrong for exactly this reason: the operator's
+own infrastructure was never a project waiting for a namespace, and
+"every project" always meant every *tenant* project.
+
+**Consequence.** Platform secrets do not migrate to a project namespace;
+they were always at the right level. Only a tenant project that has its
+own team secrets — its own KV, or later its own issuing CA for workload
+mTLS — gets a project namespace at all; a tenant with nothing of its own
+to hold gets none.
+
+**Root stays the minimal trust anchor, and an environment is not
+promoted to it.** A sibling environment namespace that happens to run the
+operators' own management tooling is still an environment, not the
+installation's root: anything granted at root reaches every namespace
+below it by path, so root holds only what must reach everything —
+operators, the domain intermediates, backup and restore-check logins, the
+door the operators' own UI logs in through — and nothing that looks like
+a workload, however central that workload is to running the platform.
+Promoting such an environment to root would widen root's reach to every
+other environment's projects for no isolation gained; keeping it a
+sibling keeps the environment wall the one wall every login already
+respects (see "Why logins stay at the environment" above).
+
+**An environment-level policy names its projects; it does not glob
+across them.** Because a project namespace is a wall the server enforces
+and not only one a policy path draws, a policy declared at
+`<environment>` must not use a wildcard or glob in the *first* path
+segment below the environment where that segment could span more than
+one project's namespace — such a policy would quietly reopen the very
+boundary a project namespace exists to hold. A policy instead names its
+declared projects explicitly, one path per project it is meant to reach;
+the library that renders policies enforces this by refusing a policy
+whose first segment is not a literal project name (or a path that stays
+inside the environment's own mounts, never crossing into a project's).
