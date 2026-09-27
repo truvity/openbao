@@ -88,6 +88,17 @@ func TestExamplesAreValidAndCanonical(t *testing.T) {
 func TestValidateRefuses(t *testing.T) {
 	dev := func(d *model.Desired) *model.Namespace { return &d.Namespaces[0] }
 	pki := func(d *model.Desired) *model.PKIMount { return &dev(d).PKI[0] }
+	policyNamed := func(d *model.Desired, name string) *model.Policy {
+		for i := range dev(d).Policies {
+			if dev(d).Policies[i].Name == name {
+				return &dev(d).Policies[i]
+			}
+		}
+
+		t.Fatalf("no policy named %q in the example", name)
+
+		return nil
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -110,7 +121,7 @@ func TestValidateRefuses(t *testing.T) {
 		{"a door named twice", "twice", func(d *model.Desired) { dev(d).Groups[0].Doors = []string{"oidc", "oidc"} }},
 		{"a policy granting nothing", "grants nothing", func(d *model.Desired) { dev(d).Policies[0].Rules = nil }},
 		{"a path named twice", "names path", func(d *model.Desired) {
-			p := &dev(d).Policies[3]
+			p := &dev(d).Policies[4]
 			p.Rules[1].Path = p.Rules[0].Path
 		}},
 		{"a path climbing out", "traverses", func(d *model.Desired) { dev(d).Policies[0].Rules[0].Path = "../sys/*" }},
@@ -172,6 +183,47 @@ func TestValidateRefuses(t *testing.T) {
 		{"an SSH role with no key id", "no key id", func(d *model.Desired) { dev(d).SSH[0].Roles[0].KeyIDFormat = "" }},
 		{"an SSH role beyond the ceiling", "credential ceiling", func(d *model.Desired) { dev(d).SSH[0].Roles[0].MaxTTL = "2h" }},
 		{"an SSH mount with no CA key type", "no CA key type", func(d *model.Desired) { dev(d).SSH[0].KeyType = "" }},
+		{"a force-command role with permit-pty", "defeats it", func(d *model.Desired) {
+			r := &dev(d).SSH[0].Roles[1] // runner: forceCommand set, no extensions
+			r.Extensions = []string{"permit-pty"}
+		}},
+		{"a force-command role with port forwarding", "defeats it", func(d *model.Desired) {
+			r := &dev(d).SSH[0].Roles[1]
+			r.Extensions = []string{"permit-port-forwarding"}
+		}},
+		{"an SSH host mount with no CA key type", "no CA key type", func(d *model.Desired) { dev(d).SSHHost[0].KeyType = "" }},
+		{"an SSH host mount with no role", "has no role", func(d *model.Desired) { dev(d).SSHHost[0].Roles = nil }},
+		{"an SSH host role twice", "declares role", func(d *model.Desired) {
+			dev(d).SSHHost[0].Roles = append(dev(d).SSHHost[0].Roles, dev(d).SSHHost[0].Roles[0])
+		}},
+		{"an SSH host role with no domain", "allows no domain", func(d *model.Desired) { dev(d).SSHHost[0].Roles[0].AllowedDomains = nil }},
+		{"an SSH host role with an empty domain", "empty domain", func(d *model.Desired) {
+			dev(d).SSHHost[0].Roles[0].AllowedDomains = []string{""}
+		}},
+		{"an SSH host role with a wildcard domain", "wildcard", func(d *model.Desired) {
+			dev(d).SSHHost[0].Roles[0].AllowedDomains = []string{"*"}
+		}},
+		{"an SSH host role with a templated domain", "template", func(d *model.Desired) {
+			dev(d).SSHHost[0].Roles[0].AllowedDomains = []string{"{{identity.entity.name}}"}
+		}},
+		{"an SSH host role signing nothing", "neither bare domains nor subdomains", func(d *model.Desired) {
+			r := &dev(d).SSHHost[0].Roles[0]
+			r.AllowBareDomains, r.AllowSubdomains = false, false
+		}},
+		{"an SSH host role with no key type", "no key type", func(d *model.Desired) { dev(d).SSHHost[0].Roles[0].KeyTypes = nil }},
+		{"an SSH host role with no key id", "no key id", func(d *model.Desired) { dev(d).SSHHost[0].Roles[0].KeyIDFormat = "" }},
+		{"an SSH host role beyond the 30-day cap", "beyond the host certificate cap", func(d *model.Desired) {
+			dev(d).SSHHost[0].Roles[0].MaxTTL = "744h" // 31 days
+		}},
+		{"a force-command role's sign path granted without denying critical_options", "without denying the critical_options parameter", func(d *model.Desired) {
+			policyNamed(d, "dev:ssh:runner").Rules[0].DeniedParameters = nil
+		}},
+		{"a rule denying an empty parameter", "empty parameter", func(d *model.Desired) {
+			policyNamed(d, "dev:ssh:runner").Rules[0].DeniedParameters = []string{""}
+		}},
+		{"a rule denying a parameter twice", "twice", func(d *model.Desired) {
+			policyNamed(d, "dev:ssh:runner").Rules[0].DeniedParameters = []string{"critical_options", "critical_options"}
+		}},
 		{"a KV canary that is a pattern", "not one secret path", func(d *model.Desired) { dev(d).KV[0].Canary = "canary/*" }},
 		{"no primary door", "primary door", func(d *model.Desired) { d.Identity.PrimaryDoor = "" }},
 		{"metadata writing the door key", "may not set", func(d *model.Desired) { d.Identity.Metadata = map[string]string{"door": "x"} }},

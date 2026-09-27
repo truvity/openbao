@@ -242,6 +242,32 @@ namespaces:
               - permit-pty
             ttl: 30m
             maxTtl: 1h
+          - name: runner
+            allowedUsers:
+              - deploy
+            defaultUser: deploy
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions: []
+            forceCommand: /usr/local/bin/deploy-runner
+            ttl: 15m
+            maxTtl: 30m
+    sshHost:
+      - path: ssh-host
+        description: the dev SSH host CA; never the same key as the user CA
+        keyType: ed25519
+        roles:
+          - name: host
+            allowedDomains:
+              - dev.example.internal
+            allowBareDomains: true
+            allowSubdomains: true
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            ttl: 24h
+            maxTtl: 168h
     auth:
       - path: jwt-dev
         description: the dev cluster's ServiceAccount tokens
@@ -262,6 +288,14 @@ namespaces:
             userClaim: sub
             policies:
               - pki-example-private
+            ttl: 15m
+          - name: host-agent
+            boundAudiences:
+              - vault://host-agent
+            boundSubject: system:serviceaccount:openbao:host-agent
+            userClaim: sub
+            policies:
+              - ssh-host-agent-sign
             ttl: 15m
       - path: jwt-people
         description: people, through the directory's tokens for audience openbao
@@ -311,6 +345,13 @@ namespaces:
             capabilities:
               - list
               - read
+      - name: dev:ssh:runner
+        rules:
+          - path: ssh/sign/runner
+            capabilities:
+              - update
+            deniedParameters:
+              - critical_options
       - name: dev:ssh:user
         rules:
           - path: ssh/sign/user
@@ -333,6 +374,11 @@ namespaces:
           - path: pki/sign/workload
             capabilities:
               - update
+      - name: ssh-host-agent-sign
+        rules:
+          - path: ssh-host/sign/host
+            capabilities:
+              - update
     groups:
       - name: dev:db:client
         policies:
@@ -343,6 +389,12 @@ namespaces:
       - name: dev:openbao:reader
         policies:
           - dev:openbao:reader
+        doors:
+          - jwt-people
+          - oidc
+      - name: dev:ssh:runner
+        policies:
+          - dev:ssh:runner
         doors:
           - jwt-people
           - oidc

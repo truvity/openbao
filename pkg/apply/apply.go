@@ -90,8 +90,13 @@ type (
 		// CertificateRequests are the External issuers' requests, by
 		// issuer name: what the external signer signs.
 		CertificateRequests map[string]pulumi.StringOutput
-		// SSHCAPublicKeys are the SSH mounts' CA public keys.
+		// SSHCAPublicKeys are the SSH user mounts' CA public keys.
 		SSHCAPublicKeys map[MountRef]pulumi.StringOutput
+		// SSHHostCAPublicKeys are the SSH host mounts' CA public keys, by
+		// mount: what a consumer renders into a client's
+		// `@cert-authority <domains> <key>` line. Never the same key as
+		// SSHCAPublicKeys -- a host CA is always its own mount.
+		SSHHostCAPublicKeys map[MountRef]pulumi.StringOutput
 	}
 
 	// MountRef names a mount: its namespace ("" is root) and its path.

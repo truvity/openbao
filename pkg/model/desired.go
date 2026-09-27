@@ -18,6 +18,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -39,21 +40,29 @@ type (
 		Namespaces []Namespace `yaml:"namespaces"`
 		// Identity is how groups become OpenBAO identity groups.
 		Identity Identity `yaml:"identity"`
-		// CredentialMaxTTL, when set, is the longest a credential may live:
-		// every SSH role and every credential role is refused above it.
+		// CredentialMaxTTL, when set, is the longest a short-lived
+		// credential may live: every SSH user-certificate role and every
+		// PKI credential role is refused above it. It does not reach SSH
+		// host roles, which are refused above a fixed 30-day cap instead
+		// (SSHHostRole.Validate): a host certificate is trusted by
+		// whatever holds the CA's public key, with no per-signing review,
+		// so it is deliberately allowed to live far longer than a
+		// short-lived credential -- and the cap on it is this
+		// repository's, not an estate's to raise.
 		CredentialMaxTTL string `yaml:"credentialMaxTtl,omitempty"`
 	}
 
 	// Namespace is one OpenBAO namespace and everything inside it.
 	Namespace struct {
 		// Name is empty for root, and a plain name (no `/`) otherwise.
-		Name     string     `yaml:"name,omitempty"`
-		KV       []KVMount  `yaml:"kv,omitempty"`
-		PKI      []PKIMount `yaml:"pki,omitempty"`
-		SSH      []SSHMount `yaml:"ssh,omitempty"`
-		Auth     []JWTMount `yaml:"auth"`
-		Policies []Policy   `yaml:"policies"`
-		Groups   []Group    `yaml:"groups"`
+		Name     string         `yaml:"name,omitempty"`
+		KV       []KVMount      `yaml:"kv,omitempty"`
+		PKI      []PKIMount     `yaml:"pki,omitempty"`
+		SSH      []SSHMount     `yaml:"ssh,omitempty"`
+		SSHHost  []SSHHostMount `yaml:"sshHost,omitempty"`
+		Auth     []JWTMount     `yaml:"auth"`
+		Policies []Policy       `yaml:"policies"`
+		Groups   []Group        `yaml:"groups"`
 	}
 )
 
@@ -174,6 +183,16 @@ func (n *Namespace) Validate() error {
 		}
 	}
 
+	for i := range n.SSHHost {
+		if err := n.SSHHost[i].Validate(); err != nil {
+			return fmt.Errorf("model: namespace %s: %w", label, err)
+		}
+
+		if err := claim(n.SSHHost[i].Path); err != nil {
+			return err
+		}
+	}
+
 	for i := range n.PKI {
 		mount := &n.PKI[i]
 		if err := mount.Validate(); err != nil {
@@ -225,6 +244,51 @@ func (n *Namespace) Validate() error {
 		for _, door := range group.Doors {
 			if !doors[door] {
 				return fmt.Errorf("model: namespace %s: group %q is admitted through %q, which is no auth mount here", label, group.Name, door)
+			}
+		}
+	}
+
+	if err := n.validateForceCommandGrants(label); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateForceCommandGrants refuses a policy that grants a force-command
+// SSH role's sign path without denying the critical_options parameter.
+// OpenBAO applies a role's default_critical_options only when the
+// request's own critical_options is entirely absent; when the request
+// carries one, however it is shaped, OpenBAO uses it in place of the
+// default rather than adding to it, and allowed_critical_options only
+// limits which keys such a request may name -- it does not stop the
+// caller from naming one. Denying the parameter at the ACL layer is the
+// only way this repository has found to make a forced command actually
+// unconditional, and a grant that omits it is a promise the role cannot
+// keep (docs/safety.md).
+func (n *Namespace) validateForceCommandGrants(label string) error {
+	forced := map[string]bool{}
+
+	for i := range n.SSH {
+		for j := range n.SSH[i].Roles {
+			role := &n.SSH[i].Roles[j]
+			if strings.TrimSpace(role.ForceCommand) != "" {
+				forced[n.SSH[i].Path+"/sign/"+role.Name] = true
+			}
+		}
+	}
+
+	if len(forced) == 0 {
+		return nil
+	}
+
+	for i := range n.Policies {
+		for j := range n.Policies[i].Rules {
+			rule := &n.Policies[i].Rules[j]
+			if forced[rule.Path] && !slices.Contains(rule.DeniedParameters, "critical_options") {
+				return fmt.Errorf(
+					"model: namespace %s: policy %q grants %q, a forced command's sign path, without denying the critical_options parameter",
+					label, n.Policies[i].Name, rule.Path)
 			}
 		}
 	}

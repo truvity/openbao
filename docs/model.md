@@ -160,11 +160,95 @@ caller's, and it stores nothing: its revocation model is its short life.
 
 ### SSH
 
-One user CA per mount, generated inside OpenBAO; only its public key leaves
-(`Result.SSHCAPublicKeys`). Each role lists its principals outright — no
-`*`, no template, never `root` — writes the certificate's key id itself,
-signs only the key types it lists, and grants exactly its `extensions`. The
-mount caps every lease at the longest role maximum.
+Trust for SSH has three parts, and this model covers two of them. People
+sign in through opkssh, straight against an OIDC issuer, with no CA and no
+part in this model at all
+([integrations/access-roster.md](integrations/access-roster.md#5-openbao-through-accessctl-bao-accessctl-pgpsql-and-opkssh-for-people)).
+**Machines** — CI jobs, controllers, anything that is not a person at a
+keyboard — get user certificates from `ssh[]`. **Hosts** get host
+certificates from `sshHost[]`, so a client trusts one
+`@cert-authority <domains> <key>` line instead of pinning every host's own
+key.
+
+`ssh[]` is one user CA per mount, generated inside OpenBAO; only its public
+key leaves (`Result.SSHCAPublicKeys`). Each role lists its principals
+outright — no `*`, no template, never `root` — writes the certificate's
+key id itself, signs only the key types it lists, and grants exactly its
+`extensions`. The mount caps every lease at the longest role maximum.
+
+`sshHost[]` is a **host CA on a mount of its own, generated inside OpenBAO
+the same way — never the same key as any `ssh[]` mount's**: a key clients
+are told to trust for hosts must never also be a key sshd trusts for
+users. `SSHHostMount`/`SSHHostRole` are a sibling type to
+`SSHMount`/`SSHRole` rather than a `kind` flag on the existing one, because
+the two roles share almost no field (principals and a default user, versus
+domains and bare/subdomain flags): a shared type would carry fields that
+mean nothing for the other kind, and `Validate` would need to branch on
+which fields apply. As a sibling type, a host role can never even be
+written onto a user mount — the compiler refuses it, not a runtime check —
+and every existing `ssh[]` mount and role renders exactly as it did before
+this type existed.
+
+A host role's `allowedDomains` are literal host names — no `*`, no
+identity template, exactly like a PKI host-name role's own `allowedDomains`
+— and at least one of `allowBareDomains`/`allowSubdomains` must be true, or
+the role signs nothing. Its lifetime is capped at 30 days, always — not by
+`credentialMaxTtl`, which reaches only `ssh[]` and `credentialRoles[]` and
+is an estate's own, lower ceiling on short-lived credentials. A host
+certificate is trusted by whatever holds the CA's public key, with no
+per-signing review, so it is deliberately allowed to outlive a short-lived
+credential by a wide margin — and the 30-day cap on it is this
+repository's own, not something a namespace's `credentialMaxTtl` raises or
+lowers. `Result.SSHHostCAPublicKeys` carries the host CA's public key
+per mount, the same way `Result.SSHCAPublicKeys` does for a user mount, for
+a consumer to render into an `@cert-authority` line.
+
+**Who may sign a host certificate:** this repository adds no new auth
+method for it. A host proves itself the same way any other workload does
+— a Kubernetes pod's projected ServiceAccount token, on a `jwt` mount role
+bound to that ServiceAccount (`ServiceAccountSubject`) — whose policy
+grants `update` on exactly `<host mount>/sign/<host role>` and nothing
+else. `examples/roster` wires this up end to end (`HostAgentDoor`,
+`HostAgentRole`), and `conformance/roster_test.go` signs a host
+certificate through it against a real server.
+
+**A machine role can force one command.** `SSHRole.ForceCommand`, when
+set, is the one command every certificate that role signs carries as its
+`force-command` critical option — a machine identity that should only ever
+run one thing, such as a backup agent, never an interactive shell.
+`Validate` refuses `ForceCommand` alongside `permit-pty` or any forwarding
+extension: a forced command that can still open a terminal or forward a
+port is not forced.
+
+Making the forced command actually unconditional took more than the SSH
+role's own configuration. OpenBAO 2.6.2's SSH secrets engine applies a
+role's `default_critical_options` only when the **request's own**
+`critical_options` is entirely absent; when the request carries one,
+however small, OpenBAO uses the request's map exactly as given, in place
+of the role's default, rather than merging the two.
+`allowed_critical_options` only limits which keys such a request may name
+— it does not stop the caller from naming one, whether the list is empty
+(which means "any key", not "none": a factory-default convention shared
+with `allowed_extensions`) or names something else entirely, since the
+default is dropped regardless of which key survived the check. Confirmed
+against a real server while building this: with `allowed_critical_options`
+left empty, a request that supplied its own `force-command` critical
+option **succeeded and replaced** the role's default. There is no role
+setting that fixes this — it is the request-versus-default trade-off the
+engine makes, not a bug this library can validate around from inside the
+SSH mount.
+
+The grant that reaches a force-command role's sign path must therefore
+deny the `critical_options` parameter outright at the **ACL layer**,
+which does stop it: `path "…" { … denied_parameters = { "critical_options"
+= [] } }` refuses any request that carries the parameter at all, before
+the SSH backend ever sees it, whatever key or value it names.
+`Rule.DeniedParameters` is that clause, `Namespace.Validate` refuses a
+policy that grants a force-command role's sign path without denying
+`critical_options` there, and `examples/roster`'s `signForced` helper is
+the pattern a grant should follow. See
+[safety.md](safety.md#a-forced-command-that-a-caller-can-still-replace)
+for the refusal this closes and the test that proved it.
 
 ### KV and the canary
 
@@ -236,7 +320,7 @@ name never changes in a minor version**:
 | Resource | Logical name (`<ns>` is the namespace; `root` for root) |
 |---|---|
 | namespace | `ns-<ns>` |
-| KV, PKI and SSH mounts | `<path>` in root, `<ns>-<path>` in a namespace |
+| KV, PKI, SSH and SSH host mounts | `<path>` in root, `<ns>-<path>` in a namespace |
 | canary | `<ns>-<canary>` |
 | policy | `<ns>-policy-<name>` (`:` becomes `-`) |
 | auth mount | `<ns>-auth-<path>` |
@@ -246,7 +330,7 @@ name never changes in a minor version**:
 | request, signature, import, named issuer | `<issuer>-csr`, `<issuer>-signed`, `<issuer>-import`, `<issuer>-issuer` |
 | pinned default, URLs, CRL, auto-tidy | `<mount name>-default`, `-urls`, `-crl`, `-auto-tidy` |
 | host-name role, credential role | `<issuer>-role-<name>`, `<issuer>-credential-role-<name>` |
-| SSH CA, SSH role | `<mount name>-ca`, `<mount name>-sshrole-<name>` |
+| SSH CA, SSH role (user or host mount alike) | `<mount name>-ca`, `<mount name>-sshrole-<name>` |
 | provider | `ProviderName`, default `openbao` |
 
 Issuer names are unique across the server because resources are named
@@ -258,9 +342,13 @@ is every resource the worked example registers, with its inputs.
 ### What is protected
 
 Every CA key, certificate, signature, import, named issuer, pinned
-default and mount configuration, every SSH mount, CA and role, and every
-credential role is `protect`ed: replacing a CA is an explicit,
-overlapping-issuer migration, and a signing role that disappears in a
-replace is a window in which nobody can sign. Host-name roles hold no key
-and are not protected. Expired issuers are never tidied: retiring a CA is
-a separate, bottom-up operation once everything below it has drained.
+default and mount configuration, every SSH mount, CA and role -- host or
+user alike -- and every credential role is `protect`ed: replacing a CA is
+an explicit, overlapping-issuer migration, and a signing role that
+disappears in a replace is a window in which nobody can sign. PKI
+host-name roles hold no key and are not protected; SSH roles, unlike
+those, always are, because an SSH role's own principals or domains are
+what a certificate is trusted for -- there is no issuer underneath it to
+re-derive the same trust from. Expired issuers are never tidied: retiring
+a CA is a separate, bottom-up operation once everything below it has
+drained.

@@ -68,6 +68,33 @@
       - dev:openbao:reader
     type: external
 - type: vault:identity/group:Group
+  name: dev-group-dev-ssh-runner
+  dependsOn:
+    - dev-policy-dev-ssh-runner
+    - ns-dev
+  inputs:
+    metadata:
+      source: example directory
+    name: dev:ssh:runner
+    namespace: dev
+    policies:
+      - dev:ssh:runner
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-ssh-runner-oidc
+  dependsOn:
+    - dev-policy-dev-ssh-runner
+    - ns-dev
+  inputs:
+    metadata:
+      door: oidc
+      source: example directory
+    name: dev:ssh:runner@oidc
+    namespace: dev
+    policies:
+      - dev:ssh:runner
+    type: external
+- type: vault:identity/group:Group
   name: dev-group-dev-ssh-user
   dependsOn:
     - dev-policy-dev-ssh-user
@@ -160,6 +187,28 @@
     canonicalId: dev-group-dev-openbao-reader-oidc_id
     mountAccessor: dev-auth-oidc#accessor
     name: dev:openbao:reader
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-ssh-runner
+  dependsOn:
+    - dev-auth-jwt-people
+    - dev-group-dev-ssh-runner
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-ssh-runner_id
+    mountAccessor: dev-auth-jwt-people#accessor
+    name: dev:ssh:runner
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-ssh-runner-oidc
+  dependsOn:
+    - dev-auth-oidc
+    - dev-group-dev-ssh-runner-oidc
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-ssh-runner-oidc_id
+    mountAccessor: dev-auth-oidc#accessor
+    name: dev:ssh:runner
     namespace: dev
 - type: vault:identity/groupAlias:GroupAlias
   name: dev-alias-dev-ssh-user
@@ -255,6 +304,22 @@
     path: ssh
     type: ssh
 - type: vault:index/mount:Mount
+  name: dev-ssh-host
+  protect: true
+  dependsOn:
+    - ns-dev
+  inputs:
+    auditNonHmacRequestKeys:
+      - valid_principals
+    auditNonHmacResponseKeys:
+      - serial_number
+    defaultLeaseTtlSeconds: 86400
+    description: the dev SSH host CA; never the same key as the user CA
+    maxLeaseTtlSeconds: 604800
+    namespace: dev
+    path: ssh-host
+    type: ssh
+- type: vault:index/mount:Mount
   name: pki-edge
   protect: true
   inputs:
@@ -327,6 +392,20 @@
         capabilities = ["list", "read"]
       }
 - type: vault:index/policy:Policy
+  name: dev-policy-dev-ssh-runner
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: dev:ssh:runner
+    namespace: dev
+    policy: |
+      path "ssh/sign/runner" {
+        capabilities = ["update"]
+        denied_parameters = {
+          "critical_options" = []
+        }
+      }
+- type: vault:index/policy:Policy
   name: dev-policy-dev-ssh-user
   dependsOn:
     - ns-dev
@@ -365,6 +444,17 @@
       }
 
       path "pki/sign/workload" {
+        capabilities = ["update"]
+      }
+- type: vault:index/policy:Policy
+  name: dev-policy-ssh-host-agent-sign
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: ssh-host-agent-sign
+    namespace: dev
+    policy: |
+      path "ssh-host/sign/host" {
         capabilities = ["update"]
       }
 - type: vault:index/policy:Policy
@@ -557,6 +647,25 @@
     tokenPolicies:
       - eso-app
     tokenTtl: 3600
+    userClaim: sub
+- type: vault:jwt/authBackendRole:AuthBackendRole
+  name: dev-role-jwt-dev-host-agent
+  dependsOn:
+    - dev-auth-jwt-dev
+    - dev-policy-ssh-host-agent-sign
+    - ns-dev
+  inputs:
+    backend: jwt-dev
+    boundAudiences:
+      - vault://host-agent
+    boundSubject: system:serviceaccount:openbao:host-agent
+    namespace: dev
+    roleName: host-agent
+    roleType: jwt
+    tokenMaxTtl: 900
+    tokenPolicies:
+      - ssh-host-agent-sign
+    tokenTtl: 900
     userClaim: sub
 - type: vault:jwt/authBackendRole:AuthBackendRole
   name: dev-role-jwt-people-people
@@ -1436,6 +1545,84 @@
     generateSigningKey: true
     keyType: ed25519
     namespace: dev
+- type: vault:ssh/secretBackendCa:SecretBackendCa
+  name: dev-ssh-host-ca
+  protect: true
+  dependsOn:
+    - dev-ssh-host
+    - ns-dev
+  inputs:
+    backend: ssh-host
+    generateSigningKey: true
+    keyType: ed25519
+    namespace: dev
+- type: vault:ssh/secretBackendRole:SecretBackendRole
+  name: dev-ssh-host-sshrole-host
+  protect: true
+  dependsOn:
+    - dev-ssh-host
+    - dev-ssh-host-ca
+    - ns-dev
+  inputs:
+    allowBareDomains: true
+    allowEmptyPrincipals: false
+    allowHostCertificates: true
+    allowSubdomains: true
+    allowUserCertificates: false
+    allowUserKeyIds: false
+    allowedCriticalOptions: ""
+    allowedDomains: dev.example.internal
+    allowedDomainsTemplate: false
+    allowedExtensions: ""
+    allowedUserKeyConfigs:
+      - lengths:
+          - 0
+        type: ed25519
+    backend: ssh-host
+    defaultCriticalOptions: {}
+    defaultExtensions: {}
+    defaultExtensionsTemplate: false
+    keyIdFormat: '{{token_display_name}}'
+    keyType: ca
+    maxTtl: "604800"
+    name: host
+    namespace: dev
+    ttl: "86400"
+- type: vault:ssh/secretBackendRole:SecretBackendRole
+  name: dev-ssh-sshrole-runner
+  protect: true
+  dependsOn:
+    - dev-ssh
+    - dev-ssh-ca
+    - ns-dev
+  inputs:
+    allowBareDomains: false
+    allowEmptyPrincipals: false
+    allowHostCertificates: false
+    allowSubdomains: false
+    allowUserCertificates: true
+    allowUserKeyIds: false
+    allowedCriticalOptions: ""
+    allowedExtensions: ""
+    allowedUserKeyConfigs:
+      - lengths:
+          - 0
+        type: ed25519
+    allowedUsers: deploy
+    allowedUsersTemplate: false
+    backend: ssh
+    defaultCriticalOptions:
+      force-command: /usr/local/bin/deploy-runner
+    defaultExtensions: {}
+    defaultExtensionsTemplate: false
+    defaultUser: deploy
+    defaultUserTemplate: false
+    keyIdFormat: '{{token_display_name}}'
+    keyType: ca
+    maxTtl: "1800"
+    name: runner
+    namespace: dev
+    ttl: "900"
 - type: vault:ssh/secretBackendRole:SecretBackendRole
   name: dev-ssh-sshrole-user
   protect: true

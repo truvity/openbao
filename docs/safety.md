@@ -93,6 +93,42 @@ back nothing for a mount it has just created. The server shape in
   the old and the new at once is what lets leaves be reissued in any
   order. A single-source bundle makes it a flag day.
 
+## A forced command that a caller can still replace
+
+`SSHRole.ForceCommand` exists so a machine identity that should only ever
+run one thing -- a backup agent, say -- signs certificates that carry
+exactly that as their `force-command` critical option, with no way for
+the caller to widen it. Getting there took two attempts, and the first
+one is worth writing down because it looked right and was not.
+
+**The role's own configuration cannot make a default critical option
+unconditional.** The natural reading of `allowed_critical_options = ""`
+alongside `default_critical_options = {"force-command": …}` is "the
+caller may name no critical option, so the default always wins." Tested
+against a real OpenBAO 2.6.2 server while building this, it is the
+opposite: an empty `allowed_critical_options` means "any key is allowed,"
+the same factory-default convention `allowed_extensions` uses, and
+whenever the request's own `critical_options` is present -- with any key
+in it, allowed or not -- OpenBAO uses the request's map exactly as given,
+**in place of** the role's default, not merged with it. A request that
+supplied its own `force-command` succeeded and replaced the role's.
+Naming `force-command` explicitly on a non-empty allowed list does not
+fix this either: the check only gates which keys a present map may name,
+never what value the caller puts behind an allowed one.
+
+**The fix is at the ACL layer, not the secrets engine.** A policy path
+block's `denied_parameters` refuses a request that carries a named
+parameter at all, whatever it is shaped like -- checked before the request
+reaches the SSH backend, so `allowed_critical_options` and
+`default_critical_options` never come into it. `Rule.DeniedParameters`
+renders `denied_parameters = { "critical_options" = [] }` on the grant;
+`Namespace.Validate` refuses a policy that grants a force-command role's
+sign path without it, so the mistake this section opens with cannot ship
+silently a second time. `conformance/roster_test.go` signs with no
+critical options (the forced command survives), then repeats the request
+with a conflicting `force-command` of its own and asserts the refusal --
+proof, not the first assumption.
+
 ## The apply: a configuration that cannot lock itself out
 
 `pkg/apply` converges a whole server, so the ways it can hurt are the ways a
@@ -161,7 +197,12 @@ can answer. Nothing is registered before a refusal.
 | a role on an issuer its mount does not hold, with no domain, a templated domain, no usage, or a default beyond its maximum | a role that signs with the wrong key, signs nothing, or signs for anyone |
 | a credential role reading its subject from no auth mount here | a role whose only name can never match |
 | an SSH role for `root`, for a pattern, defaulting outside its list, with no key id, no key type, or a default beyond its maximum | a certificate for anyone, or one that names nobody |
-| any SSH or credential role above `credentialMaxTtl` | a credential that outlives the ceiling |
+| a force-command SSH role that also grants `permit-pty` or a forwarding extension | a forced command that can still open a shell or forward a port |
+| a policy that grants a force-command role's sign path without denying the `critical_options` parameter | a forced command a caller can replace with one of their own (docs/safety.md, "A forced command that a caller can still replace") |
+| a rule that denies an empty parameter name, or the same parameter twice | a `denied_parameters` clause nobody reviewed |
+| an SSH host mount with no role or no CA key type, or a host role declared twice | a host CA that signs with no role, or two roles silently sharing one |
+| an SSH host role with no domain, a wildcard or templated domain, neither bare nor subdomains, no key id, no key type, or a lifetime beyond 30 days | a host certificate for any name, or one trusted for longer than this repository allows |
+| any SSH or credential role above `credentialMaxTtl` | a credential that outlives the ceiling -- an SSH host role is capped at 30 days instead; `credentialMaxTtl` does not reach it |
 | identity with no primary door, or metadata writing the `door` key | identity groups named inconsistently |
 | (`Deploy`) an address that is not `https://`, a login with no mount, role or token | a token sent in clear, or no login |
 | (`Deploy`) an oidc mount whose client secret is not in `OIDCClientSecrets` | a sign-in configured with an empty secret |

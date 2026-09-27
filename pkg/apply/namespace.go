@@ -57,6 +57,7 @@ func newApplier(c *pulumi.Context, desired *model.Desired, opts Options) (*appli
 			Certificates:        map[string]pulumi.StringOutput{},
 			CertificateRequests: map[string]pulumi.StringOutput{},
 			SSHCAPublicKeys:     map[MountRef]pulumi.StringOutput{},
+			SSHHostCAPublicKeys: map[MountRef]pulumi.StringOutput{},
 		},
 		mounts:  map[MountRef]*pkiMount{},
 		issuers: map[model.IssuerRef]*pkiIssuer{},
@@ -166,6 +167,12 @@ func (a *applier) namespace(namespace *model.Namespace) error {
 
 	for i := range namespace.SSH {
 		if err := a.sshMount(s, &namespace.SSH[i]); err != nil {
+			return err
+		}
+	}
+
+	for i := range namespace.SSHHost {
+		if err := a.sshHostMount(s, &namespace.SSHHost[i]); err != nil {
 			return err
 		}
 	}

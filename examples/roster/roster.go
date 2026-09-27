@@ -23,31 +23,56 @@ const (
 	// Environment is the one environment namespace.
 	Environment = "dev"
 
-	// SSHUser, SSHAdmin, DBClient and Reader are people's groups, admitted
-	// through both doors; CIRelease is a job's, admitted through the roster
-	// door alone.
+	// SSHUser, SSHAdmin, SSHBackup, DBClient and Reader are people's
+	// groups, admitted through both doors; CIRelease is a job's, admitted
+	// through the roster door alone.
 	SSHUser   = Environment + ":ssh:user"
 	SSHAdmin  = Environment + ":ssh:admin"
+	SSHBackup = Environment + ":ssh:backup"
 	DBClient  = Environment + ":db:client"
 	Reader    = Environment + ":openbao:reader"
 	CIRelease = "ci-release"
 
 	// SSHMount and PKIMount are the credential engines, at the paths
-	// accessctl calls by default; KVMount holds the environment's secrets.
-	SSHMount = "ssh"
-	PKIMount = "pki"
-	KVMount  = "kv"
+	// accessctl calls by default; KVMount holds the environment's secrets;
+	// SSHHostMount is the host CA, on a mount of its own so its key is
+	// never the one SSHMount signs users with.
+	SSHMount     = "ssh"
+	SSHHostMount = "ssh-host"
+	PKIMount     = "pki"
+	KVMount      = "kv"
 	// SSHUserRole and SSHAdminRole are the SSH roles, DBClientRole the
 	// database client credential role: accessctl's defaults for
 	// `accessctl bao ssh -mode=ca`, the same with `-role=admin`, and
-	// `accessctl pg`/`accessctl psql`.
-	SSHUserRole  = "user"
-	SSHAdminRole = "admin"
-	DBClientRole = "db-client"
+	// `accessctl pg`/`accessctl psql`. SSHBackupRole forces one command --
+	// no interactive session, no forwarding. SSHHostRole signs the one
+	// host name a machine may prove it is.
+	SSHUserRole   = "user"
+	SSHAdminRole  = "admin"
+	SSHBackupRole = "backup"
+	SSHHostRole   = "host"
+	DBClientRole  = "db-client"
 	// SSHUserPrincipal and SSHAdminPrincipal are the one OS account each
-	// SSH role signs for.
-	SSHUserPrincipal  = "example"
-	SSHAdminPrincipal = "example-admin"
+	// SSH role signs for; SSHBackupCommand is the one command
+	// SSHBackupRole's certificates carry as their forced command.
+	SSHUserPrincipal   = "example"
+	SSHAdminPrincipal  = "example-admin"
+	SSHBackupPrincipal = "backup"
+	SSHBackupCommand   = "/usr/local/bin/backup-agent run"
+	// SSHHostDomain is the one host name SSHHostRole signs -- a machine's
+	// own workload login, never a person, asks for it.
+	SSHHostDomain = "builds.example"
+	// HostAgentDoor, HostAgentRole and HostAgentServiceAccount are the
+	// workload login a host uses to sign its own certificate: an existing
+	// mechanism (a Kubernetes pod's projected ServiceAccount token on a
+	// jwt role bound to that ServiceAccount), not a new auth method. Its
+	// policy grants update on exactly ssh-host/sign/host.
+	HostAgentDoor           = "jwt-cluster"
+	HostAgentRole           = "host-agent"
+	HostAgentAudience       = "vault://host-agent"
+	HostAgentServiceAccount = "host-agent"
+	HostAgentNamespace      = "openbao"
+	HostAgentPolicy         = "ssh-host-agent-sign"
 	// ReleaseSecret is the KV path the CI job reads.
 	ReleaseSecret = "ci/release"
 
@@ -127,9 +152,44 @@ func Desired(p Params) *model.Desired {
 			Path:        SSHMount,
 			Description: "the environment's SSH user CA",
 			KeyType:     "ed25519",
-			Roles:       []model.SSHRole{sshRole(SSHUserRole, SSHUserPrincipal), sshRole(SSHAdminRole, SSHAdminPrincipal)},
+			Roles: []model.SSHRole{
+				sshRole(SSHUserRole, SSHUserPrincipal),
+				sshRole(SSHAdminRole, SSHAdminPrincipal),
+				sshBackupRole(),
+			},
 		}},
-		Auth: people.Doors(),
+		// A host CA, never the user CA's key: one line
+		// (`@cert-authority <domains> <key>`) lets every client trust
+		// every host this role signs for, instead of pinning each host's
+		// own key.
+		SSHHost: []model.SSHHostMount{{
+			Path:        SSHHostMount,
+			Description: "the environment's SSH host CA; never the same key as the user CA",
+			KeyType:     "ed25519",
+			Roles: []model.SSHHostRole{{
+				Name: SSHHostRole, AllowedDomains: []string{SSHHostDomain},
+				AllowBareDomains: true, AllowSubdomains: false,
+				KeyTypes: []string{"ed25519"}, KeyIDFormat: "{{token_display_name}}",
+				TTL: "24h", MaxTTL: "168h",
+			}},
+		}},
+		Auth: append(people.Doors(), model.JWTMount{
+			// A host proves itself the same way any workload does: a
+			// projected ServiceAccount token, on a role bound to that
+			// ServiceAccount, whose policy grants nothing but
+			// ssh-host/sign/host. No new auth method for this.
+			Path:         HostAgentDoor,
+			Description:  "the cluster's ServiceAccount tokens; a host signs its own certificate",
+			DiscoveryURL: p.Issuer,
+			Roles: []model.Role{{
+				Name:           HostAgentRole,
+				BoundAudiences: []string{HostAgentAudience},
+				BoundSubject:   model.ServiceAccountSubject(HostAgentNamespace, HostAgentServiceAccount),
+				UserClaim:      "sub",
+				Policies:       []string{HostAgentPolicy},
+				TTL:            "15m",
+			}},
+		}),
 	}
 
 	grant := func(policy model.Policy, group model.Group) {
@@ -147,9 +207,19 @@ func Desired(p Params) *model.Desired {
 	grant(people.Grant(ProjectDeployer, writeProject(Project)...))
 	grant(people.Grant(ProjectViewer, readProject(Project)...))
 	grant(people.Grant(SSHAdmin, sign(SSHMount, SSHAdminRole)))
+	grant(people.Grant(SSHBackup, signForced(SSHMount, SSHBackupRole)))
 	grant(people.Grant(SSHUser, sign(SSHMount, SSHUserRole)))
 	// One read of one path, nothing else: no metadata, no list.
 	grant(people.JobGrant(CIRelease, model.Rule{Path: KVMount + "/data/" + ReleaseSecret, Capabilities: []string{model.CapRead}}))
+	// The host agent's policy is attached to its workload role directly
+	// (no group, no door: a workload role carries its own policies), so it
+	// is appended beside the people-and-jobs grants above rather than
+	// through `grant`, which also writes an identity group this role has
+	// no use for.
+	namespace.Policies = append(namespace.Policies, model.Policy{
+		Name:  HostAgentPolicy,
+		Rules: []model.Rule{sign(SSHHostMount, SSHHostRole)},
+	})
 
 	return &model.Desired{
 		Bootstrap:        operators.Bootstrap(Operators),
@@ -167,6 +237,17 @@ func sshRole(name, principal string) model.SSHRole {
 		Name: name, AllowedUsers: []string{principal}, DefaultUser: principal,
 		KeyTypes: []string{"ed25519"}, KeyIDFormat: "{{token_display_name}}",
 		Extensions: []string{"permit-pty"}, TTL: "30m", MaxTTL: "1h",
+	}
+}
+
+// sshBackupRole signs for the one account that runs the backup command,
+// with that command forced: no terminal, no forwarding, so the certificate
+// is worth nothing beyond the one thing it is for.
+func sshBackupRole() model.SSHRole {
+	return model.SSHRole{
+		Name: SSHBackupRole, AllowedUsers: []string{SSHBackupPrincipal}, DefaultUser: SSHBackupPrincipal,
+		KeyTypes: []string{"ed25519"}, KeyIDFormat: "{{token_display_name}}",
+		ForceCommand: SSHBackupCommand, TTL: "15m", MaxTTL: "30m",
 	}
 }
 
@@ -196,4 +277,16 @@ func writeProject(project string) []model.Rule {
 // sign is `update` on one sign path: all a credential group may do.
 func sign(mount, role string) model.Rule {
 	return model.Rule{Path: mount + "/sign/" + role, Capabilities: []string{model.CapUpdate}}
+}
+
+// signForced is sign, on a force-command role's own path: the grant also
+// denies critical_options outright, which is the only way OpenBAO honours
+// the role's forced command unconditionally (model.SSHRole.ForceCommand,
+// docs/safety.md) -- without it, a caller who supplies any critical_options
+// of their own replaces the role's default instead of being denied.
+func signForced(mount, role string) model.Rule {
+	rule := sign(mount, role)
+	rule.DeniedParameters = []string{"critical_options"}
+
+	return rule
 }
