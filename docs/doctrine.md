@@ -152,10 +152,17 @@ what a name is.
 
 Three positions follow:
 
-- **One namespace level.** Root and one namespace per environment;
-  projects are policy paths and identity groups. A namespace per project
-  multiplies mounts, issuing CAs and logins for no isolation a policy does
-  not already give.
+- **Namespaces are `<environment>/<project>`.** Root, one namespace per
+  environment, and one namespace per project inside it. Logins, policies
+  and identity groups live only at the environment; a project namespace
+  holds mounts alone — see
+  [ADR 0001](decisions/0001-namespaces-are-environment-project.md), which
+  supersedes this law's earlier statement ("one namespace level":
+  projects as policy paths and identity groups alone, never a namespace
+  of their own) and why it changed: an installation that shares one
+  server with partner organisations as projects needs the wall a
+  namespace gives, enforced by the server itself, not only the wall a
+  policy path gives, enforced by review.
 - **The apply never owns its own door.** The bootstrap is declared for
   review and created by the server's initialisation.
 - **Registration on the caller's context.** Like `pkg/custody`, the apply
