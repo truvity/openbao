@@ -335,7 +335,7 @@ Durations are Go durations (`15m`, `720h`).
 | | `CredentialMaxTTL` (`credentialMaxTtl`) | no | the ceiling on every SSH and credential role |
 | `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `Auth`, `Policies`, `Groups` | name outside root | the engines below |
 | `KVMount` | `Path`, `Description`, `Canary` | path | a KV v2 mount; the canary is written as `{"namespace": <name>}` |
-| `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `Roles` | path, issuer | one auth mount; the discovery URL is also the bound issuer |
+| `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `SupportedAlgorithms`, `Roles` | path, issuer | one auth mount; the discovery URL is also the bound issuer; `SupportedAlgorithms` empty resolves to `DefaultSupportedAlgorithms` (`Algorithms()`) |
 | `Role` | `Name`, `Type`, `BoundAudiences`, `BoundSubject`, `UserClaim`, `GroupsClaim`, `ClaimMappings`, `AllowedRedirectURIs`, `OIDCScopes` (oidc), `Policies`, `TTL` | name, audience, user claim, TTL, and a subject or a groups claim | `TTL` is also the maximum |
 | `Group` | `Name`, `Policies`, `Doors` | all | one identity group per door, aliased there by `Name` |
 | `Policy`, `Rule` | `Name`, `Rules`; `Path`, `Capabilities` | all | rendered in rule order (`Policy.HCL`) |

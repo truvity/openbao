@@ -123,6 +123,18 @@ func TestValidateRefuses(t *testing.T) {
 		{"an oidc role with no redirect", "redirect", func(d *model.Desired) { dev(d).Auth[2].Roles[0].AllowedRedirectURIs = nil }},
 		{"a default role that is not there", "defaults to role", func(d *model.Desired) { dev(d).Auth[2].DefaultRole = "admins" }},
 		{"a mount with no issuer", "no issuer", func(d *model.Desired) { dev(d).Auth[0].DiscoveryURL = "" }},
+		{"an unknown supported algorithm", "not one the JWT plugin signs with", func(d *model.Desired) {
+			dev(d).Auth[0].SupportedAlgorithms = []string{"RS256", "made-up"}
+		}},
+		{"a supported algorithm named twice", "named twice", func(d *model.Desired) {
+			dev(d).Auth[0].SupportedAlgorithms = []string{"RS256", "RS256"}
+		}},
+		{"a supported HMAC algorithm", "not one the JWT plugin signs with", func(d *model.Desired) {
+			dev(d).Auth[0].SupportedAlgorithms = []string{"HS256"}
+		}},
+		{"a supported algorithm of none", "not one the JWT plugin signs with", func(d *model.Desired) {
+			dev(d).Auth[0].SupportedAlgorithms = []string{"none"}
+		}},
 		{"a PKI mount with no issuers", "holds no issuer", func(d *model.Desired) { pki(d).Issuers = nil }},
 		{"a default issuer the mount lacks", "defaults to issuer", func(d *model.Desired) { pki(d).DefaultIssuer = "example-other" }},
 		{"an issuer with two signers", "exactly one of", func(d *model.Desired) { pki(d).Issuers[0].SelfSigned = true }},
@@ -253,6 +265,17 @@ func TestKVLayout(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, strings.HasPrefix(err.Error(), "KV layout"), err.Error())
 	}
+}
+
+// Algorithms is the one place a mount's default resolves: empty names
+// DefaultSupportedAlgorithms, and a mount that names its own gets exactly
+// those, never the default merged in.
+func TestJWTMountAlgorithms(t *testing.T) {
+	empty := model.JWTMount{}
+	assert.Equal(t, model.DefaultSupportedAlgorithms, empty.Algorithms())
+
+	explicit := model.JWTMount{SupportedAlgorithms: []string{"RS256"}}
+	assert.Equal(t, []string{"RS256"}, explicit.Algorithms())
 }
 
 func TestServiceAccountSubject(t *testing.T) {

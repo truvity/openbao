@@ -5,6 +5,36 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.8.0
+
+### Added
+
+- **pkg/model: `JWTMount.SupportedAlgorithms` states what a door accepts.**
+  The JWT/OIDC plugin's own default is RS256 alone for an oidc-type role
+  (`all` for a jwt-type role), so an issuer that has moved to ES256 or
+  ES384 was refused at login by any mount this library applied, silently:
+  nothing in the model said which algorithms a door trusted. A mount may
+  now name `supportedAlgorithms` explicitly; `Validate` refuses a name the
+  plugin does not sign with (so no `HS*` or `none`, ever, whatever is
+  named) and a name repeated. `JWTMount.Algorithms()` is the one place the
+  default resolves -- `DefaultSupportedAlgorithms` (RS256, ES256, ES384) --
+  and pkg/apply calls it for every mount, jwt and oidc alike, so
+  `jwt_supported_algs` is now always set, never left to the plugin's own
+  default.
+
+### Changed
+
+- **Every mount now states its algorithms explicitly.** A caller who set
+  no `supportedAlgorithms` sees `jwt_supported_algs` go from unset (the
+  plugin's default) to `[RS256, ES256, ES384]` on the next apply: a jwt
+  mount that previously accepted any algorithm now accepts these three, and
+  an oidc mount that accepted RS256 alone now also accepts ES256 and
+  ES384. Nothing that only ever spoke RS256 changes behaviour. Proved by
+  `conformance/roster_test.go` (an RS256 token and an ES384 token both log
+  in on the same mount, and a mount that names `["RS256"]` explicitly
+  still refuses ES384) and `internal/fakeissuer`, which now signs and
+  publishes an ES384 key alongside its RS256 one.
+
 ## v0.7.0
 
 ### Added

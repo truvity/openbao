@@ -412,6 +412,10 @@
   inputs:
     boundIssuer: https://oidc.dev.example.com
     description: the dev cluster's ServiceAccount tokens
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     namespace: dev
     oidcDiscoveryUrl: https://oidc.dev.example.com
     path: jwt-dev
@@ -423,6 +427,10 @@
   inputs:
     boundIssuer: https://id.example.com
     description: people, through the directory's tokens for audience openbao
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     namespace: dev
     oidcDiscoveryUrl: https://id.example.com
     path: jwt-people
@@ -435,6 +443,10 @@
     boundIssuer: https://id.example.com
     defaultRole: people
     description: web UI sign-in, people only
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     namespace: dev
     namespaceInState: true
     oidcClientId: openbao-ui
@@ -453,6 +465,10 @@
   inputs:
     boundIssuer: https://id.example.com
     description: people, through the directory's tokens for audience openbao
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     namespace: prod
     oidcDiscoveryUrl: https://id.example.com
     path: jwt-people
@@ -464,6 +480,10 @@
   inputs:
     boundIssuer: https://oidc.prod.example.com
     description: the prod cluster's ServiceAccount tokens
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     namespace: prod
     oidcDiscoveryUrl: https://oidc.prod.example.com
     path: jwt-prod
@@ -473,6 +493,10 @@
   inputs:
     boundIssuer: https://oidc.ops.example.com
     description: the operations cluster's ServiceAccount tokens, for the backup jobs only
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     oidcDiscoveryUrl: https://oidc.ops.example.com
     path: jwt-ops
     type: jwt
@@ -482,6 +506,10 @@
     boundIssuer: https://id.example.com
     defaultRole: people
     description: web UI sign-in, people only
+    jwtSupportedAlgs:
+      - RS256
+      - ES256
+      - ES384
     namespaceInState: true
     oidcClientId: openbao-ui
     oidcClientSecret:

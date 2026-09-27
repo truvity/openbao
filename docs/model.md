@@ -86,6 +86,14 @@ bound issuer). Two kinds of role live on it:
 A role that does neither admits every token for its audience, and
 `Validate` refuses it.
 
+`supportedAlgorithms` is the signing algorithms the mount accepts, jwt
+role or oidc role alike. Empty resolves to `model.DefaultSupportedAlgorithms`
+(RS256, ES256, ES384) -- the plugin's own default is RS256 alone for an
+oidc role (`all` for a jwt role), which would refuse an issuer that signs
+ES256 or ES384, so the apply always states the resolved list explicitly.
+`Validate` refuses a name the JWT plugin does not sign with (so no HS* or
+`none`, ever) and a name repeated.
+
 An `oidc` mount (`type: oidc`) is the web UI's door: a browser sign-in as
 `clientId`, whose secret is an input of the apply and never desired state.
 It keeps the namespace in the OIDC state, so one redirect URI serves every

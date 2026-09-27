@@ -198,6 +198,27 @@ func TestRosterContract(t *testing.T) {
 		}
 	})
 
+	// Neither door names SupportedAlgorithms of its own, so both resolve to
+	// model.DefaultSupportedAlgorithms: an ES384 issuer must not be refused
+	// just because it is not the plugin's own RS256 default.
+	t.Run("the roster door admits an RS256 token and an ES384 token, on the same mount", func(t *testing.T) {
+		rs256 := c.login(t, roster.Environment, model.RosterMount, c.token(person, model.RosterAudience, roster.SSHUser))
+		assert.Equal(t, []string{roster.SSHUser}, strings2(rs256["identity_policies"]))
+
+		es384 := c.login(t, roster.Environment, model.RosterMount, c.es384Token(person, model.RosterAudience, roster.SSHUser))
+		assert.Equal(t, []string{roster.SSHUser}, strings2(es384["identity_policies"]))
+	})
+
+	t.Run("both doors state the resolved algorithms explicitly", func(t *testing.T) {
+		for _, mount := range []string{model.RosterMount, model.RosterUIMount} {
+			answer, err := c.operator.Call(ctx, http.MethodGet, roster.Environment, "auth/"+mount+"/config", nil)
+			require.NoError(t, err, "mount %s", mount)
+
+			data, _ := answer["data"].(map[string]any)
+			assert.Equal(t, model.DefaultSupportedAlgorithms, strings2(data["jwt_supported_algs"]), "mount %s", mount)
+		}
+	})
+
 	t.Run("the UI door signs the same person in with the same policies", func(t *testing.T) {
 		callback := model.UICallback(c.address, model.RosterUIMount)
 		authURLFor := func(redirect string) string {
@@ -469,6 +490,12 @@ func (c *conformance) token(subject, audience string, groups ...string) string {
 	return c.issuer.Token(fakeissuer.Claims{Subject: subject, Audience: audience, Email: subject, Groups: groups})
 }
 
+// es384Token is the same claims, signed ES384 instead of the default
+// RS256: what an issuer that has moved off RS256 hands the mount.
+func (c *conformance) es384Token(subject, audience string, groups ...string) string {
+	return c.issuer.ES384Token(fakeissuer.Claims{Subject: subject, Audience: audience, Email: subject, Groups: groups})
+}
+
 // login is `auth/<mount>/login` as role roster, as accessctl makes it.
 func (c *conformance) login(t *testing.T, namespace, mount, token string) map[string]any {
 	t.Helper()
@@ -588,4 +615,80 @@ func strings2(value any) []string {
 	}
 
 	return out
+}
+
+// TestSupportedAlgorithmsRefusesUnlisted is the negative half of the
+// contract: a mount that names its own SupportedAlgorithms accepts only
+// those. RS256 alone leaves ES384 out, so a token this same issuer signs
+// ES384 is refused at login even though the issuer, the audience and the
+// subject are all exactly what the role binds.
+func TestSupportedAlgorithmsRefusesUnlisted(t *testing.T) {
+	binary := tool(t, "bao")
+
+	issuer, err := fakeissuer.New(nil)
+	require.NoError(t, err)
+	t.Cleanup(issuer.Close)
+
+	address := devServer(t, binary)
+
+	const (
+		mount    = "jwt-strict"
+		roleName = "strict"
+		audience = "openbao"
+		subject  = "person@example.com"
+	)
+
+	desired := &model.Desired{
+		Root: model.Namespace{
+			Auth: []model.JWTMount{{
+				Path: mount,
+				// The explicit list this test is about: RS256 only, so
+				// this mount never resolves to DefaultSupportedAlgorithms.
+				SupportedAlgorithms: []string{"RS256"},
+				DiscoveryURL:        issuer.URL,
+				Roles: []model.Role{{
+					Name:           roleName,
+					BoundAudiences: []string{audience},
+					BoundSubject:   subject,
+					UserClaim:      "sub",
+					TTL:            "1h",
+				}},
+			}},
+		},
+		Identity: model.Identity{PrimaryDoor: mount},
+	}
+	require.NoError(t, desired.Validate())
+
+	opts := apply.Options{
+		Address: "https://openbao.example.com",
+		Login:   apply.Login{Mount: mount, Role: roleName, Token: replay.Tokens},
+	}
+
+	resources, err := replay.Capture(desired, opts)
+	require.NoError(t, err)
+	require.NoError(t, (&replay.Server{Address: address, Token: rootToken}).Replay(t.Context(), resources))
+
+	root := &replay.Server{Address: address, Token: rootToken}
+	server := &replay.Server{Address: address}
+	claims := fakeissuer.Claims{Subject: subject, Audience: audience}
+
+	config, err := root.Call(t.Context(), http.MethodGet, "", "auth/"+mount+"/config", nil)
+	require.NoError(t, err)
+	data, _ := config["data"].(map[string]any)
+	assert.Equal(t, []string{"RS256"}, strings2(data["jwt_supported_algs"]), "the mount states exactly the list it was given")
+
+	t.Run("RS256, the one algorithm named, logs in", func(t *testing.T) {
+		answer, err := server.Call(t.Context(), http.MethodPost, "", "auth/"+mount+"/login",
+			map[string]any{"role": roleName, "jwt": issuer.Token(claims)})
+		require.NoError(t, err)
+
+		auth, _ := answer["auth"].(map[string]any)
+		require.NotEmpty(t, auth["client_token"])
+	})
+
+	t.Run("ES384, left out of the list, is refused", func(t *testing.T) {
+		_, err := server.Call(t.Context(), http.MethodPost, "", "auth/"+mount+"/login",
+			map[string]any{"role": roleName, "jwt": issuer.ES384Token(claims)})
+		requireStatus(t, err, http.StatusBadRequest, "an algorithm the mount does not name is refused")
+	})
 }

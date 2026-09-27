@@ -2,10 +2,14 @@ package fakeissuer_test
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -30,24 +34,44 @@ func getJSON(t *testing.T, address string, into any) {
 	require.NoError(t, json.NewDecoder(response.Body).Decode(into))
 }
 
-// verify checks a token against the published key set, as a relying party
-// does, and returns its claims.
+// jwks is the issuer's published key set, as a relying party fetches it:
+// the RS256 key Token signs with and the ES384 one ES384Token does.
+type jwks struct {
+	Keys []struct{ Kty, Alg, Kid, N, E, Crv, X, Y string } `json:"keys"`
+}
+
+func fetchKeys(t *testing.T, issuer *fakeissuer.Issuer) jwks {
+	t.Helper()
+
+	var set jwks
+	getJSON(t, issuer.URL+fakeissuer.KeysPath, &set)
+
+	return set
+}
+
+// verify checks an RS256 token against the published RS256 key, as a
+// relying party does, and returns its claims.
 func verify(t *testing.T, issuer *fakeissuer.Issuer, token string) (map[string]any, error) {
 	t.Helper()
 
-	var set struct {
-		Keys []struct{ N, E, Kid string } `json:"keys"`
+	set := fetchKeys(t, issuer)
+
+	var rsaKey *rsa.PublicKey
+
+	for i := range set.Keys {
+		if set.Keys[i].Kty != "RSA" {
+			continue
+		}
+
+		n, err := base64.RawURLEncoding.DecodeString(set.Keys[i].N)
+		require.NoError(t, err)
+		e, err := base64.RawURLEncoding.DecodeString(set.Keys[i].E)
+		require.NoError(t, err)
+
+		rsaKey = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(new(big.Int).SetBytes(e).Int64())}
 	}
 
-	getJSON(t, issuer.URL+fakeissuer.KeysPath, &set)
-	require.Len(t, set.Keys, 1)
-
-	n, err := base64.RawURLEncoding.DecodeString(set.Keys[0].N)
-	require.NoError(t, err)
-	e, err := base64.RawURLEncoding.DecodeString(set.Keys[0].E)
-	require.NoError(t, err)
-
-	public := &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(new(big.Int).SetBytes(e).Int64())}
+	require.NotNil(t, rsaKey, "the key set names an RSA key")
 
 	parts := strings.Split(token, ".")
 	require.Len(t, parts, 3)
@@ -56,11 +80,65 @@ func verify(t *testing.T, issuer *fakeissuer.Issuer, token string) (map[string]a
 	require.NoError(t, err)
 
 	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if err := rsa.VerifyPKCS1v15(public, crypto.SHA256, digest[:], signature); err != nil {
+	if err := rsa.VerifyPKCS1v15(rsaKey, crypto.SHA256, digest[:], signature); err != nil {
 		return nil, err
 	}
 
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	return decodeClaims(t, parts[1])
+}
+
+// verifyES384 checks an ES384 token against the published EC key.
+func verifyES384(t *testing.T, issuer *fakeissuer.Issuer, token string) (map[string]any, error) {
+	t.Helper()
+
+	set := fetchKeys(t, issuer)
+
+	var ecKey *ecdsa.PublicKey
+
+	for i := range set.Keys {
+		if set.Keys[i].Kty != "EC" {
+			continue
+		}
+
+		require.Equal(t, "P-384", set.Keys[i].Crv)
+
+		x, err := base64.RawURLEncoding.DecodeString(set.Keys[i].X)
+		require.NoError(t, err)
+		y, err := base64.RawURLEncoding.DecodeString(set.Keys[i].Y)
+		require.NoError(t, err)
+
+		// The uncompressed SEC1 point ParseUncompressedPublicKey wants: a
+		// 0x04 prefix, then X and Y.
+		point := append([]byte{0x04}, append(x, y...)...)
+
+		ecKey, err = ecdsa.ParseUncompressedPublicKey(elliptic.P384(), point)
+		require.NoError(t, err)
+	}
+
+	require.NotNil(t, ecKey, "the key set names an EC key")
+
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(t, err)
+	require.Len(t, signature, 96, "an ES384 signature is r and s, each 48 bytes")
+
+	r := new(big.Int).SetBytes(signature[:48])
+	s := new(big.Int).SetBytes(signature[48:])
+
+	digest := sha512.Sum384([]byte(parts[0] + "." + parts[1]))
+	if !ecdsa.Verify(ecKey, digest[:], r, s) {
+		return nil, fmt.Errorf("ES384 signature does not verify")
+	}
+
+	return decodeClaims(t, parts[1])
+}
+
+func decodeClaims(t *testing.T, part string) (map[string]any, error) {
+	t.Helper()
+
+	raw, err := base64.RawURLEncoding.DecodeString(part)
 	require.NoError(t, err)
 
 	var claims map[string]any
@@ -95,6 +173,13 @@ func TestDiscoveryAndTokens(t *testing.T) {
 	require.NoError(t, err)
 	_, err = verify(t, issuer, foreign)
 	require.Error(t, err, "a foreign token must not verify against the issuer's keys")
+
+	esClaims, err := verifyES384(t, issuer, issuer.ES384Token(fakeissuer.Claims{
+		Subject: "person@example.com", Audience: "openbao", Groups: []string{"dev:ssh:user"},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, issuer.URL, esClaims["iss"])
+	assert.Equal(t, []any{"dev:ssh:user"}, esClaims["groups"])
 }
 
 // The code flow: the browser is sent back with a code, the code is
