@@ -35,6 +35,39 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   still refuses ES384) and `internal/fakeissuer`, which now signs and
   publishes an ES384 key alongside its RS256 one.
 
+### Documentation
+
+- **`docs/integrations/access-roster.md`, `docs/team-secrets.md` and the
+  README follow access-roster through `accessctl credential` and
+  `accessctl secrets`'s removal (access-roster v1.34.0).** Every recipe
+  now reads `accessctl bao` (SSH and any other OpenBAO call, a passthrough
+  onto the real `bao` binary, its login cached and reused rather than
+  revoked after each call), `accessctl pg`/`accessctl psql` (a Postgres
+  client certificate, then a command), and opkssh -- the target for
+  people's own SSH once an installation has moved its hosts to it, with
+  the `user`/`admin` OpenBAO SSH CA roles staying supported, and modelled,
+  until then. `requires`' second job -- deciding which groups a minted
+  token carries, not only who may be issued one, now that access-roster's
+  groups scoping can narrow it -- is spelled out where a reader would look
+  for it, twice.
+
+  **`docs/team-secrets.md` also flips its KV layout**: a repository is now
+  one KV secret, every variable a FIELD of it named after the variable,
+  rather than one path per variable. A read is one
+  `accessctl bao kv get -format=env` call for the whole repository; a
+  write is `kv put` to create it (which replaces every field, said
+  plainly) and `kv patch` — including its `-remove-data`, checked against
+  `bao kv patch -h` in this repository's own devbox — to rotate, add or
+  remove one field without touching the others. The trade is stated
+  plainly too: KV v2 still versions every rotation, now per repository
+  rather than per variable.
+
+  The discovery bullet stops claiming the issuer signs RS256 only: it
+  signs several algorithms at once, chosen per audience, and both
+  JWT/OIDC mounts should set `jwt_supported_algs` (`model.JWTMount`'s
+  `supportedAlgorithms` field, added above) rather than rely on the
+  mount's own factory default.
+
 ## v0.7.0
 
 ### Added

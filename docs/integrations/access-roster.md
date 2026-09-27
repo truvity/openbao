@@ -3,9 +3,13 @@
 How an OpenBAO server trusts an [access-roster](https://github.com/truvity/access-roster)
 issuer, end to end: people, CI jobs and operators sign in with the
 issuer's tokens, the token's `groups` claim decides which policies they
-hold, and `accessctl credential` turns that into short-lived SSH and X.509
-certificates. Nothing is stored: no OpenBAO token, no client secret on a
-laptop, no long-lived key.
+hold, and `accessctl bao` (SSH and every other OpenBAO call, unchanged)
+and `accessctl psql`/`accessctl pg` (a Postgres client certificate, then
+a command) turn that into short-lived certificates -- opkssh, straight
+against the issuer with no broker in between, is the target for people's
+own SSH instead, once an installation has moved its hosts to it. Nothing
+is stored: no OpenBAO token, no client secret on a laptop, no long-lived
+key.
 
 This page is the contract. Both sides implement it: this repository's
 `pkg/model` preset ([`model.Roster`](#the-preset)) and its apply on the
@@ -22,9 +26,9 @@ starts a real `bao server -dev`, configures it with exactly what
 [`desired.yaml`](../../examples/roster/desired.yaml)), points it at a fake
 issuer shaped like access-issuer, and walks every clause below: the
 operators' login, the groups-to-policies mapping, an SSH and a database
-certificate signed the way `accessctl` asks, the web UI's code flow across
-namespaces, a CI job's read, and the refusals marked tested in
-[failure modes](#7-failure-modes).
+certificate signed the way `accessctl bao`/`accessctl pg` ask, the web
+UI's code flow across namespaces, a CI job's read, and the refusals
+marked tested in [failure modes](#7-failure-modes).
 
 Without a `bao` binary the test skips; `just test` sets
 `OPENBAO_CONFORMANCE=required`, so in the dev shell and in CI (where
@@ -45,8 +49,19 @@ What an issuer must provide. access-issuer provides all of it.
 
 - **Discovery.** `<issuer>/.well-known/openid-configuration` and the key
   set it names, reachable **from OpenBAO**: the mount fetches both when it
-  is configured and when keys rotate. Tokens are signed RS256 (the JWT
-  plugin's default; access-issuer signs nothing else).
+  is configured and when keys rotate. access-issuer signs with several
+  algorithms at once, one key ring per algorithm, and picks the key by
+  the token's audience: the installation default is ES384, and a client
+  or resource row -- `openbao`, `openbao-ui`, or both -- may instead pin
+  `signing_alg: RS256 | ES256 | ES384`
+  ([access-roster's ADR 0009](https://github.com/truvity/access-roster/blob/master/docs/decisions/0009-a-default-signing-algorithm-and-per-audience-exceptions.md)).
+  **Set `jwt_supported_algs` on both mounts to every algorithm this
+  installation might sign either row's tokens with, not whichever the
+  mount's own factory default happens to admit.** This repository's apply
+  does this for you: `model.JWTMount`'s `supportedAlgorithms` field
+  renders `jwt_supported_algs`, defaulting to `RS256, ES256, ES384` --
+  every algorithm access-issuer ships -- so moving `signing_alg` on either
+  row is a policy edit alone, never a mount reconfiguration to go with it.
 - **`iss` equal to the issuer URL, byte for byte.** It is the mount's
   bound issuer. A trailing slash on one side and not the other is a
   refused login.
@@ -66,11 +81,26 @@ What an issuer must provide. access-issuer provides all of it.
   of the apply (`apply.Options.OIDCClientSecrets`), never desired state:
   the issuer delivers it where the apply runs.
 
-- **`requires`: who may be issued a token at all.** A client's `requires`
-  names the internal groups any one of which admits somebody; outside
-  them the exchange (and the UI's sign-in) is refused **before OpenBAO is
-  reached**. List every group OpenBAO holds a policy for, plus the
-  operators' group.
+- **`requires`: who may be issued a token at all -- and which groups the
+  token carries.** A client's `requires` names the internal groups any
+  one of which admits somebody; outside them the exchange (and the UI's
+  sign-in) is refused **before OpenBAO is reached**. List every group
+  OpenBAO holds a policy for, plus the operators' group.
+
+  **This is load-bearing twice over.** access-roster's groups scoping
+  (`groupsScoping: report` or `enforce`) narrows a minted token's
+  `groups` claim to whatever internal group's `<scope>:<thing>` pair
+  matches one of the audience row's own `requires` pairs -- in any role,
+  never the role named, the pair -- plus that row's own `groups:`
+  override. A group OpenBAO holds a policy for, but whose pair is missing
+  from `openbao`'s (or `openbao-ui`'s) `requires`, is silently absent
+  from the token under `enforce`: the login still succeeds, the identity
+  group never carries, and every call that group's policy would have
+  allowed is a 403 that reads exactly like a missing grant rather than a
+  scoping gap. **List every group any OpenBAO policy or identity group
+  reads in `requires`' pairs, or in the row's own `groups:` override, or
+  access-roster drops it before OpenBAO ever sees it** -- see
+  [access-roster's policy reference](https://github.com/truvity/access-roster/blob/master/docs/reference/policy.md#groups-in-a-token-scoping).
 
   **The two rows' `requires` are the same list**, less the groups only
   jobs hold (those go on `openbao` alone: a job has no browser). They are
@@ -172,6 +202,15 @@ policy. The name is the whole mapping; nothing re-maps it.
   `{env}:{thing}:{role}`, `{env}:{project}:{role}`, `all:{thing}:{role}`.
 - **A group OpenBAO knows nothing about is ignored.** The login succeeds
   with the `default` policy alone, and every call it then makes is a 403.
+- **A group OpenBAO DOES know can be just as silently missing**, if the
+  `openbao` (or `openbao-ui`) row's `requires` never named its
+  `<scope>:<thing>` pair ([§1](#1-the-issuer-side), above). Same symptom
+  -- login succeeds, the identity group never carries, every call is a
+  403 -- different cause: access-roster's own scoping dropped the group
+  from the token before OpenBAO ever read it, rather than OpenBAO holding
+  no policy for a group it was handed. Compare the login's own
+  `identity_policies` against what the token's `groups` claim actually
+  carried before assuming either side is wrong.
 - **A job's group is admitted through `jwt-roster` only** (`JobGrant`):
   its policy is one read of one path, and it has no `@oidc` twin.
 - The role attaches no policy of its own, so **who holds a group is
@@ -202,38 +241,71 @@ every namespace below it. It replaces the root token.
   admitted through it, carrying the bootstrap's policy by name.
 - Root's token TTL is the operator session's whole life: keep it short.
 
-## 5. Credentials: what `accessctl credential` calls
+## 5. OpenBAO through `accessctl bao`, `accessctl pg`/`psql`, and opkssh for people
 
-One exchange, one login, **one** `sign`, then `auth/token/revoke-self`.
-Every kind signs a key made on the caller's machine, so no role needs to
-offer `issue`, and `accessctl` never sends a TTL: the role's `ttl` and
-`max_ttl` are the whole answer.
+One exchange, one login — cached, `0600`, and reused for every call after
+it until it nears its own expiry, never revoked automatically. Every kind
+signs a key made on the caller's machine, so no role needs to offer
+`issue`, and neither command ever sends a TTL: the role's `ttl` and
+`max_ttl` are the whole answer
+([access-roster's ADR 0013](https://github.com/truvity/access-roster/blob/master/docs/decisions/0013-openbao-access-through-the-bao-cli.md)).
 
-| Command | Call (in namespace `--env`) | What is sent | What the role must be |
+`accessctl bao <args…>` authenticates, then runs the real `bao` binary
+unchanged: everything after `accessctl bao` is `bao`'s own syntax --
+subcommands, flags, bugs and fixes -- so a release of this repository's
+apply, or of access-roster, never has to catch up with a release of
+`bao`. `accessctl pg`/`accessctl psql` share the same login and
+additionally mint a Postgres client certificate before running a command.
+
+| Command | Call | What is sent | What the role must be |
 |---|---|---|---|
-| `credential ssh` | `ssh/sign/user` | an **ed25519** public key; `valid_principals` only if `--principal` asked | user certificates only; `allowed_users` spelled out, never root; `allowed_user_key_lengths` admitting ed25519; `key_id_format` `{{token_display_name}}`; no user-chosen key ids; extensions no wider than needed |
-| `credential ssh --role admin` | `ssh/sign/admin` | the same | a second role for the account that administers a host, granted to a separate group |
-| `credential db` | `pki/sign/db-client` | a CSR for an **ECDSA P-384** key, common name = the subject, and `common_name` again in the body | `key_type ec`, `key_bits 384`; the one allowed name is the caller's own alias name on `jwt-roster` (`allowed_domains` = `{{identity.entity.aliases.<accessor>.name}}`, templated, bare); `cn_validations email`; client auth only; `no_store` |
-| `credential client` | `pki/sign/client` | the same key and CSR, plus any `--uri-san` | the installation's: client auth, the SAN its consumer matches on |
+| `accessctl bao ssh -mode=ca -role=user …` | `ssh/sign/user` | the interactive session's own public key; `ssh`'s own agent handling and host key checking apply unchanged | user certificates only; `allowed_users` spelled out, never root; `key_id_format` `{{token_display_name}}`; no user-chosen key ids; extensions no wider than needed |
+| `accessctl bao write -field=signed_key ssh/sign/user public_key=@key.pub` | `ssh/sign/user` | the named public key, for scp, git, CI and Ansible instead of a live session | the same role as above |
+| the same two shapes with `-role=admin` / `ssh/sign/admin` | `ssh/sign/admin` | the same | a second role for the account that administers a host, granted to a separate group |
+| `accessctl pg` / `accessctl psql` | `pki/sign/db-client` | a CSR for an **ECDSA P-384** key, common name = the subject | `key_type ec`, `key_bits 384`; the one allowed name is the caller's own alias name on `jwt-roster` (`allowed_domains` = `{{identity.entity.aliases.<accessor>.name}}`, templated, bare); `cn_validations email`; client auth only; `no_store` |
+| `accessctl bao write <pki mount>/sign/<role> csr=@your.csr` | `pki/sign/<role>` | a hand-made CSR (an `openssl req -new` recipe is in [access-roster's connect/openbao.md](https://github.com/truvity/access-roster/blob/master/docs/connect/openbao.md)), plus any URI SAN it carries | the installation's: client auth, the SAN its consumer matches on |
 
-`model.SSHRole` and `model.CredentialRole` are exactly the first three,
+`model.SSHRole` and `model.CredentialRole` are exactly the roles above,
 with everything they do not allow spelled out by the apply; the example
 declares `user`, `admin` and `db-client`. A machine `client` role with URI
 SANs is not modelled.
 
+**opkssh is the target for people's own SSH**, an OpenID Connect ID token
+verified straight into `sshd`, no broker in between
+([access-roster's ADR 0011](https://github.com/truvity/access-roster/blob/master/docs/decisions/0011-ssh-people-opkssh-machines-and-hosts-openbao.md)):
+opkssh's client row must pin `signing_alg: RS256` or `ES256` (never this
+installation's ES384 default, which opkssh cannot verify at all), and
+`oidc:groups:<internal group>` policy is written on each server directly
+-- OpenBAO is not in this path at all. **The `user`/`admin` roles on the
+OpenBAO SSH CA in the table above stay supported until an installation
+has actually moved its hosts over**: this library keeps modelling them
+(`model.SSHRole`; the example declares `user` and `admin`), and retiring
+them, host by host, once its people sign in through opkssh instead, is
+the installation's own call to make and its own pace to make it at --
+neither this library nor access-roster puts a schedule on it.
+`accessctl bao ssh`/`accessctl bao write .../sign/<role>` stay the
+supported path for **machines** regardless of that cutover: a CI job or
+an in-cluster controller has no equivalent of opkssh's interactive or
+GitHub Actions provider model.
+
 - **The key id** of an SSH certificate is the login's display name:
   `<namespace>-auth-jwt-roster-<subject>`. An sshd log line is read
   against the issuer's audit trail by it.
-- **Where.** `--env <env>` is the namespace; `--namespace` or
-  `BAO_NAMESPACE` (then `VAULT_NAMESPACE`) overrides it. `--address` or
-  `BAO_ADDR` (then `VAULT_ADDR`) names the server. `--mount`,
-  `--login-role` and `--audience` override `jwt-roster`, `roster` and
+- **Where.** The namespace comes from `bao`'s own `-ns`/`-namespace` --
+  read out of the command being run, then `BAO_NAMESPACE`, then
+  `VAULT_NAMESPACE` -- never a separate flag of accessctl's own.
+  `--address` or `BAO_ADDR` (then `VAULT_ADDR`) names the server;
+  `--mount`, `--login-role` and `--audience` (accessctl's own flags, which
+  go BEFORE the `bao` subcommand) override `jwt-roster`, `roster` and
   `openbao`.
 - **A private root.** `--ca-cert <bundle>` or `BAO_CACERT` (then
   `VAULT_CACERT`) adds a PEM bundle to the system's roots for the OpenBAO
-  connection alone (accessctl 1.16.2 and later).
+  connection alone.
 - **The policy is `update` on the sign path and nothing else**: no `read`
   or `list` on a role or configuration path.
+- **The login is cached**, `0600`, under accessctl's own config
+  directory -- never `~/.vault-token`, never `bao`'s own token helper
+  file. `accessctl bao --forget` revokes it and clears the cache entry.
 - **Lifetimes** are capped by `Desired.CredentialMaxTTL`: the model
   refuses an SSH or credential role above it.
 
@@ -251,9 +323,18 @@ exchanged; nothing is stored in the repository or the runner.
    access-roster's GitHub Action writes only `k8s:` and `aws:` audiences,
    so for OpenBAO the job runs `accessctl`.
 3. `auth/jwt-roster/login` with `role=roster` in the namespace, the one
-   read (or one `sign`: `accessctl credential` runs unchanged in a job, and
-   `--identity` writes the SSH certificate to disk, since a job has no
-   agent), then `auth/token/revoke-self`.
+   read (or one `sign`: `accessctl bao write -field=signed_key
+   ssh/sign/<role> public_key=@key.pub > key-cert.pub`, or
+   `accessctl pg`/`accessctl psql`, run the same way in a job, since a job
+   has no agent).
+
+A job that logs in by hand, as the `curl` example below does, should
+revoke with `auth/token/revoke-self` explicitly on the way out, since
+nothing does it automatically: `accessctl bao`/`pg`/`psql` cache the
+OpenBAO login instead of revoking it, and would keep it for the rest of
+that same job run rather than logging in again per call, but a runner
+that is destroyed after the job either way makes an explicit `--forget`
+a tidiness choice, not a requirement.
 
 ```sh
 token=$(accessctl token --issuer "$ISSUER" --audience openbao)
@@ -287,7 +368,7 @@ refusal (the issuer's, or OpenBAO's 403), `5` for unreachable or a 5xx,
 | `400` "common name … not allowed by this role" | `pki/sign/db-client` | a common name that is not the caller's own subject | ask for your own; the role signs nobody else | yes |
 | `400` "role requires a minimum of a 384-bit key" | `pki/sign/<role>` | a key the role does not sign | `accessctl` sends P-384; a hand-made CSR must too | yes |
 | `400` "… is not a valid value for valid_principals" | `ssh/sign/<role>` | an account the role does not list | the role's `allowed_users` is the list; use the other role for the other account | yes |
-| `404` (`accessctl`: "does not exist: the mount or the role has not been created in this namespace") | the sign | the wrong `--env` or `--namespace`, or a role the installation does not have | check the namespace; the apply creates the roles | — |
+| `404` (`accessctl`: "does not exist: the mount or the role has not been created in this namespace") | the sign | the wrong namespace (`bao`'s own `-ns`/`-namespace`), or a role the installation does not have | check the namespace; the apply creates the roles | — |
 | the UI's sign-in button does nothing (an empty `auth_url`) | `auth/oidc/oidc/auth_url` | the callback is not an allowed redirect: the address in the model is not the one the browser uses | `model.UICallback` with the address browsers reach | yes |
 | the UI's callback fails with `invalid_client` at the issuer | the code redemption | the `oidc` mount holds a stale client secret | re-apply with the issuer's current secret | — |
 | `accessctl` exit `5` with "a private root? pass --ca-cert" | the TLS handshake | OpenBAO's certificate chains to a root the system does not know | `--ca-cert` or `BAO_CACERT` | — |

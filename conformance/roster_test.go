@@ -329,9 +329,9 @@ func TestRosterContract(t *testing.T) {
 		data, _ := answer["data"].(map[string]any)
 		assert.Equal(t, map[string]any{"value": "example-value"}, data["data"], "the viewer reads what the deployer wrote")
 
-		// The names, without the values: read on the data path alone tells
-		// nobody what there is to read, which is why the viewer's policy
-		// carries the metadata path too.
+		// The repository names, without a single value: read on the data
+		// path alone tells nobody what there is to read, which is why the
+		// viewer's policy carries the metadata path too.
 		listing, err := reads.Call(ctx, http.MethodGet, roster.Environment, names, nil)
 		require.NoError(t, err)
 		listed, _ := listing["data"].(map[string]any)
@@ -341,7 +341,7 @@ func TestRosterContract(t *testing.T) {
 			map[string]any{"data": map[string]any{"value": "not-the-viewer's"}})
 		requireStatus(t, err, http.StatusForbidden, "the viewer reads the prefix and writes none of it")
 
-		_, err = reads.Call(ctx, http.MethodGet, roster.Environment, roster.KVMount+"/data/another-project/local-dev/service/API_TOKEN", nil)
+		_, err = reads.Call(ctx, http.MethodGet, roster.Environment, roster.KVMount+"/data/another-project/local-dev/service", nil)
 		requireStatus(t, err, http.StatusForbidden, "the prefix is the boundary: another project is another grant")
 
 		// Which is how the two are told apart: inside the prefix a secret

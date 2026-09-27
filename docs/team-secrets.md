@@ -64,7 +64,7 @@ of the same names:
   point of the model is that there is exactly one.
 - **The viewer's metadata line is not decoration.** `read` on the data
   path alone tells nobody what there is to read: without `list` on the
-  metadata path a person must already know every variable's name.
+  metadata path a person must already know every repository's name.
 - **No `delete`, and no destroy.** Writing a value is routine; retiring
   one is rare, and destroying a version does not come back. Both stay with
   whoever operates the namespace. A team that must retire its own keys
@@ -121,16 +121,15 @@ by both — the tree is one level deep for exactly this reason
 ## 4. What the paths look like
 
 ```
-kv/data/{project}/{purpose}/{repository}/{VARIABLE}
-         orders    local-dev  checkout    API_TOKEN
+kv/data/{project}/{purpose}/{repository}
+         orders    local-dev  checkout
 ```
 
 | Segment | What it is | Who decides it |
 |---|---|---|
 | `{project}` | the prefix the three groups are granted on | the estate's project list |
 | `{purpose}` | what the values are for — `local-dev` for a laptop stack | the team |
-| `{repository}` | one repository of the project | the team |
-| `{VARIABLE}` | one variable, holding one field, `value` | the repository |
+| `{repository}` | one repository of the project, and one KV secret: every one of its variables is a FIELD of it, named after the variable (`API_TOKEN`, `DB_URL`, ... — never a placeholder like `value`) | the repository |
 
 **A repository is a path segment, not a grant.** Onboarding the project's
 second repository is a new segment under a prefix that is already granted:
@@ -138,17 +137,36 @@ no new group, no new policy, no change at the issuer, nothing to apply. It
 is the property the whole layout is chosen for, and the one to check
 first when somebody proposes a per-repository group.
 
-**One variable per path**, rather than one secret holding every variable
-of a repository. A rotation then touches exactly the path that rotated,
-two people rotating two variables do not race each other through a
-read-modify-write of one blob, and the list of variable names is the
-metadata listing rather than something written down beside it.
+**One secret per repository, one field per variable**, rather than one
+path per variable. `bao kv patch` merges a named field into a secret's
+existing data server-side ([§6](#6-how-the-owner-writes-and-rotates)), so
+two people rotating two different variables of the same repository do
+not race each other through a read-modify-write of one blob — the race a
+per-variable layout would otherwise exist to avoid is closed at the API
+instead, by never reading the other fields to begin with.
+
+**The trade, stated plainly rather than discovered at a rollback.** KV
+version 2 still versions every rotation, but now per SECRET rather than
+per variable: rotating one field advances the version every OTHER field
+of the same repository is read at too. "Back to exactly before this one
+variable changed" also means every sibling variable reverts to whatever
+it held at that same version, which may not be what it holds today. A
+repository whose variables genuinely rotate independently enough that
+this matters is a repository that has outgrown "purpose" as the only
+axis, and is a candidate for its own `{purpose}` segment, not a return to
+one path per variable.
+
+A single field's own name being the variable's name, and never a
+placeholder, is what lets a plain `bao kv get -format=env` render an
+entire repository straight into a dotenv file with no renaming step: see
+[§5](#5-how-a-person-reads).
 
 ## 5. How a person reads
 
-Four calls, and nothing is stored: no OpenBAO token on the laptop, no
-client secret, no long-lived key
-([access-roster.md §5](integrations/access-roster.md#5-credentials-what-accessctl-credential-calls)
+Nothing is stored beyond the login itself: no client secret, no
+long-lived key, and no OpenBAO token accessctl does not already manage
+`0600` on its own
+([access-roster.md §5](integrations/access-roster.md#5-openbao-through-accessctl-bao-accessctl-pgpsql-and-opkssh-for-people)
 is the same shape for certificates).
 
 1. **Exchange** the issuer's session for a token whose audience is
@@ -157,62 +175,113 @@ is the same shape for certificates).
 2. **Log in** at `auth/jwt-roster/login` with `role=roster`, in the
    namespace that is the environment. The token's `groups` become the
    policies; the answer's `identity_policies` is what was actually held.
-3. **List and read** under `kv/metadata/{project}/{purpose}/{repository}`
-   and `kv/data/...`.
-4. **`auth/token/revoke-self`**, at the end, always — including after a
-   failure. The login's TTL is the fallback, not the plan.
+3. **Read** `kv/data/{project}/{purpose}/{repository}` — the repository's
+   whole secret, every variable a field of it, in one call.
+4. Nothing revokes the login by default: it is cached and reused until it
+   nears its own expiry, the same as any other accessctl login.
+   `--forget` revokes it early; whether that is worth doing is below.
+
+`accessctl bao` makes steps 1 and 2 for you, then runs the real `bao`
+unchanged for step 3:
 
 ```sh
-token=$(accessctl token --issuer "$ISSUER" --audience openbao)
-login=$(jq -n --arg jwt "$token" '{role: "roster", jwt: $jwt}' |
-  curl -fsS -H "X-Vault-Namespace: dev" -X POST --data @- "$BAO_ADDR/v1/auth/jwt-roster/login")
+accessctl bao kv get -ns=dev -mount=kv -format=env orders/local-dev/checkout > .env
+chmod 0600 .env
 ```
 
-Those four calls are one verb on the issuer's own CLI, `accessctl secrets
-env`, since accessctl 1.22.0:
+One call, because the repository's whole secret is one call: every field
+comes back at once, and `-format=env` renders each straight into a
+correctly-named dotenv line, since a field's own name is the variable's
+name ([§4](#4-what-the-paths-look-like)) — no listing, no loop, no
+renaming step between OpenBAO's answer and the file. The properties to
+keep, because a repository's `make secrets` target is this one line:
 
-```sh
-accessctl secrets env --namespace dev --prefix orders/local-dev/checkout --out .env
-```
+- write the file `0600` and keep it in `.gitignore`;
+- redirecting with `>` already truncates, so a variable removed upstream
+  never survives as a stale line — resist the urge to reach for `>>` here;
+- never print a value, in whatever the target logs on success or
+  failure;
+- **a missing path, or a path with no fields left in it, must fail the
+  target.** `bao` itself exits non-zero on a path that does not exist,
+  which already fails the target if its own exit code is checked; a
+  path that exists but holds zero fields is not a `bao` error at all —
+  `-format=env` renders whatever fields there are, which for zero fields
+  is nothing, and passes `bao`'s own (successful) exit code through
+  unchanged — so the target must check that the file it wrote is
+  non-empty itself, the same way the removed `accessctl secrets env`
+  command used to fail on a listing of zero names. An empty `.env` is
+  the failure mode nobody notices: the stack starts with every variable
+  unset and reads as merely misconfigured, days later and never at the
+  fetch;
+- a `403` from `bao` already names the path; surface it as `bao` gives
+  it, because "permission denied" on a path reads as a mistake in the
+  path and almost never is.
 
-It makes the same exchange and login, lists the prefix's metadata, reads
-every leaf below it, writes the file and revokes the token on the way
-out. The properties to know, because a repository's `make secrets` target
-is the whole integration:
+**Listing still has a job, just a smaller one.** The viewer's metadata
+grant now answers "which repositories does this purpose hold"
+(`bao kv list -ns=dev -mount=kv orders/local-dev`), not "which variables
+does this repository hold" — there is no sub-listing inside one secret.
+A `make secrets` target that already knows its own repository's name
+never needs to list at all.
 
-- the file is `0600` and belongs in `.gitignore`; a second run rewrites
-  it, so a rotation is picked up by running it again;
-- only the **names** are printed, to stderr, with the file and the count —
-  never a value, there or in any failure;
-- **a run that reads zero keys fails** and leaves whatever file was there
-  alone. An empty `.env` is the failure mode nobody notices: the stack
-  starts, every variable is unset, and it reads as a service that is
-  merely misconfigured, days later and never at the fetch;
-- a `403` is reported as a `403` with the group named, because
-  "permission denied" on a path reads as a mistake in the path and almost
-  never is.
-
-The four calls are still the contract; the verb is one implementation of
-them, and anything that can exchange, log in, list and read is another
-([its reference](https://github.com/truvity/access-roster/blob/master/docs/reference/accessctl.md)
-has the flags and the file's shape).
-
-The same four calls are what a CI job makes, with the job's own identity
-and its own one-path grant
-([access-roster.md §6](integrations/access-roster.md#6-ci-jobs)).
+The same read is what a CI job makes, with the job's own identity and its
+own one-path grant
+([access-roster.md §6](integrations/access-roster.md#6-ci-jobs)) — a job
+exchanges its own token afresh every run and keeps no login cache to
+`--forget` in the first place.
 
 ## 6. How the owner writes and rotates
 
 A deployer or an approver writes directly — the web UI in the right
-namespace, or the CLI:
+namespace, or `accessctl bao`, which authenticates and hands the call to
+the real `bao` unchanged.
+
+**The first write, creating the repository's secret**, is `kv put`:
 
 ```sh
-bao kv put -mount=kv orders/local-dev/checkout/API_TOKEN value=...
+accessctl bao kv put -ns=dev -mount=kv orders/local-dev/checkout API_TOKEN=... DB_URL=...
+```
+
+**`kv put` REPLACES every field of the path with exactly what this call
+names — always, not only the first time.** Fine here, since there is
+nothing yet to replace; run it again on a secret that already holds
+other variables and it deletes them, because the second write's data
+*is* the whole secret from then on, not a merge on top of what was
+there. Every write after the first is `kv patch` instead, which merges
+one field into whatever the secret already holds:
+
+```sh
+accessctl bao kv patch -ns=dev -mount=kv orders/local-dev/checkout API_TOKEN=...
+```
+
+**Adding a new variable to an existing repository is the same `kv
+patch`**, naming the new field: no new path, no new grant, nothing to
+apply — the repository's three groups already reach it, because they are
+granted on the whole prefix, not on today's fields. Rotating one variable
+of several never touches the others: `patch` tries an HTTP `PATCH`
+first, and — since none of the three roles above grants `patch` on
+`kv/data/*`, only `create`, `read` and `update` — falls back on its own
+to a read, a local merge and a write, verified against `bao kv patch -h`
+in this repository's own devbox (OpenBAO 2.6.2). Either way, the two
+fields nobody named are read back unchanged.
+
+**Removing one variable without touching the others** is `kv patch`'s
+own `-remove-data`, confirmed against the same help text — not `kv put`
+with the field left out, which would happen to produce the same result
+here only because there is nothing else left to lose; `-remove-data`
+says plainly what happened, and stays correct the day the repository
+holds a third variable neither call should touch:
+
+```sh
+accessctl bao kv patch -ns=dev -mount=kv -remove-data=API_TOKEN orders/local-dev/checkout
 ```
 
 Rotating is writing again: KV version 2 keeps the previous version, every
 reader has the new value on their next read, and nothing is granted,
-applied or announced. Two things to keep straight:
+applied or announced. **The version is the repository's now, not a single
+variable's** ([§4](#4-what-the-paths-look-like)): rotating or removing
+one field advances the version every OTHER field of the same repository
+is read at too. Two more things to keep straight:
 
 - **Rotate at the source first, then write here.** A new value in OpenBAO
   is not a rotation of anything; the credential is still valid wherever it
@@ -267,12 +336,13 @@ Two subtests of
 real `bao server -dev` and an issuer in access-issuer's shape:
 
 - *a project's prefix: the deployers write it, the engineers read it* —
-  the deployer writes the secret, the viewer reads that value back and
-  lists the names, the viewer's write is refused, a read outside the
-  prefix is refused, a missing path inside the prefix is a 404 (which is
-  how the two are told apart: 403 means the policy never reached the
-  path), a rotation is picked up by the next read, and the approver
-  writes the same prefix the deployer does.
+  the deployer writes the repository's secret, the viewer reads it back
+  and lists its purpose for the repository names inside it, the viewer's
+  write is refused, a read outside the prefix is refused, a missing path
+  inside the prefix is a 404 (which is how the two are told apart: 403
+  means the policy never reached the path), a rotation is picked up by
+  the next read, and the approver writes the same prefix the deployer
+  does.
 - *membership is the issuer's: the next token decides the next read* — the
   same person without the project group, then with no groups at all, then
   with a group name OpenBAO was never told about: a login every time, and
