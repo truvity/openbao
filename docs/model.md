@@ -36,12 +36,15 @@ Each namespace (`root` included) holds the same engines:
 | `policies[]` | ACL | named policies, rule by rule, in order |
 | `groups[]` | identity | a group's policies and the doors it is admitted through |
 
-**The namespace tree is one level.** Root, and one namespace per
+**The namespace tree is one level, today.** Root, and one namespace per
 environment. A project, a team or a tenant is a policy path
 (`kv/data/<project>/*`) and an identity group inside its environment's
-namespace, never a namespace of its own: a namespace per project multiplies
-mounts, issuing CAs and logins for no isolation a policy does not already
-give. `Validate` refuses a namespace name with a `/`.
+namespace, never a namespace of its own. `Validate` refuses a namespace
+name with a `/`. [ADR 0001](decisions/0001-namespaces-are-environment-project.md)
+decides that a project gets its own namespace, `<environment>/<project>`,
+holding mounts alone while logins, policies and identity groups stay at
+the environment — the model gains nested project namespaces in a later
+release; this section describes what `pkg/model` accepts today.
 
 Two worked examples, the small one first:
 
