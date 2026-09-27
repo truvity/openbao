@@ -125,12 +125,11 @@ time, drain the old role, retire it.
   namespace cost for isolation it may not strictly need — accepted,
   because the alternative is two shapes to maintain and explain instead
   of one.
-- [model.md](../model.md)'s "the namespace tree is one level" statement
-  describes the model's current behaviour and is not itself changed by
-  this record: the model gains nested project namespaces in a later
-  release. Until then, a consuming estate that wants this record's
-  namespace shape derives it from a single-level model the same way it
-  derives anything else the model does not yet express directly.
+- `pkg/model` now carries this shape directly: `Namespace.Projects`, one
+  `ProjectNamespace` per project ([model.md](../model.md#projects-environmentproject)).
+  A consuming estate no longer derives it from a single-level model; it
+  writes the project into the desired state like anything else the model
+  expresses.
 - A project is deleted along with everything in it; there is no
   soft-delete or export step this record specifies. An estate that needs
   one builds it in its own migration tooling.

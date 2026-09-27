@@ -88,6 +88,8 @@ func TestExamplesAreValidAndCanonical(t *testing.T) {
 func TestValidateRefuses(t *testing.T) {
 	dev := func(d *model.Desired) *model.Namespace { return &d.Namespaces[0] }
 	pki := func(d *model.Desired) *model.PKIMount { return &dev(d).PKI[0] }
+	project := func(d *model.Desired) *model.ProjectNamespace { return &dev(d).Projects[0] }
+	projectPKI := func(d *model.Desired) *model.PKIMount { return &project(d).PKI[0] }
 	policyNamed := func(d *model.Desired, name string) *model.Policy {
 		for i := range dev(d).Policies {
 			if dev(d).Policies[i].Name == name {
@@ -170,6 +172,63 @@ func TestValidateRefuses(t *testing.T) {
 		{"a credential role beyond the ceiling", "credential ceiling", func(d *model.Desired) {
 			pki(d).CredentialRoles[0].TTL = "2h"
 			pki(d).CredentialRoles[0].MaxTTL = "2h"
+		}},
+		{"root declaring a project", "hold no project", func(d *model.Desired) {
+			d.Root.Projects = []model.ProjectNamespace{{Name: "infra"}}
+		}},
+		{"a project with no name", "has no name", func(d *model.Desired) { project(d).Name = "" }},
+		{"a project with an unsafe name", "not a plain name", func(d *model.Desired) { project(d).Name = "billing/x" }},
+		{"a project declared twice", "declares project", func(d *model.Desired) {
+			dev(d).Projects = append(dev(d).Projects, *project(d))
+		}},
+		{"a project sharing a namespace mount's name", "shares its name with a mount", func(d *model.Desired) {
+			project(d).Name = dev(d).KV[0].Path
+		}},
+		{"a project KV mount declared twice", "declares mount", func(d *model.Desired) {
+			project(d).KV = append(project(d).KV, project(d).KV[0])
+		}},
+		{"a project PKI issuer self-signed", "not signed by another issuer", func(d *model.Desired) {
+			projectPKI(d).Issuers[0].SignedBy = nil
+			projectPKI(d).Issuers[0].SelfSigned = true
+		}},
+		{"a project PKI credential role", "has no auth mount", func(d *model.Desired) {
+			projectPKI(d).CredentialRoles = []model.CredentialRole{{
+				Name: "x", Issuer: projectPKI(d).DefaultIssuer, SubjectMount: "jwt-people",
+				Client: true, KeyCurve: model.CurveP384, TTL: "1h", MaxTTL: "1h",
+			}}
+		}},
+		{"a project PKI issuer signed by its own root, not its environment", "not an issuer this environment declares directly", func(d *model.Desired) {
+			projectPKI(d).Issuers[0].SignedBy = &model.IssuerRef{Mount: "pki-root", Issuer: "example-root"}
+		}},
+		{"a policy naming a project's undeclared mount", "which the project does not hold", func(d *model.Desired) {
+			policyNamed(d, "dev:billing:reader").Rules[0].Path = "billing/pki-none/data/*"
+		}},
+		{"an environment issuer with no path length left to sign its project's CA", "too few for the", func(d *model.Desired) {
+			pki(d).Issuers[0].MaxPathLength = 0
+		}},
+		{"an environment policy rule that is a bare wildcard", "reaches with a glob", func(d *model.Desired) {
+			dev(d).Policies = append(dev(d).Policies, model.Policy{
+				Name: "dev:everything", Rules: []model.Rule{{Path: "*", Capabilities: []string{model.CapRead}}},
+			})
+		}},
+		{"an environment policy rule with a prefix glob that could match a project", "reaches with a glob", func(d *model.Desired) {
+			dev(d).Policies = append(dev(d).Policies, model.Policy{
+				Name: "dev:billing-ish", Rules: []model.Rule{{Path: "bill*/kv/data/*", Capabilities: []string{model.CapRead}}},
+			})
+		}},
+		{"an environment policy rule with a + segment", "reaches with a glob", func(d *model.Desired) {
+			dev(d).Policies = append(dev(d).Policies, model.Policy{
+				Name: "dev:plus", Rules: []model.Rule{{Path: "+/kv/data/*", Capabilities: []string{model.CapRead}}},
+			})
+		}},
+		{"a project name with a glob character", "not a plain name", func(d *model.Desired) { project(d).Name = "wal*" }},
+		{"a policy naming a project this environment no longer declares", "which this environment does not declare", func(d *model.Desired) {
+			// "billing" stays a real project name in the model (prod's now,
+			// with no mounts of its own), so the rule below is still read as
+			// a project reference -- but dev, which the rule is IN, renamed
+			// its own.
+			project(d).Name = "renamed"
+			d.Namespaces[1].Projects = []model.ProjectNamespace{{Name: "billing"}}
 		}},
 		{"an SSH role for root", "allows root", func(d *model.Desired) {
 			r := &dev(d).SSH[0].Roles[0]
@@ -333,4 +392,59 @@ func TestJWTMountAlgorithms(t *testing.T) {
 func TestServiceAccountSubject(t *testing.T) {
 	assert.Equal(t, "system:serviceaccount:external-secrets:external-secrets",
 		model.ServiceAccountSubject("external-secrets", "external-secrets"))
+}
+
+func TestProjectPath(t *testing.T) {
+	assert.Equal(t, "billing/kv/data/*", model.ProjectPath("billing", "kv", "data/*"))
+}
+
+// The example's own project, applied and re-derived: a project namespace
+// holds mounts alone, and Validate accepts a policy that reaches into it
+// by ProjectPath's shape.
+func TestExampleProject(t *testing.T) {
+	desired := example(t)
+	dev := &desired.Namespaces[0]
+
+	require.Len(t, dev.Projects, 1)
+	billing := &dev.Projects[0]
+	assert.Equal(t, "billing", billing.Name)
+	assert.NotEmpty(t, billing.KV)
+	assert.NotEmpty(t, billing.PKI)
+
+	for _, policy := range dev.Policies {
+		if policy.Name != "dev:billing:reader" {
+			continue
+		}
+
+		for _, rule := range policy.Rules {
+			assert.True(t, strings.HasPrefix(rule.Path, "billing/kv/"), rule.Path)
+		}
+	}
+}
+
+// TestSignerDepthCountsTheWholeChain is ADR 0001's PKI half: an
+// environment's own issuing CA needs MaxPathLength at least 1 to sign its
+// project's issuing CA, not 0 -- 0 is accepted only once nothing is
+// signed beneath it any more. The message names both issuers, so a
+// review knows exactly which CA to widen and which one asked for it.
+func TestSignerDepthCountsTheWholeChain(t *testing.T) {
+	desired := example(t)
+	dev := &desired.Namespaces[0]
+	envIssuer := &dev.PKI[0].Issuers[0]
+	require.Equal(t, "example-dev", envIssuer.Name)
+
+	require.Equal(t, 1, envIssuer.MaxPathLength, "the golden already carries exactly enough for the one project beneath it")
+	require.NoError(t, desired.Validate(), "1 is enough for the one project beneath it")
+
+	envIssuer.MaxPathLength = 0
+	err := desired.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too few for the")
+	assert.Contains(t, err.Error(), "example-dev", "the signer")
+	assert.Contains(t, err.Error(), "example-dev-billing", "the project CA it cannot cover any more")
+
+	// Removing the project it signs is the other way to make 0 correct
+	// again: nothing is beneath it any more.
+	dev.Projects = nil
+	require.NoError(t, desired.Validate())
 }

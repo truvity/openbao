@@ -33,18 +33,15 @@ Each namespace (`root` included) holds the same engines:
 | `pki[]` | PKI | a mount, the issuers whose keys it holds, host-name roles and credential roles |
 | `ssh[]` | SSH | a user CA whose key OpenBAO generates, and its roles |
 | `auth[]` | JWT/OIDC | who issues the tokens a mount accepts, and its roles |
+| `projects[]` | -- | this namespace's own [`ProjectNamespace`](#projects-environmentproject)s, an environment only |
 | `policies[]` | ACL | named policies, rule by rule, in order |
 | `groups[]` | identity | a group's policies and the doors it is admitted through |
 
-**The namespace tree is one level, today.** Root, and one namespace per
-environment. A project, a team or a tenant is a policy path
-(`kv/data/<project>/*`) and an identity group inside its environment's
-namespace, never a namespace of its own. `Validate` refuses a namespace
-name with a `/`. [ADR 0001](decisions/0001-namespaces-are-environment-project.md)
-decides that a project gets its own namespace, `<environment>/<project>`,
-holding mounts alone while logins, policies and identity groups stay at
-the environment — the model gains nested project namespaces in a later
-release; this section describes what `pkg/model` accepts today.
+**The namespace tree is `<environment>/<project>`.** Root, one namespace
+per environment directly below it, and, below each environment, one
+namespace per project ([ADR 0001](decisions/0001-namespaces-are-environment-project.md)).
+`Validate` refuses a namespace or project name with a `/`, a space, `..`,
+`*` or `+` — a single, plain path segment or nothing.
 
 Two worked examples, the small one first:
 
@@ -59,10 +56,91 @@ Two worked examples, the small one first:
 - [`desired.yaml`](../pkg/model/testdata/desired.yaml) — **the whole
   shape**: the same root and intermediate, a second intermediate signed
   outside OpenBAO, an SSH user CA, the web UI's door, credential roles,
-  and two environments.
+  two environments, and one project (`billing`, in `dev`) beside `dev`'s
+  own KV mount.
 
 Neither is a template to copy: an estate derives its own model from its
 own sources. They are what every field looks like when it is filled in.
+
+### Projects: `<environment>/<project>`
+
+A [`ProjectNamespace`](../pkg/model/project.go) is one project, nested one
+level below its environment. It holds mounts and nothing that admits
+anybody: `kv[]` and `pki[]` today, Transit later — never `auth[]`,
+`policies[]`, `groups[]`, `ssh[]`, `sshHost[]`, or a nested `projects[]` of
+its own. It is a type of its own, not [`Namespace`](../pkg/model/desired.go)
+reused with a runtime flag, for the same reason [`SSHHostMount`](#ssh) is a
+sibling type of `SSHMount` rather than a `kind` on it: most of what ADR
+0001 refuses, this refuses simply by having no field to write it in, which
+`Validate` never needs to check at all.
+
+**An environment holds its own platform mounts *and* its projects, side by
+side.** `dev`'s own `kv[]` is the operators' own KV mount — their secrets,
+their environment's issuing CA, their SSH CAs — exactly as before this
+record; `dev.projects[]` is where a tenant's, a team's or a partner's own
+mounts live instead. Nothing about adding a project forces platform data
+into one, and nothing stops an environment with no projects at all from
+looking exactly as it always has.
+
+**A project's issuing CA is signed by its own environment's issuer, and
+only that.** `PKIIssuer.SignedBy` inside a `ProjectNamespace` must name a
+mount and issuer the SAME environment declares directly — never root's,
+never a sibling project's, never the project's own root or an external
+signer. `Validate` refuses any of those; a project's chain is always root
+→ ... → the environment's issuing CA → the project's issuing CA → its
+leaves.
+
+**An environment's own issuing CA needs `MaxPathLength` at least 1 once
+it signs a project's.** A path-length constraint counts the WHOLE
+remaining chain below an issuer, not just the next hop (RFC 5280
+4.2.1.9): root → a domain intermediate → an environment's issuing CA → a
+project's issuing CA is four levels, and every issuer above the bottom
+one needs a budget wide enough for everything still beneath it —
+`Validate` (`Desired.validateSignerDepth`) refuses an issuer whose
+`MaxPathLength` is too short for the deepest chain the model actually
+puts below it, naming both the issuer and the descendant it cannot cover,
+before anything is applied. `MaxPathLength: 0` still means exactly what
+it always has — this issuer signs no further CA at all — so adding a
+project to an environment whose own issuing CA was declared with 0 is a
+model change this record's own validation refuses until that issuer's
+`MaxPathLength` is raised.
+
+**Raising an existing environment CA's `MaxPathLength` is not something
+OpenBAO lets you do in place.** The value is set once, when the issuer is
+created (`selfSigned`/an intermediate's certificate request), and is part
+of what makes the certificate the certificate it is — changing it means
+generating a new issuer (a new key, or the same key re-signed under a new
+name) and migrating every role and project below the old one across, the
+same shape [ADR 0001](decisions/0001-namespaces-are-environment-project.md)'s
+own migration section describes for a KV path. An environment CA that
+will ever sign a project should therefore be given `MaxPathLength: 1` (or
+more, for a deeper hierarchy still to come) from the day it is created,
+even before its first project exists — cheaper than a CA migration later.
+
+**A policy at the environment reaches a project's mount by path.**
+[`model.ProjectPath(project, mount, subpath)`](../pkg/model/project.go)
+builds `<project>/<mount>/<subpath>`; a token that logs in at the
+environment and holds a policy naming it reads
+`<environment>/<project>/<mount>/<subpath>` with no second login (ADR
+0001, proved against a real server in `conformance/project_test.go`).
+`Validate` refuses a rule that names a project the environment does not
+actually declare, or a mount inside it the project does not hold, and —
+because the SAME path shape is how a rule reaches the environment's own
+mounts (`kv/data/*`) and a project's (`billing/kv/data/*`) alike, with no
+namespace hop to tell them apart — it also refuses any environment-level
+rule whose FIRST path segment carries a glob (`*` or `+`) rather than one
+literal name: `*` and a prefix glob such as `bill*` reach every project
+the environment declares (a partner's among them) exactly as readily as
+the environment's own mounts, whether or not a project happens to collide
+with the glob today. A rule that means one project names it in full
+(`ProjectPath` or its equivalent); a rule that means only the
+environment's own mount already spells that mount out first
+(`kv/data/*`, `pki/sign/service`, `ssh/sign/runner`) and is untouched,
+since the glob there sits after the first segment, never in it.
+
+Deleting a project deletes its mounts, then its namespace: OpenBAO refuses
+to delete a namespace that still has children, so nothing here is a
+one-step operation.
 
 ### The bootstrap
 
@@ -322,8 +400,8 @@ name never changes in a minor version**:
 
 | Resource | Logical name (`<ns>` is the namespace; `root` for root) |
 |---|---|
-| namespace | `ns-<ns>` |
-| KV, PKI, SSH and SSH host mounts | `<path>` in root, `<ns>-<path>` in a namespace |
+| namespace | `ns-<ns>`; a project's is `ns-<environment>-<project>` |
+| KV, PKI, SSH and SSH host mounts | `<path>` in root, `<ns>-<path>` in a namespace -- `<environment>-<project>-<path>` inside a project |
 | canary | `<ns>-<canary>` |
 | policy | `<ns>-policy-<name>` (`:` becomes `-`) |
 | auth mount | `<ns>-auth-<path>` |

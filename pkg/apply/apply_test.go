@@ -204,7 +204,7 @@ func TestResultCarriesTheOutputs(t *testing.T) {
 	_, result, err := deploy(t, example(t), options(), false)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"dev", "prod"}, result.Namespaces)
+	assert.Equal(t, []string{"dev", "dev/billing", "prod"}, result.Namespaces, "a project's namespace, right after its environment's own")
 	assert.Contains(t, result.Certificates, "example-root")
 	assert.Len(t, result.Certificates, 1, "only a self-signed issuer is a trust anchor the apply makes")
 	assert.Contains(t, result.CertificateRequests, "example-edge")
@@ -251,14 +251,23 @@ func TestNoConstraintIsSentEmpty(t *testing.T) {
 	}
 }
 
-// A root resource carries no namespace, an environment's always does, and
-// a leaf role is the one PKI object that is not protected.
+// A root resource carries no namespace, an environment's always does, a
+// project's carries its full slash-joined path (never its dashed logical
+// name), and a leaf role is the one PKI object that is not protected.
 func TestNamespacesAndProtection(t *testing.T) {
 	m, _, err := deploy(t, example(t), options(), false)
 	require.NoError(t, err)
 
 	for _, r := range m.sorted() {
 		switch {
+		// The project's own namespace resource is created IN dev, and its
+		// issuer's signature is made by dev's own issuer, in dev -- both
+		// carry dev, never dev/billing, the namespace everything else
+		// registered inside the project does.
+		case r.Name == "ns-dev-billing", r.Name == "example-dev-billing-signed":
+			assert.Equal(t, "dev", r.Inputs["namespace"], r.Name)
+		case strings.HasPrefix(r.Name, "dev-billing-"), strings.HasPrefix(r.Name, "example-dev-billing"):
+			assert.Equal(t, "dev/billing", r.Inputs["namespace"], r.Name)
 		case strings.HasPrefix(r.Name, "root-"), strings.HasPrefix(r.Name, "pki-"):
 			assert.NotContains(t, r.Inputs, "namespace", r.Name)
 		case strings.HasPrefix(r.Name, "dev-"):

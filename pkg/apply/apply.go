@@ -161,20 +161,12 @@ func checkInputs(desired *model.Desired, opts *Options) error {
 
 	issuers := map[string]string{}
 
-	for _, namespace := range desired.Applied() {
-		for i := range namespace.Auth {
-			mount := &namespace.Auth[i]
-			if mount.Type == model.MethodOIDC && opts.OIDCClientSecrets[mount.ClientID] == nil {
-				return fmt.Errorf("apply: %s oidc mount %s signs in as %s, whose secret is not in OIDCClientSecrets",
-					namespace.Label(), mount.Path, mount.ClientID)
-			}
-		}
-
-		for i := range namespace.PKI {
-			mount := &namespace.PKI[i]
+	checkPKI := func(label string, mounts []model.PKIMount) error {
+		for i := range mounts {
+			mount := &mounts[i]
 			for j := range mount.Issuers {
 				issuer := &mount.Issuers[j]
-				where := namespace.Label() + "/" + mount.Path
+				where := label + "/" + mount.Path
 
 				if other, taken := issuers[issuer.Name]; taken {
 					return fmt.Errorf("apply: issuer %q is declared in %s and in %s; issuer names are unique across the server", issuer.Name, other, where)
@@ -185,6 +177,29 @@ func checkInputs(desired *model.Desired, opts *Options) error {
 				if issuer.External && opts.SignedChain == nil {
 					return fmt.Errorf("apply: issuer %s/%s is external and no SignedChain is given", where, issuer.Name)
 				}
+			}
+		}
+
+		return nil
+	}
+
+	for _, namespace := range desired.Applied() {
+		for i := range namespace.Auth {
+			mount := &namespace.Auth[i]
+			if mount.Type == model.MethodOIDC && opts.OIDCClientSecrets[mount.ClientID] == nil {
+				return fmt.Errorf("apply: %s oidc mount %s signs in as %s, whose secret is not in OIDCClientSecrets",
+					namespace.Label(), mount.Path, mount.ClientID)
+			}
+		}
+
+		if err := checkPKI(namespace.Label(), namespace.PKI); err != nil {
+			return err
+		}
+
+		for i := range namespace.Projects {
+			project := &namespace.Projects[i]
+			if err := checkPKI(namespace.Label()+"/"+project.Name, project.PKI); err != nil {
+				return err
 			}
 		}
 	}

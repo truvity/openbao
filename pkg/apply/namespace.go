@@ -125,6 +125,15 @@ func (a *applier) namespace(namespace *model.Namespace) error {
 		}
 	}
 
+	// Projects nest below this namespace's OWN mounts, never before them: a
+	// project's issuing CA is signed by an issuer just registered above
+	// (model.Namespace.validateProjects already refused any other signer).
+	for i := range namespace.Projects {
+		if err := a.projectNamespace(s, &namespace.Projects[i]); err != nil {
+			return err
+		}
+	}
+
 	for i := range namespace.KV {
 		if err := a.kvMount(s, &namespace.KV[i]); err != nil {
 			return err
@@ -388,13 +397,16 @@ func (a *applier) group(
 }
 
 // mountName is a secrets engine's logical name: its path in root, and
-// `<namespace>-<path>` in a namespace.
+// `<namespace>-<path>` in a namespace -- `<environment>-<project>-<path>`
+// in a project, since s.namespace.Name there is the real, slash-joined
+// OpenBAO namespace path (`<environment>/<project>`), and a logical name
+// never carries the `/` a URN segment would parse.
 func mountName(s *scope, path string) string {
 	if s.namespace.Name == "" {
 		return path
 	}
 
-	return s.namespace.Name + "-" + path
+	return strings.ReplaceAll(s.namespace.Name, "/", "-") + "-" + path
 }
 
 // resourceName makes a group or policy name safe inside a Pulumi resource

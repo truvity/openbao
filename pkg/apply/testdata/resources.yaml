@@ -14,6 +14,33 @@
     maxRetries: 2
     skipChildToken: true
 - type: vault:identity/group:Group
+  name: dev-group-dev-billing-reader
+  dependsOn:
+    - dev-policy-dev-billing-reader
+    - ns-dev
+  inputs:
+    metadata:
+      source: example directory
+    name: dev:billing:reader
+    namespace: dev
+    policies:
+      - dev:billing:reader
+    type: external
+- type: vault:identity/group:Group
+  name: dev-group-dev-billing-reader-oidc
+  dependsOn:
+    - dev-policy-dev-billing-reader
+    - ns-dev
+  inputs:
+    metadata:
+      door: oidc
+      source: example directory
+    name: dev:billing:reader@oidc
+    namespace: dev
+    policies:
+      - dev:billing:reader
+    type: external
+- type: vault:identity/group:Group
   name: dev-group-dev-db-client
   dependsOn:
     - dev-policy-dev-db-client
@@ -145,6 +172,28 @@
       - all:openbao:operator
     type: external
 - type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-billing-reader
+  dependsOn:
+    - dev-auth-jwt-people
+    - dev-group-dev-billing-reader
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-billing-reader_id
+    mountAccessor: dev-auth-jwt-people#accessor
+    name: dev:billing:reader
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
+  name: dev-alias-dev-billing-reader-oidc
+  dependsOn:
+    - dev-auth-oidc
+    - dev-group-dev-billing-reader-oidc
+    - ns-dev
+  inputs:
+    canonicalId: dev-group-dev-billing-reader-oidc_id
+    mountAccessor: dev-auth-oidc#accessor
+    name: dev:billing:reader
+    namespace: dev
+- type: vault:identity/groupAlias:GroupAlias
   name: dev-alias-dev-db-client
   dependsOn:
     - dev-auth-jwt-people
@@ -252,6 +301,29 @@
     canonicalId: root-group-all-openbao-operator-oidc_id
     mountAccessor: root-auth-oidc#accessor
     name: all:openbao:operator
+- type: vault:index/mount:Mount
+  name: dev-billing-kv
+  dependsOn:
+    - ns-dev-billing
+  inputs:
+    description: billing's own secrets
+    namespace: dev/billing
+    options:
+      version: "2"
+    path: kv
+    type: kv
+- type: vault:index/mount:Mount
+  name: dev-billing-pki
+  protect: true
+  dependsOn:
+    - ns-dev-billing
+  inputs:
+    defaultLeaseTtlSeconds: 604800
+    description: billing's own issuing CA, signed by the dev environment's own issuer
+    maxLeaseTtlSeconds: 2.592e+06
+    namespace: dev/billing
+    path: pki
+    type: pki
 - type: vault:index/mount:Mount
   name: dev-kv
   dependsOn:
@@ -362,9 +434,31 @@
   inputs:
     path: dev
 - type: vault:index/namespace:Namespace
+  name: ns-dev-billing
+  dependsOn:
+    - ns-dev
+  inputs:
+    namespace: dev
+    path: billing
+- type: vault:index/namespace:Namespace
   name: ns-prod
   inputs:
     path: prod
+- type: vault:index/policy:Policy
+  name: dev-policy-dev-billing-reader
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: dev:billing:reader
+    namespace: dev
+    policy: |
+      path "billing/kv/data/*" {
+        capabilities = ["read"]
+      }
+
+      path "billing/kv/metadata/*" {
+        capabilities = ["list", "read"]
+      }
 - type: vault:index/policy:Policy
   name: dev-policy-dev-db-client
   dependsOn:
@@ -808,6 +902,26 @@
     name: restore-canary
     namespace: prod
 - type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
+  name: dev-billing-pki-auto-tidy
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - dev-billing-pki-default
+    - example-dev-billing-issuer
+  inputs:
+    backend: pki
+    enabled: true
+    intervalDuration: 24h
+    issuerSafetyBuffer: 8760h
+    maintainStoredCertificateCounts: true
+    namespace: dev/billing
+    publishStoredCertificateCountMetrics: true
+    safetyBuffer: 720h
+    tidyCertStore: true
+    tidyExpiredIssuers: false
+    tidyRevokedCertIssuerAssociations: true
+    tidyRevokedCerts: true
+- type: vault:pkiSecret/backendConfigAutoTidy:BackendConfigAutoTidy
   name: dev-pki-auto-tidy
   protect: true
   dependsOn:
@@ -905,6 +1019,18 @@
     tidyRevokedCertIssuerAssociations: true
     tidyRevokedCerts: true
 - type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
+  name: dev-billing-pki-default
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - example-dev-billing-issuer
+    - ns-dev-billing
+  inputs:
+    backend: pki
+    default: example-dev-billing-issuer#issuerId
+    defaultFollowsLatestIssuer: false
+    namespace: dev/billing
+- type: vault:pkiSecret/secretBackendConfigIssuers:SecretBackendConfigIssuers
   name: dev-pki-default
   protect: true
   dependsOn:
@@ -958,6 +1084,23 @@
     backend: pki-root
     default: example-root-certificate#issuerId
     defaultFollowsLatestIssuer: false
+- type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
+  name: dev-billing-pki-urls
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - dev-billing-pki-default
+    - example-dev-billing-issuer
+  inputs:
+    backend: pki
+    crlDistributionPoints:
+      - https://openbao.example.com/v1/dev/billing/pki/issuer/{{issuer_id}}/crl/der
+    enableTemplating: true
+    issuingCertificates:
+      - https://openbao.example.com/v1/dev/billing/pki/issuer/{{issuer_id}}/der
+    namespace: dev/billing
+    ocspServers:
+      - https://openbao.example.com/v1/dev/billing/pki/ocsp
 - type: vault:pkiSecret/secretBackendConfigUrls:SecretBackendConfigUrls
   name: dev-pki-edge-urls
   protect: true
@@ -1040,6 +1183,24 @@
       - https://openbao.example.com/v1/pki-root/issuer/{{issuer_id}}/der
     ocspServers:
       - https://openbao.example.com/v1/pki-root/ocsp
+- type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
+  name: dev-billing-pki-crl
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - dev-billing-pki-default
+    - example-dev-billing-issuer
+  inputs:
+    autoRebuild: true
+    autoRebuildGracePeriod: 12h
+    backend: pki
+    deltaRebuildInterval: 15m
+    disable: false
+    enableDelta: true
+    expiry: 72h
+    namespace: dev/billing
+    ocspDisable: false
+    ocspExpiry: 1h
 - type: vault:pkiSecret/secretBackendCrlConfig:SecretBackendCrlConfig
   name: dev-pki-crl
   protect: true
@@ -1128,6 +1289,23 @@
     ocspDisable: false
     ocspExpiry: 1h
 - type: vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest
+  name: example-dev-billing-csr
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - ns-dev-billing
+  inputs:
+    backend: pki
+    commonName: billing.dev.example.internal Issuing CA
+    excludeCnFromSans: true
+    format: pem
+    keyBits: 384
+    keyName: example-dev-billing
+    keyType: ec
+    namespace: dev/billing
+    organization: Example Org
+    type: internal
+- type: vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest
   name: example-dev-csr
   protect: true
   dependsOn:
@@ -1192,6 +1370,17 @@
     organization: Example Org
     type: internal
 - type: vault:pkiSecret/secretBackendIntermediateSetSigned:SecretBackendIntermediateSetSigned
+  name: example-dev-billing-import
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - example-dev-billing-signed
+    - ns-dev-billing
+  inputs:
+    backend: pki
+    certificate: example-dev-billing-signed#certificateBundle
+    namespace: dev/billing
+- type: vault:pkiSecret/secretBackendIntermediateSetSigned:SecretBackendIntermediateSetSigned
   name: example-dev-import
   protect: true
   dependsOn:
@@ -1234,6 +1423,19 @@
   inputs:
     backend: pki-int
     certificate: example-int-signed#certificateBundle
+- type: vault:pkiSecret/secretBackendIssuer:SecretBackendIssuer
+  name: example-dev-billing-issuer
+  protect: true
+  dependsOn:
+    - dev-billing-pki
+    - example-dev-billing-import
+    - ns-dev-billing
+  inputs:
+    backend: pki
+    issuerName: example-dev-billing
+    issuerRef: example-dev-billing-import#imported
+    namespace: dev/billing
+    usage: crl-signing,issuing-certificates,read-only
 - type: vault:pkiSecret/secretBackendIssuer:SecretBackendIssuer
   name: example-dev-issuer
   protect: true
@@ -1282,6 +1484,42 @@
     issuerName: example-int
     issuerRef: example-int-import#imported
     usage: crl-signing,issuing-certificates,read-only
+- type: vault:pkiSecret/secretBackendRole:SecretBackendRole
+  name: example-dev-billing-role-service
+  dependsOn:
+    - dev-billing-pki
+    - example-dev-billing-issuer
+    - ns-dev-billing
+  inputs:
+    allowAnyName: false
+    allowBareDomains: false
+    allowGlobDomains: false
+    allowIpSans: false
+    allowLocalhost: false
+    allowSubdomains: true
+    allowWildcardCertificates: false
+    allowedDomains:
+      - billing.dev.example.internal
+    allowedDomainsTemplate: false
+    allowedOtherSans: []
+    allowedUriSans: []
+    allowedUserIds: []
+    backend: pki
+    clientFlag: false
+    cnValidations:
+      - hostname
+    emailProtectionFlag: false
+    enforceHostnames: true
+    issuerRef: example-dev-billing
+    keyBits: 384
+    keyType: ec
+    maxTtl: "2592000"
+    name: service
+    namespace: dev/billing
+    noStore: false
+    requireCn: false
+    serverFlag: true
+    ttl: "604800"
 - type: vault:pkiSecret/secretBackendRole:SecretBackendRole
   name: example-dev-credential-role-db-client
   protect: true
@@ -1452,13 +1690,35 @@
     keyBits: 384
     keyName: example-root
     keyType: ec
-    maxPathLength: 2
+    maxPathLength: 3
     organization: Example Org
     permittedDnsDomains:
       - example.internal
       - cluster.local
     ttl: 87600h
     type: internal
+- type: vault:pkiSecret/secretBackendRootSignIntermediate:SecretBackendRootSignIntermediate
+  name: example-dev-billing-signed
+  protect: true
+  dependsOn:
+    - dev-pki
+    - dev-pki-auto-tidy
+    - dev-pki-crl
+    - dev-pki-default
+    - dev-pki-urls
+    - example-dev-billing-csr
+    - example-dev-issuer
+  inputs:
+    backend: pki
+    commonName: billing.dev.example.internal Issuing CA
+    csr: example-dev-billing-csr#csr
+    excludeCnFromSans: true
+    format: pem
+    issuerRef: example-dev
+    maxPathLength: 0
+    namespace: dev
+    ttl: 4380h
+    useCsrValues: true
 - type: vault:pkiSecret/secretBackendRootSignIntermediate:SecretBackendRootSignIntermediate
   name: example-dev-signed
   protect: true
@@ -1480,7 +1740,7 @@
       - ::/0
     format: pem
     issuerRef: example-int
-    maxPathLength: 0
+    maxPathLength: 1
     permittedDnsDomains:
       - dev.example.internal
       - cluster.local
@@ -1528,7 +1788,7 @@
       - ::/0
     format: pem
     issuerRef: example-root
-    maxPathLength: 1
+    maxPathLength: 2
     permittedDnsDomains:
       - example.internal
       - cluster.local

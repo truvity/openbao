@@ -10,15 +10,19 @@
 // pkg/apply. [Desired.Validate] refuses a state that could not be applied
 // as it reads, before anything is.
 //
-// The namespace tree is one level: root, and one namespace per environment
-// directly below it. Projects, teams or tenants are policy paths and
-// identity groups inside an environment's namespace, never namespaces of
-// their own.
+// The namespace tree is `<environment>/<project>`: root, one namespace per
+// environment directly below it, and, below each environment, one
+// [ProjectNamespace] per project
+// ([ADR 0001](../../docs/decisions/0001-namespaces-are-environment-project.md)).
+// A project holds mounts alone; logins, policies and identity groups live
+// only at the environment (and root), which may grant a project's mount by
+// path ([ProjectPath]).
 package model
 
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -55,14 +59,17 @@ type (
 	// Namespace is one OpenBAO namespace and everything inside it.
 	Namespace struct {
 		// Name is empty for root, and a plain name (no `/`) otherwise.
-		Name     string         `yaml:"name,omitempty"`
-		KV       []KVMount      `yaml:"kv,omitempty"`
-		PKI      []PKIMount     `yaml:"pki,omitempty"`
-		SSH      []SSHMount     `yaml:"ssh,omitempty"`
-		SSHHost  []SSHHostMount `yaml:"sshHost,omitempty"`
-		Auth     []JWTMount     `yaml:"auth"`
-		Policies []Policy       `yaml:"policies"`
-		Groups   []Group        `yaml:"groups"`
+		Name    string         `yaml:"name,omitempty"`
+		KV      []KVMount      `yaml:"kv,omitempty"`
+		PKI     []PKIMount     `yaml:"pki,omitempty"`
+		SSH     []SSHMount     `yaml:"ssh,omitempty"`
+		SSHHost []SSHHostMount `yaml:"sshHost,omitempty"`
+		Auth    []JWTMount     `yaml:"auth"`
+		// Projects are this namespace's child project namespaces -- only an
+		// environment (never root or bootstrap) declares any (ADR 0001).
+		Projects []ProjectNamespace `yaml:"projects,omitempty"`
+		Policies []Policy           `yaml:"policies"`
+		Groups   []Group            `yaml:"groups"`
 	}
 )
 
@@ -73,6 +80,10 @@ type (
 func (d *Desired) Validate() error {
 	if d.Bootstrap.Name != "" || d.Root.Name != "" {
 		return fmt.Errorf("model: bootstrap and root are the root namespace and have no name")
+	}
+
+	if len(d.Bootstrap.Projects) > 0 || len(d.Root.Projects) > 0 {
+		return fmt.Errorf("model: bootstrap and root hold no project; a project nests one level below an environment (ADR 0001)")
 	}
 
 	if err := d.Bootstrap.Validate(); err != nil {
@@ -88,12 +99,11 @@ func (d *Desired) Validate() error {
 	for i := range d.Namespaces {
 		namespace := &d.Namespaces[i]
 
-		switch {
-		case strings.TrimSpace(namespace.Name) == "":
-			return fmt.Errorf("model: an environment namespace has no name")
-		case strings.ContainsAny(namespace.Name, "/ "):
-			return fmt.Errorf("model: namespace %q is not a plain name: the tree is one level below root", namespace.Name)
-		case seen[namespace.Name]:
+		if err := validateNamespaceSegment(namespace.Name); err != nil {
+			return fmt.Errorf("model: environment namespace %w", err)
+		}
+
+		if seen[namespace.Name] {
 			return fmt.Errorf("model: namespace %q is declared twice", namespace.Name)
 		}
 
@@ -108,7 +118,15 @@ func (d *Desired) Validate() error {
 		return err
 	}
 
+	if err := d.validateSignerDepth(); err != nil {
+		return err
+	}
+
 	if err := d.validateCredentialCeiling(); err != nil {
+		return err
+	}
+
+	if err := d.validateProjectPolicyPaths(); err != nil {
 		return err
 	}
 
@@ -252,7 +270,125 @@ func (n *Namespace) Validate() error {
 		return err
 	}
 
+	if err := n.validateProjects(label, mounts); err != nil {
+		return err
+	}
+
+	if err := n.validateProjectRuleBreadth(label); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateProjectRuleBreadth refuses a policy rule, in an environment that
+// declares any project, whose first path segment carries a glob (`*` or
+// `+`) rather than one literal name. A rule's path is relative to the
+// namespace it is granted in, and OpenBAO resolves a child project's mount
+// through the SAME path -- `<project>/<mount>/...` -- rather than a
+// separate namespace hop ([ProjectPath], ADR 0001), so a glob in that
+// first segment reaches every project this environment declares (a
+// partner's among them) exactly as readily as it reaches the
+// environment's own mounts, whether or not the glob was written with any
+// project in mind: `*` grants everything below it, and a prefix glob
+// (`wal*`) is refused even when no project happens to collide with it
+// today, because one might tomorrow. A rule that means a specific
+// project names it outright, in full, with [ProjectPath] or its
+// equivalent; a rule that means only the environment's own mount already
+// spells that mount's literal name first (`kv/data/*`, `pki/sign/service`,
+// `ssh/sign/runner`) and is untouched by this refusal, since the glob
+// there sits after the first segment, never in it.
+func (n *Namespace) validateProjectRuleBreadth(label string) error {
+	if len(n.Projects) == 0 {
+		return nil
+	}
+
+	for i := range n.Policies {
+		policy := &n.Policies[i]
+
+		for j := range policy.Rules {
+			path := policy.Rules[j].Path
+			first, _, _ := strings.Cut(path, "/")
+
+			if strings.ContainsAny(first, "*+") {
+				return fmt.Errorf(
+					"model: namespace %s: policy %q rule %q reaches with a glob in its first path segment, "+
+						"which would also reach every project this environment declares; "+
+						"name a project explicitly (ProjectPath) or keep the glob out of the first segment",
+					label, policy.Name, path)
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateProjects refuses a project with no name or an unsafe one
+// (ProjectNamespace.Validate), one declared twice, one whose name collides
+// with a mount this namespace holds directly -- the ambiguity a
+// project-scoped policy path ([ProjectPath]) resolves by name alone -- and
+// a PKI issuer that is not signed by an issuer this SAME namespace holds:
+// a project's issuing CA is signed by its own environment's issuer, never
+// a grandparent's, a sibling project's, or its own (ADR 0001).
+func (n *Namespace) validateProjects(label string, mounts map[string]bool) error {
+	if len(n.Projects) == 0 {
+		return nil
+	}
+
+	issuers := map[IssuerRef]bool{}
+
+	for i := range n.PKI {
+		for j := range n.PKI[i].Issuers {
+			issuers[IssuerRef{Namespace: n.Name, Mount: n.PKI[i].Path, Issuer: n.PKI[i].Issuers[j].Name}] = true
+		}
+	}
+
+	names := map[string]bool{}
+
+	for i := range n.Projects {
+		project := &n.Projects[i]
+		if err := project.Validate(); err != nil {
+			return fmt.Errorf("model: namespace %s: %w", label, err)
+		}
+
+		switch {
+		case names[project.Name]:
+			return fmt.Errorf("model: namespace %s declares project %q twice", label, project.Name)
+		case mounts[project.Name]:
+			return fmt.Errorf("model: namespace %s: project %q shares its name with a mount declared directly in the namespace", label, project.Name)
+		}
+
+		names[project.Name] = true
+
+		for j := range project.PKI {
+			for k := range project.PKI[j].Issuers {
+				// ProjectNamespace.Validate already refused a nil SignedBy.
+				issuer := &project.PKI[j].Issuers[k]
+				if issuer.SignedBy.Namespace != n.Name || !issuers[*issuer.SignedBy] {
+					return fmt.Errorf(
+						"model: namespace %s: project %q PKI issuer %q is signed by %s, which is not an issuer this environment declares directly",
+						label, project.Name, issuer.Name, issuer.SignedBy)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateNamespaceSegment refuses an empty name and one that is not a
+// single, plain path segment: a `/` or a space would nest it, and `..`
+// would climb out of it -- the same "refuse what we name" convention
+// Rule.Validate applies to a policy path.
+func validateNamespaceSegment(name string) error {
+	switch {
+	case strings.TrimSpace(name) == "":
+		return fmt.Errorf("has no name")
+	case strings.ContainsAny(name, "/ *+"), strings.Contains(name, ".."):
+		return fmt.Errorf("%q is not a plain name: the tree is one level below its parent", name)
+	default:
+		return nil
+	}
 }
 
 // validateForceCommandGrants refuses a policy that grants a force-command
@@ -334,6 +470,178 @@ func (d *Desired) validateSigners() error {
 
 			for j := range mount.Issuers {
 				declared[IssuerRef{Namespace: namespace.Name, Mount: mount.Path, Issuer: mount.Issuers[j].Name}] = true
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateSignerDepth refuses an issuer whose MaxPathLength is too short
+// for the CA levels this model actually puts beneath it -- not just the
+// one issuer it is about to sign, but everything a further issuer signs
+// off that one, transitively: root -> a domain intermediate -> an
+// environment's issuing CA -> a project's issuing CA is four levels, and
+// each one's own MaxPathLength must cover every level still below it, the
+// same accounting an X.509 path-length constraint gets at verification
+// time (RFC 5280 4.2.1.9) -- the count is cumulative down the whole
+// remaining chain, not reset at each hop. OpenBAO 2.6.2 itself only
+// refuses the immediate case, at sign time, against a real server (a
+// signer whose own max_path_length is already 0): this catches the
+// deeper one before anything is applied at all.
+//
+// There is no "unlimited" to special-case here. OpenBAO's own convention
+// treats a negative max_path_length as no constraint at all, but
+// PKIIssuer.Validate already refuses a negative MaxPathLength outright
+// ("an unbounded CA is never declared"), so every issuer this reaches
+// already carries a plain, non-negative budget -- 0 is not "unset", it is
+// this model's explicit "signs no further CA at all".
+func (d *Desired) validateSignerDepth() error {
+	maxPathLength := map[IssuerRef]int{}
+	children := map[IssuerRef][]IssuerRef{}
+
+	register := func(namespace string, mounts []PKIMount) {
+		for i := range mounts {
+			for j := range mounts[i].Issuers {
+				issuer := &mounts[i].Issuers[j]
+				ref := IssuerRef{Namespace: namespace, Mount: mounts[i].Path, Issuer: issuer.Name}
+				maxPathLength[ref] = issuer.MaxPathLength
+
+				if issuer.SignedBy != nil {
+					children[*issuer.SignedBy] = append(children[*issuer.SignedBy], ref)
+				}
+			}
+		}
+	}
+
+	register("", d.Root.PKI)
+
+	for i := range d.Namespaces {
+		namespace := &d.Namespaces[i]
+		register(namespace.Name, namespace.PKI)
+
+		for j := range namespace.Projects {
+			register(namespace.Name+"/"+namespace.Projects[j].Name, namespace.Projects[j].PKI)
+		}
+	}
+
+	// depth(ref) is the number of CA levels this model puts strictly
+	// beneath ref: 0 for an issuer nothing else is signed by, otherwise
+	// one more than its deepest child. via is the child that makes it
+	// so, named in the refusal alongside ref itself.
+	depths, vias := map[IssuerRef]int{}, map[IssuerRef]IssuerRef{}
+
+	var depth func(IssuerRef) int
+	depth = func(ref IssuerRef) int {
+		if cached, ok := depths[ref]; ok {
+			return cached
+		}
+
+		best, bestVia := 0, IssuerRef{}
+
+		for _, child := range children[ref] {
+			if candidate := depth(child) + 1; candidate > best {
+				best, bestVia = candidate, child
+			}
+		}
+
+		depths[ref], vias[ref] = best, bestVia
+
+		return best
+	}
+
+	refs := make([]IssuerRef, 0, len(maxPathLength))
+	for ref := range maxPathLength {
+		refs = append(refs, ref)
+	}
+
+	sort.Slice(refs, func(i, j int) bool { return refs[i].String() < refs[j].String() })
+
+	for _, ref := range refs {
+		need := depth(ref)
+		if maxPathLength[ref] < need {
+			return fmt.Errorf(
+				"model: issuer %s has max path length %d, too few for the %d CA level(s) this model puts beneath it, down to %s -- "+
+					"0 already means an issuer signs no further CA at all",
+				ref, maxPathLength[ref], need, vias[ref])
+		}
+	}
+
+	return nil
+}
+
+// validateProjectPolicyPaths refuses a policy rule that names a project
+// ([ProjectPath]) unless the SAME environment declares that project, and
+// the mount named after it. A project's name and its mounts live at
+// exactly one environment (ADR 0001); a rule is checked against its own
+// namespace's declared projects only, never against another environment's,
+// so a rule that would otherwise resolve through a same-named project one
+// namespace over -- or through a project that used to exist and does not
+// any more -- is refused instead of granted a path that either resolves to
+// nothing or, worse, to a mount nobody meant.
+//
+// A path whose first segment is also a mount this namespace holds
+// directly is left alone, never read as a project reference: that mount
+// takes precedence, the same way validateProjects refuses a project whose
+// name collides with one.
+func (d *Desired) validateProjectPolicyPaths() error {
+	projects := map[string]bool{}
+
+	for i := range d.Namespaces {
+		for j := range d.Namespaces[i].Projects {
+			projects[d.Namespaces[i].Projects[j].Name] = true
+		}
+	}
+
+	if len(projects) == 0 {
+		return nil
+	}
+
+	for _, namespace := range d.Applied() {
+		local := map[string]*ProjectNamespace{}
+		for i := range namespace.Projects {
+			local[namespace.Projects[i].Name] = &namespace.Projects[i]
+		}
+
+		mounts := map[string]bool{}
+		for i := range namespace.KV {
+			mounts[namespace.KV[i].Path] = true
+		}
+
+		for i := range namespace.PKI {
+			mounts[namespace.PKI[i].Path] = true
+		}
+
+		for i := range namespace.SSH {
+			mounts[namespace.SSH[i].Path] = true
+		}
+
+		for i := range namespace.SSHHost {
+			mounts[namespace.SSHHost[i].Path] = true
+		}
+
+		for i := range namespace.Policies {
+			policy := &namespace.Policies[i]
+
+			for j := range policy.Rules {
+				path := policy.Rules[j].Path
+
+				first, rest, cut := strings.Cut(path, "/")
+				if !cut || !projects[first] || mounts[first] {
+					continue
+				}
+
+				project, declared := local[first]
+				if !declared {
+					return fmt.Errorf("model: namespace %s: policy %q rule %q names project %q, which this environment does not declare",
+						namespace.label(), policy.Name, path, first)
+				}
+
+				mount, _, _ := strings.Cut(rest, "/")
+				if !project.hasMount(mount) {
+					return fmt.Errorf("model: namespace %s: policy %q rule %q names mount %q of project %q, which the project does not hold",
+						namespace.label(), policy.Name, path, mount, first)
+				}
 			}
 		}
 	}

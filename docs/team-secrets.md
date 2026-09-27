@@ -115,8 +115,15 @@ grant(people.JobGrant("ci-release",
 The namespace is the environment: `dev`, `staging`, one each, with the
 same three groups inside and their own values. A project that exists in
 two environments is two grants in two namespaces, never one prefix shared
-by both — the tree is one level deep for exactly this reason
-([access-roster.md §2](integrations/access-roster.md#2-the-openbao-side-two-doors-per-namespace)).
+by both — a KV prefix under the environment, exactly as
+([access-roster.md §2](integrations/access-roster.md#2-the-openbao-side-two-doors-per-namespace))
+describes it. This is the right shape while every project belongs to the
+operators' own organisation: a policy path costs nothing extra and needs
+no second mount. A project that is a different organisation's own --
+sharing this installation, not just this environment -- gets a namespace
+of its own instead ([ADR 0001](decisions/0001-namespaces-are-environment-project.md),
+[model.md](model.md#projects-environmentproject)); nothing here changes
+for the projects that stay policy paths.
 
 ## 4. What the paths look like
 

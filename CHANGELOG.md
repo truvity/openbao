@@ -5,6 +5,62 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.10.0
+
+### Added
+
+- **pkg/model: project namespaces, `<environment>/<project>`.**
+  `Namespace.Projects` holds `ProjectNamespace`s, nested one level below
+  their environment ([ADR 0001](docs/decisions/0001-namespaces-are-environment-project.md)).
+  A `ProjectNamespace` carries `KV` and `PKI` mounts and nothing else --
+  it has no `Auth`, `Policies`, `Groups`, `SSH`, `SSHHost` or nested
+  `Projects` field at all, so most of what the record refuses is refused
+  by the type's own shape, the same way `SSHHostMount` being a sibling
+  type of `SSHMount` refuses a host role on a user mount. `Validate`
+  refuses a project with no name or an unsafe one, one declared twice,
+  one whose name collides with a mount the environment holds directly, a
+  PKI issuer that is not signed by that SAME environment's own issuer
+  (never root's, a sibling project's, or the project's own root or an
+  external signer), and a credential role inside a project's PKI mount,
+  which needs an auth mount to read a subject from and a project holds
+  none.
+  `model.ProjectPath(project, mount, subpath)` builds the policy-rule
+  path (`<project>/<mount>/<subpath>`) an environment-level policy grants
+  a project's mount through, with no second login (proved against a real
+  server in `conformance/project_test.go`); `Validate` refuses a rule
+  naming a project or a project's mount the environment does not declare,
+  and, in any environment with a project, a rule whose first path segment
+  carries a glob (`*` or `+`) rather than one literal name -- a bare `*`
+  or a prefix glob such as `bill*` reaches every project the environment
+  declares (a partner's among them) exactly as readily as the
+  environment's own mounts, so it is refused whether or not a project
+  happens to collide with it today.
+  `Validate` (`Desired.validateSignerDepth`) also refuses an issuer whose
+  `MaxPathLength` is too short for the CA levels the model actually puts
+  beneath it — root → a domain intermediate → an environment's issuing CA
+  → a project's issuing CA is four levels, and a path-length constraint
+  counts the whole remaining chain, not just the next hop (RFC 5280
+  4.2.1.9), so **an environment CA that will sign a project's needs
+  `MaxPathLength` at least 1, not the 0 that was enough while it only
+  signed leaves**. The refusal names both the issuer and the descendant
+  it cannot cover. Raising an existing environment CA's `MaxPathLength`
+  is not an in-place change — OpenBAO fixes it when the issuer is
+  created — so one created with 0 needs a new issuer generation
+  (docs/model.md) before it can sign a project.
+- **pkg/apply: applies project namespaces.** `projectNamespace` creates a
+  project's namespace after its environment's own mounts, and its KV and
+  PKI mounts inside it -- the project's issuing CA signed by the
+  environment's issuer the same way an environment's own CA is signed
+  across a namespace hop today. Deleting a project is its mounts, then
+  its namespace; OpenBAO refuses to delete a namespace with children, so
+  this is never a one-step operation.
+- `examples/roster` gains a project namespace, `partner`, beside its
+  existing policy-path project (`orders`): its own `kv` and issuing CA,
+  granted to `dev:partner:reader` by `ProjectPath`. `pkg/model/testdata/desired.yaml`
+  gains one too (`billing`), beside `dev`'s own `kv` mount -- an
+  environment holds its own platform mounts and its projects side by
+  side; nothing forces platform data into a project.
+
 ## v0.9.0
 
 ### Added
