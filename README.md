@@ -14,7 +14,7 @@ from.
 | `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader | unreleased |
 | `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged | unreleased |
 | `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release | unreleased |
-| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl credential` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` | unreleased |
+| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl bao`/`accessctl pg` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` | unreleased |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from v0.1.0 on; from v0.2.0 on the same tag is also the Go module

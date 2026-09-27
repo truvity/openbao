@@ -39,7 +39,8 @@ const (
 	KVMount  = "kv"
 	// SSHUserRole and SSHAdminRole are the SSH roles, DBClientRole the
 	// database client credential role: accessctl's defaults for
-	// `credential ssh`, `credential ssh --role admin` and `credential db`.
+	// `accessctl bao ssh -mode=ca`, the same with `-role=admin`, and
+	// `accessctl pg`/`accessctl psql`.
 	SSHUserRole  = "user"
 	SSHAdminRole = "admin"
 	DBClientRole = "db-client"
@@ -58,8 +59,9 @@ const (
 	ProjectDeployer = Environment + ":" + Project + ":deployer"
 	ProjectApprover = Environment + ":" + Project + ":approver"
 	// ProjectSecret is one repository's secret under the project's prefix:
-	// what the values are for, the repository, and then the variable.
-	ProjectSecret = Project + "/local-dev/checkout/API_TOKEN"
+	// what the values are for, then the repository -- the KV entry itself,
+	// one secret whose fields are its variables, each named after one.
+	ProjectSecret = Project + "/local-dev/checkout"
 
 	// RootIssuer and EnvironmentIssuer are the credential chain: a root in
 	// root's PKIRootMount, and the environment's issuing CA it signs.
