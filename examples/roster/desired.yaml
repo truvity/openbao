@@ -40,7 +40,7 @@ root:
           organization: Example Org
           keyCurve: P-384
           ttl: 8760h
-          maxPathLength: 1
+          maxPathLength: 2
           selfSigned: true
   auth:
     - path: oidc
@@ -85,7 +85,7 @@ namespaces:
             organization: Example Org
             keyCurve: P-384
             ttl: 4380h
-            maxPathLength: 0
+            maxPathLength: 1
             signedBy:
               mount: pki-root
               issuer: example-root
@@ -193,6 +193,41 @@ namespaces:
             policies:
               - ssh-host-agent-sign
             ttl: 15m
+    projects:
+      - name: partner
+        kv:
+          - path: kv
+            description: the partner's own secrets
+        pki:
+          - path: pki
+            description: the partner's own issuing CA, signed by the environment's own issuer
+            defaultLeaseTtl: 1h
+            maxLeaseTtl: 24h
+            defaultIssuer: example-dev-partner
+            issuers:
+              - name: example-dev-partner
+                commonName: Partner Issuing CA
+                organization: Example Org
+                keyCurve: P-384
+                ttl: 720h
+                maxPathLength: 0
+                signedBy:
+                  namespace: dev
+                  mount: pki
+                  issuer: example-dev
+            roles:
+              - name: service
+                issuer: example-dev-partner
+                allowedDomains:
+                  - partner.example.internal
+                allowBareDomains: false
+                allowSubdomains: true
+                allowWildcardCertificates: false
+                server: true
+                client: false
+                keyCurve: P-384
+                ttl: 1h
+                maxTtl: 24h
     policies:
       - name: dev:db:client
         rules:
@@ -236,6 +271,15 @@ namespaces:
             capabilities:
               - read
           - path: kv/metadata/orders/*
+            capabilities:
+              - list
+              - read
+      - name: dev:partner:reader
+        rules:
+          - path: partner/kv/data/*
+            capabilities:
+              - read
+          - path: partner/kv/metadata/*
             capabilities:
               - list
               - read
@@ -294,6 +338,12 @@ namespaces:
       - name: dev:orders:viewer
         policies:
           - dev:orders:viewer
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:partner:reader
+        policies:
+          - dev:partner:reader
         doors:
           - jwt-roster
           - oidc

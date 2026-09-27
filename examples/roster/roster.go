@@ -93,6 +93,25 @@ const (
 	PKIRootMount      = "pki-root"
 	RootIssuer        = "example-root"
 	EnvironmentIssuer = "example-dev"
+
+	// Partner is the one project NAMESPACE this example gives dev: a
+	// different organisation's own mounts, isolated at the namespace level
+	// rather than by policy path alone (ADR 0001) -- side by side with
+	// Project ("orders" above), which stays a policy path because every
+	// one of its groups belongs to the operators' own organisation.
+	// PartnerReader reaches Partner's own kv by ProjectPath, from the
+	// environment; nobody logs in "at" Partner -- there is no auth mount
+	// to log in through.
+	Partner       = "partner"
+	PartnerReader = Environment + ":" + Partner + ":reader"
+	// PartnerIssuer is Partner's own issuing CA, signed by EnvironmentIssuer
+	// -- never a self-signed or external one, and never root's issuer
+	// directly.
+	PartnerIssuer = "example-dev-partner"
+	// PartnerLeaf signs one service name inside Partner's own mount, to
+	// prove the chain root -> EnvironmentIssuer -> PartnerIssuer -> leaf.
+	PartnerLeaf        = "service"
+	PartnerServiceName = "svc.partner.example.internal"
 )
 
 // Params are the two particulars of an installation.
@@ -122,7 +141,11 @@ func Desired(p Params) *model.Desired {
 		DefaultIssuer:   RootIssuer,
 		Issuers: []model.PKIIssuer{{
 			Name: RootIssuer, CommonName: "Example Root CA", Organization: "Example Org",
-			KeyCurve: model.CurveP384, TTL: "8760h", MaxPathLength: 1, SelfSigned: true,
+			// MaxPathLength 2: the environment's own issuing CA below it
+			// (1) plus Partner's issuing CA below THAT (another 1) --
+			// this model's own signer-depth check counts the whole
+			// remaining chain, not just the next hop.
+			KeyCurve: model.CurveP384, TTL: "8760h", MaxPathLength: 2, SelfSigned: true,
 		}},
 	}}
 
@@ -137,7 +160,12 @@ func Desired(p Params) *model.Desired {
 			DefaultIssuer:   EnvironmentIssuer,
 			Issuers: []model.PKIIssuer{{
 				Name: EnvironmentIssuer, CommonName: "Example Dev Issuing CA", Organization: "Example Org",
-				KeyCurve: model.CurveP384, TTL: "4380h", MaxPathLength: 0,
+				// MaxPathLength 1: this issuer signs Partner's own issuing
+				// CA below it, and nothing signs a further CA below
+				// THAT -- a path length of 0 would refuse it, both at
+				// Validate (Desired.validateSignerDepth) and, if it ever
+				// got that far, at OpenBAO's own sign-intermediate call.
+				KeyCurve: model.CurveP384, TTL: "4380h", MaxPathLength: 1,
 				SignedBy: &model.IssuerRef{Mount: PKIRootMount, Issuer: RootIssuer},
 			}},
 			// The caller's own subject, as its roster login recorded it, and
@@ -146,6 +174,31 @@ func Desired(p Params) *model.Desired {
 				Name: DBClientRole, Issuer: EnvironmentIssuer, SubjectMount: model.RosterMount,
 				CNValidations: []string{model.CNValidationEmail}, Client: true,
 				KeyCurve: model.CurveP384, TTL: "1h", MaxTTL: "1h",
+			}},
+		}},
+		// Partner is nested one level below Environment: its own kv and
+		// its own issuing CA, signed by EnvironmentIssuer above -- never
+		// a login, a policy, a group or an SSH mount of its own (ADR
+		// 0001; ProjectNamespace has no field to write one in).
+		Projects: []model.ProjectNamespace{{
+			Name: Partner,
+			KV:   []model.KVMount{{Path: KVMount, Description: "the partner's own secrets"}},
+			PKI: []model.PKIMount{{
+				Path:            PKIMount,
+				Description:     "the partner's own issuing CA, signed by the environment's own issuer",
+				DefaultLeaseTTL: "1h",
+				MaxLeaseTTL:     "24h",
+				DefaultIssuer:   PartnerIssuer,
+				Issuers: []model.PKIIssuer{{
+					Name: PartnerIssuer, CommonName: "Partner Issuing CA", Organization: "Example Org",
+					KeyCurve: model.CurveP384, TTL: "720h", MaxPathLength: 0,
+					SignedBy: &model.IssuerRef{Namespace: Environment, Mount: PKIMount, Issuer: EnvironmentIssuer},
+				}},
+				Roles: []model.PKIRole{{
+					Name: PartnerLeaf, Issuer: PartnerIssuer,
+					AllowedDomains: []string{"partner.example.internal"}, AllowSubdomains: true,
+					Server: true, KeyCurve: model.CurveP384, TTL: "1h", MaxTTL: "24h",
+				}},
 			}},
 		}},
 		SSH: []model.SSHMount{{
@@ -206,6 +259,12 @@ func Desired(p Params) *model.Desired {
 	grant(people.Grant(ProjectApprover, writeProject(Project)...))
 	grant(people.Grant(ProjectDeployer, writeProject(Project)...))
 	grant(people.Grant(ProjectViewer, readProject(Project)...))
+	// Partner is a namespace, not a prefix: the rule below names it and
+	// its own mount explicitly (model.ProjectPath), the only way in from
+	// the environment (ADR 0001).
+	grant(people.Grant(PartnerReader,
+		model.Rule{Path: model.ProjectPath(Partner, KVMount, "data/*"), Capabilities: []string{model.CapRead}},
+		model.Rule{Path: model.ProjectPath(Partner, KVMount, "metadata/*"), Capabilities: []string{model.CapList, model.CapRead}}))
 	grant(people.Grant(SSHAdmin, sign(SSHMount, SSHAdminRole)))
 	grant(people.Grant(SSHBackup, signForced(SSHMount, SSHBackupRole)))
 	grant(people.Grant(SSHUser, sign(SSHMount, SSHUserRole)))

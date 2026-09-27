@@ -41,7 +41,7 @@ root:
           organization: Example Org
           keyCurve: P-384
           ttl: 87600h
-          maxPathLength: 2
+          maxPathLength: 3
           nameConstraints:
             permittedDnsDomains:
               - example.internal
@@ -61,7 +61,7 @@ root:
           organization: Example Org
           keyCurve: P-384
           ttl: 43800h
-          maxPathLength: 1
+          maxPathLength: 2
           nameConstraints:
             permittedDnsDomains:
               - example.internal
@@ -149,7 +149,7 @@ namespaces:
             organization: Example Org
             keyCurve: P-384
             ttl: 26280h
-            maxPathLength: 0
+            maxPathLength: 1
             nameConstraints:
               permittedDnsDomains:
                 - dev.example.internal
@@ -330,6 +330,41 @@ namespaces:
               - profile
               - email
             ttl: 1h
+    projects:
+      - name: billing
+        kv:
+          - path: kv
+            description: billing's own secrets
+        pki:
+          - path: pki
+            description: billing's own issuing CA, signed by the dev environment's own issuer
+            defaultLeaseTtl: 168h
+            maxLeaseTtl: 720h
+            defaultIssuer: example-dev-billing
+            issuers:
+              - name: example-dev-billing
+                commonName: billing.dev.example.internal Issuing CA
+                organization: Example Org
+                keyCurve: P-384
+                ttl: 4380h
+                maxPathLength: 0
+                signedBy:
+                  namespace: dev
+                  mount: pki
+                  issuer: example-dev
+            roles:
+              - name: service
+                issuer: example-dev-billing
+                allowedDomains:
+                  - billing.dev.example.internal
+                allowBareDomains: false
+                allowSubdomains: true
+                allowWildcardCertificates: false
+                server: true
+                client: false
+                keyCurve: P-384
+                ttl: 168h
+                maxTtl: 720h
     policies:
       - name: dev:db:client
         rules:
@@ -379,6 +414,15 @@ namespaces:
           - path: ssh-host/sign/host
             capabilities:
               - update
+      - name: dev:billing:reader
+        rules:
+          - path: billing/kv/data/*
+            capabilities:
+              - read
+          - path: billing/kv/metadata/*
+            capabilities:
+              - list
+              - read
     groups:
       - name: dev:db:client
         policies:
@@ -401,6 +445,12 @@ namespaces:
       - name: dev:ssh:user
         policies:
           - dev:ssh:user
+        doors:
+          - jwt-people
+          - oidc
+      - name: dev:billing:reader
+        policies:
+          - dev:billing:reader
         doors:
           - jwt-people
           - oidc

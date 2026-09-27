@@ -333,7 +333,8 @@ Durations are Go durations (`15m`, `720h`).
 | | `Namespaces` (`namespaces`) | no | one per environment, a plain name each |
 | | `Identity` (`identity`) | yes | `primaryDoor`, and `metadata` every identity group carries |
 | | `CredentialMaxTTL` (`credentialMaxTtl`) | no | the ceiling on every SSH user-certificate role and every PKI credential role; does not reach `SSHHostMount` roles, which are capped at 30 days instead |
-| `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `SSHHost`, `Auth`, `Policies`, `Groups` | name outside root | the engines below |
+| `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `SSHHost`, `Auth`, `Projects`, `Policies`, `Groups` | name outside root | the engines below; `Projects` only on an environment |
+| `ProjectNamespace` | `Name`, `KV`, `PKI` | name | one project, `<environment>/<project>`; no `Auth`, `Policies`, `Groups`, `SSH` or `SSHHost` -- the type has no such field |
 | `KVMount` | `Path`, `Description`, `Canary` | path | a KV v2 mount; the canary is written as `{"namespace": <name>}` |
 | `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `SupportedAlgorithms`, `Roles` | path, issuer | one auth mount; the discovery URL is also the bound issuer; `SupportedAlgorithms` empty resolves to `DefaultSupportedAlgorithms` (`Algorithms()`) |
 | `Role` | `Name`, `Type`, `BoundAudiences`, `BoundSubject`, `UserClaim`, `GroupsClaim`, `ClaimMappings`, `AllowedRedirectURIs`, `OIDCScopes` (oidc), `Policies`, `TTL` | name, audience, user claim, TTL, and a subject or a groups claim | `TTL` is also the maximum |
@@ -381,7 +382,12 @@ operators' door in root, for `Desired.Bootstrap`), `RootUI(operators)`
 Helpers: `ServiceAccountSubject(namespace, serviceAccount)`,
 `Identity.GroupName(group, door)`, `Identity.GroupMetadata(door)`,
 `DurationSeconds(duration)`, `Desired.Applied()` (root, then the
-namespaces), `Namespace.Label()` (`root` for root).
+namespaces), `Namespace.Label()` (`root` for root), `ProjectPath(project,
+mount, subpath)` (`<project>/<mount>/<subpath>`, a policy rule reaching
+into a project -- `Namespace.Validate` refuses one naming a project or a
+mount the environment does not declare, and, in an environment with any
+project, any rule whose first path segment carries a glob `*` or `+`
+rather than one literal name).
 
 ## pkg/apply
 
