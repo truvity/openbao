@@ -210,6 +210,7 @@ func TestResultCarriesTheOutputs(t *testing.T) {
 	assert.Contains(t, result.CertificateRequests, "example-edge")
 	assert.Len(t, result.CertificateRequests, 1, "only an external issuer's request leaves")
 	assert.Contains(t, result.SSHCAPublicKeys, apply.MountRef{Namespace: "dev", Path: "ssh"})
+	assert.Contains(t, result.SSHHostCAPublicKeys, apply.MountRef{Namespace: "dev", Path: "ssh-host"})
 	assert.NotNil(t, result.Provider)
 }
 

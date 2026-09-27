@@ -127,6 +127,32 @@ namespaces:
               - permit-pty
             ttl: 30m
             maxTtl: 1h
+          - name: backup
+            allowedUsers:
+              - backup
+            defaultUser: backup
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions: []
+            forceCommand: /usr/local/bin/backup-agent run
+            ttl: 15m
+            maxTtl: 30m
+    sshHost:
+      - path: ssh-host
+        description: the environment's SSH host CA; never the same key as the user CA
+        keyType: ed25519
+        roles:
+          - name: host
+            allowedDomains:
+              - builds.example
+            allowBareDomains: true
+            allowSubdomains: false
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            ttl: 24h
+            maxTtl: 168h
     auth:
       - path: jwt-roster
         discoveryUrl: https://id.example.com
@@ -155,6 +181,18 @@ namespaces:
               - profile
               - email
             ttl: 1h
+      - path: jwt-cluster
+        description: the cluster's ServiceAccount tokens; a host signs its own certificate
+        discoveryUrl: https://id.example.com
+        roles:
+          - name: host-agent
+            boundAudiences:
+              - vault://host-agent
+            boundSubject: system:serviceaccount:openbao:host-agent
+            userClaim: sub
+            policies:
+              - ssh-host-agent-sign
+            ttl: 15m
     policies:
       - name: dev:db:client
         rules:
@@ -206,6 +244,13 @@ namespaces:
           - path: ssh/sign/admin
             capabilities:
               - update
+      - name: dev:ssh:backup
+        rules:
+          - path: ssh/sign/backup
+            capabilities:
+              - update
+            deniedParameters:
+              - critical_options
       - name: dev:ssh:user
         rules:
           - path: ssh/sign/user
@@ -216,6 +261,11 @@ namespaces:
           - path: kv/data/ci/release
             capabilities:
               - read
+      - name: ssh-host-agent-sign
+        rules:
+          - path: ssh-host/sign/host
+            capabilities:
+              - update
     groups:
       - name: dev:db:client
         policies:
@@ -250,6 +300,12 @@ namespaces:
       - name: dev:ssh:admin
         policies:
           - dev:ssh:admin
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:ssh:backup
+        policies:
+          - dev:ssh:backup
         doors:
           - jwt-roster
           - oidc

@@ -126,6 +126,79 @@ func TestRosterContract(t *testing.T) {
 		requireStatus(t, err, http.StatusForbidden, "the user group does not open the admin role")
 	})
 
+	// ssh/sign/backup: a forced command survives a request that carries
+	// none, and OpenBAO's own answer to a request that tries to add or
+	// replace a critical option decides what this subtest asserts -- the
+	// point being that whatever it is, it is proven here rather than
+	// assumed in docs/safety.md.
+	t.Run("ssh/sign/backup carries a forced command the caller cannot add to or replace", func(t *testing.T) {
+		bao := c.as(t, person, roster.SSHBackup)
+
+		answer, err := bao.Call(ctx, http.MethodPost, roster.Environment, roster.SSHMount+"/sign/"+roster.SSHBackupRole,
+			map[string]any{"public_key": newSSHKey(t)})
+		require.NoError(t, err)
+
+		certificate := sshCertificate(t, answer)
+		assert.Equal(t, uint32(ssh.UserCert), certificate.CertType)
+		assert.Equal(t, []string{roster.SSHBackupPrincipal}, certificate.ValidPrincipals)
+		assert.Equal(t, map[string]string{"force-command": roster.SSHBackupCommand}, certificate.CriticalOptions,
+			"the role's default critical option, carried even though the request named none")
+		assert.Empty(t, certificate.Extensions, "no permit-pty, no forwarding: a forced command that can still open a shell is not forced")
+
+		// A request that tries to add or replace the one critical option
+		// the role already forces. OpenBAO 2.6.2's own SSH secrets engine
+		// applies default_critical_options only when the request's own
+		// critical_options is entirely absent, and otherwise takes the
+		// request's map exactly as given, in place of the default -- so
+		// allowed_critical_options alone cannot make a default
+		// unconditional (confirmed against a real server while building
+		// this test: with allowed_critical_options left empty, this same
+		// request SUCCEEDED and REPLACED force-command with the caller's
+		// own value). What actually makes it unconditional is the group's
+		// policy (examples/roster/roster.go's signForced helper,
+		// model.Rule.DeniedParameters), which denies the critical_options
+		// parameter outright at the ACL layer -- the request below never
+		// reaches the SSH backend at all.
+		_, err = bao.Call(ctx, http.MethodPost, roster.Environment, roster.SSHMount+"/sign/"+roster.SSHBackupRole,
+			map[string]any{"public_key": newSSHKey(t), "critical_options": map[string]any{"force-command": "/bin/rm -rf /"}})
+		requireStatus(t, err, http.StatusForbidden, "the policy denies the critical_options parameter outright, whatever it names")
+	})
+
+	// ssh-host/sign/host: a host, not a person, signs it -- through the
+	// same kind of workload login every other machine identity in this
+	// example uses (docs/integrations/access-roster.md,
+	// model.ServiceAccountSubject), never a person's group.
+	t.Run("ssh-host/sign/host signs the requested name for a host, through its own workload login", func(t *testing.T) {
+		hostAgent := c.hostAgent(t)
+
+		answer, err := hostAgent.Call(ctx, http.MethodPost, roster.Environment, roster.SSHHostMount+"/sign/"+roster.SSHHostRole,
+			map[string]any{"public_key": newSSHKey(t), "cert_type": "host", "valid_principals": roster.SSHHostDomain})
+		require.NoError(t, err)
+
+		certificate := sshCertificate(t, answer)
+		assert.Equal(t, uint32(ssh.HostCert), certificate.CertType)
+		assert.Equal(t, []string{roster.SSHHostDomain}, certificate.ValidPrincipals)
+		assert.Empty(t, certificate.CriticalOptions)
+		assert.Empty(t, certificate.Extensions)
+		assert.LessOrEqual(t, time.Duration(certificate.ValidBefore-certificate.ValidAfter)*time.Second, 24*time.Hour+time.Minute)
+
+		hostCAKey := c.sshHostCA(t)
+		assert.Equal(t, hostCAKey.Marshal(), certificate.SignatureKey.Marshal(), "signed by the host CA")
+		assert.NotEqual(t, c.sshCA(t).Marshal(), hostCAKey.Marshal(), "never the same key as the user CA")
+
+		_, err = hostAgent.Call(ctx, http.MethodPost, roster.Environment, roster.SSHHostMount+"/sign/"+roster.SSHHostRole,
+			map[string]any{"public_key": newSSHKey(t), "cert_type": "host", "valid_principals": "not-" + roster.SSHHostDomain})
+		requireStatus(t, err, http.StatusBadRequest, "a name outside allowed_domains is refused")
+
+		_, err = hostAgent.Call(ctx, http.MethodPost, roster.Environment, roster.SSHHostMount+"/sign/"+roster.SSHHostRole,
+			map[string]any{"public_key": newSSHKey(t), "cert_type": "user", "valid_principals": roster.SSHUserPrincipal})
+		requireStatus(t, err, http.StatusBadRequest, "the host role never signs a user certificate")
+
+		_, err = hostAgent.Call(ctx, http.MethodPost, roster.Environment, roster.SSHMount+"/sign/"+roster.SSHUserRole,
+			map[string]any{"public_key": newSSHKey(t)})
+		requireStatus(t, err, http.StatusForbidden, "the host agent's policy grants nothing on the user mount")
+	})
+
 	t.Run("pki/sign/db-client signs the caller's own P-384 CSR, for client auth, for an hour", func(t *testing.T) {
 		bao := c.as(t, person, roster.DBClient)
 		path := roster.PKIMount + "/sign/" + roster.DBClientRole
@@ -521,11 +594,45 @@ func (c *conformance) as(t *testing.T, subject string, groups ...string) *replay
 
 func (c *conformance) anonymous() *replay.Server { return &replay.Server{Address: c.address} }
 
-// sshCA is the environment's SSH CA public key, which is public.
+// hostAgent is the server as a host's own workload login: the projected
+// ServiceAccount token a real cluster would mint, on the role bound to it
+// (roster.HostAgentRole), never a person's group.
+func (c *conformance) hostAgent(t *testing.T) *replay.Server {
+	t.Helper()
+
+	subject := model.ServiceAccountSubject(roster.HostAgentNamespace, roster.HostAgentServiceAccount)
+	token := c.issuer.Token(fakeissuer.Claims{Subject: subject, Audience: roster.HostAgentAudience})
+
+	answer, err := c.anonymous().Call(t.Context(), http.MethodPost, roster.Environment, "auth/"+roster.HostAgentDoor+"/login",
+		map[string]any{"role": roster.HostAgentRole, "jwt": token})
+	require.NoError(t, err)
+
+	auth, _ := answer["auth"].(map[string]any)
+	require.NotEmpty(t, auth["client_token"])
+
+	return &replay.Server{Address: c.address, Token: fmt.Sprint(auth["client_token"])}
+}
+
+// sshCA is the environment's SSH user CA public key, which is public.
 func (c *conformance) sshCA(t *testing.T) ssh.PublicKey {
 	t.Helper()
 
 	answer, err := c.operator.Call(t.Context(), http.MethodGet, roster.Environment, roster.SSHMount+"/config/ca", nil)
+	require.NoError(t, err)
+
+	data, _ := answer["data"].(map[string]any)
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(fmt.Sprint(data["public_key"])))
+	require.NoError(t, err)
+
+	return key
+}
+
+// sshHostCA is the environment's SSH host CA public key -- what a consumer
+// renders into a client's `@cert-authority <domains> <key>` line.
+func (c *conformance) sshHostCA(t *testing.T) ssh.PublicKey {
+	t.Helper()
+
+	answer, err := c.operator.Call(t.Context(), http.MethodGet, roster.Environment, roster.SSHHostMount+"/config/ca", nil)
 	require.NoError(t, err)
 
 	data, _ := answer["data"].(map[string]any)

@@ -34,6 +34,21 @@ type (
 	Rule struct {
 		Path         string   `yaml:"path"`
 		Capabilities []string `yaml:"capabilities"`
+		// DeniedParameters names request parameters OpenBAO refuses
+		// outright on this path, with no value ever admitted -- the ACL
+		// layer rejects the call before the secrets engine sees it. This
+		// is the only way to make a force-command SSH role's default
+		// critical option unconditional: the engine itself applies
+		// default_critical_options only when the request's own
+		// critical_options is entirely absent, and otherwise uses the
+		// request's map as given, key for key, in place of the role's
+		// default -- allowed_critical_options limits which keys a
+		// present map may name, but does not stop the caller from naming
+		// one, so a role's own configuration can never guarantee this by
+		// itself (docs/safety.md). SSHRole.Validate refuses a
+		// force-command role whose sign path is granted without
+		// "critical_options" named here.
+		DeniedParameters []string `yaml:"deniedParameters,omitempty"`
 	}
 )
 
@@ -92,6 +107,20 @@ func (r *Rule) Validate() error {
 		}
 	}
 
+	seen := make(map[string]bool, len(r.DeniedParameters))
+
+	for _, parameter := range r.DeniedParameters {
+		if strings.TrimSpace(parameter) == "" {
+			return fmt.Errorf("rule %q denies an empty parameter name", r.Path)
+		}
+
+		if seen[parameter] {
+			return fmt.Errorf("rule %q denies parameter %q twice", r.Path, parameter)
+		}
+
+		seen[parameter] = true
+	}
+
 	return nil
 }
 
@@ -111,7 +140,19 @@ func (p *Policy) HCL() string {
 			quoted = append(quoted, fmt.Sprintf("%q", capability))
 		}
 
-		fmt.Fprintf(&b, "path %q {\n  capabilities = [%s]\n}\n", rule.Path, strings.Join(quoted, ", "))
+		if len(rule.DeniedParameters) == 0 {
+			fmt.Fprintf(&b, "path %q {\n  capabilities = [%s]\n}\n", rule.Path, strings.Join(quoted, ", "))
+
+			continue
+		}
+
+		fmt.Fprintf(&b, "path %q {\n  capabilities = [%s]\n  denied_parameters = {\n", rule.Path, strings.Join(quoted, ", "))
+
+		for _, parameter := range rule.DeniedParameters {
+			fmt.Fprintf(&b, "    %q = []\n", parameter)
+		}
+
+		b.WriteString("  }\n}\n")
 	}
 
 	return b.String()

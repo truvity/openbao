@@ -5,6 +5,60 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.9.0
+
+### Added
+
+- **pkg/model: SSH host certificates.** `Namespace.SSHHost`
+  (`SSHHostMount`/`SSHHostRole`) is a host CA on a mount of its own --
+  never the same key as an `SSHMount`'s user CA, because a key clients
+  are told to trust for hosts must never also be one sshd trusts for
+  users. A host role signs the literal domains in `AllowedDomains` (no
+  `*`, no template), needs at least one of `AllowBareDomains`/
+  `AllowSubdomains`, and is capped at 30 days (`hostCertMaxTTL`), always
+  -- `CredentialMaxTTL` does not reach it. `pkg/apply`'s `sshHostMount`
+  registers the CA and its roles the same way `sshMount` does (generated
+  inside OpenBAO, only the public key exported, everything protected),
+  and `Result.SSHHostCAPublicKeys` carries that public key per mount for
+  a consumer to render into an `@cert-authority <domains> <key>` line.
+  Who may sign a host certificate is not a new auth method: an existing
+  workload login (a Kubernetes pod's projected ServiceAccount token, on a
+  `jwt` mount role bound to that ServiceAccount) whose policy grants
+  `update` on exactly `<host mount>/sign/<host role>`.
+  `examples/roster` and `pkg/model/testdata/desired.yaml` both carry a
+  worked host CA, host role and workload login;
+  `conformance/roster_test.go` signs a host certificate through it
+  against a real server, and refuses a name outside `allowedDomains`, a
+  user certificate from the host role, and the workload login signing on
+  the user mount without a grant.
+- **pkg/model: `SSHRole.ForceCommand`.** A machine role may force one
+  command on every certificate it signs; the apply renders it as the
+  role's only `default_critical_options` entry. `Validate` refuses
+  `ForceCommand` alongside `permit-pty` or a forwarding extension -- a
+  forced command that can still open a terminal or forward a port is not
+  forced. Existing roles that leave `ForceCommand` empty render exactly
+  as before.
+- **pkg/model: `Rule.DeniedParameters`.** Renders a policy path's
+  `denied_parameters`, refusing a request that carries a named parameter
+  at all, whatever it is shaped like -- the ACL layer refuses it before
+  the secrets engine sees it. This is the only way found to make
+  `ForceCommand` unconditional: OpenBAO's own SSH secrets engine applies
+  `default_critical_options` only when the request's `critical_options`
+  is entirely absent, and otherwise takes the request's map exactly as
+  given, in place of the default; `allowed_critical_options` limits which
+  keys a present map may name, but not whether the caller may present
+  one at all. `Namespace.Validate` now refuses a policy that grants a
+  force-command role's sign path without denying `critical_options`
+  there (docs/safety.md, "A forced command that a caller can still
+  replace").
+
+### Documentation
+
+- **docs/model.md, docs/safety.md, docs/reference.md** describe the host
+  CA, the force-command role and the `denied_parameters` grant it needs,
+  and the render-order trade-off in OpenBAO's SSH secrets engine that
+  makes the grant necessary in the first place.
+
 ## v0.8.0
 
 ### Added

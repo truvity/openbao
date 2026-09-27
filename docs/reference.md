@@ -332,21 +332,23 @@ Durations are Go durations (`15m`, `720h`).
 | | `Root` (`root`) | yes | what the apply owns in root; no name |
 | | `Namespaces` (`namespaces`) | no | one per environment, a plain name each |
 | | `Identity` (`identity`) | yes | `primaryDoor`, and `metadata` every identity group carries |
-| | `CredentialMaxTTL` (`credentialMaxTtl`) | no | the ceiling on every SSH and credential role |
-| `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `Auth`, `Policies`, `Groups` | name outside root | the engines below |
+| | `CredentialMaxTTL` (`credentialMaxTtl`) | no | the ceiling on every SSH user-certificate role and every PKI credential role; does not reach `SSHHostMount` roles, which are capped at 30 days instead |
+| `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `SSHHost`, `Auth`, `Policies`, `Groups` | name outside root | the engines below |
 | `KVMount` | `Path`, `Description`, `Canary` | path | a KV v2 mount; the canary is written as `{"namespace": <name>}` |
 | `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `SupportedAlgorithms`, `Roles` | path, issuer | one auth mount; the discovery URL is also the bound issuer; `SupportedAlgorithms` empty resolves to `DefaultSupportedAlgorithms` (`Algorithms()`) |
 | `Role` | `Name`, `Type`, `BoundAudiences`, `BoundSubject`, `UserClaim`, `GroupsClaim`, `ClaimMappings`, `AllowedRedirectURIs`, `OIDCScopes` (oidc), `Policies`, `TTL` | name, audience, user claim, TTL, and a subject or a groups claim | `TTL` is also the maximum |
 | `Group` | `Name`, `Policies`, `Doors` | all | one identity group per door, aliased there by `Name` |
-| `Policy`, `Rule` | `Name`, `Rules`; `Path`, `Capabilities` | all | rendered in rule order (`Policy.HCL`) |
+| `Policy`, `Rule` | `Name`, `Rules`; `Path`, `Capabilities`, `DeniedParameters` | all but `DeniedParameters` | rendered in rule order (`Policy.HCL`); `DeniedParameters` renders `denied_parameters = {"<name>" = []}`, refusing a request that carries that parameter at all |
 | `PKIMount` | `Path`, `Description`, `DefaultLeaseTTL`, `MaxLeaseTTL`, `DefaultIssuer`, `Issuers`, `Roles`, `CredentialRoles` | all but description and roles | the default issuer is pinned |
 | `PKIIssuer` | `Name`, `CommonName`, `Organization`, `KeyCurve` (`P-256`, `P-384`, `P-521`), `TTL`, `MaxPathLength`, `NameConstraints`, and one of `SelfSigned`, `SignedBy`, `External` | name, common name, curve, signer; TTL unless external | issuer names are unique across the server |
 | `IssuerRef` | `Namespace` (empty for root), `Mount`, `Issuer` | mount, issuer | an issuer of an earlier mount |
 | `NameConstraints` | `PermittedDNSDomains`, `ExcludedIPRanges`, `PermittedEmailAddresses`, `PermittedURIDomains` | no | an empty list is left out |
 | `PKIRole` | `Name`, `Issuer`, `AllowedDomains`, `AllowBareDomains`, `AllowSubdomains`, `AllowWildcards` (`allowWildcardCertificates`), `Server`, `Client`, `KeyCurve`, `TTL`, `MaxTTL`, `RenewBefore` | all but `RenewBefore` | `RenewBefore` is for the consumers, not OpenBAO |
 | `CredentialRole` | `Name`, `Issuer`, `SubjectMount`, `CNValidations` (`email`, `hostname`), `Server`, `Client`, `KeyCurve`, `TTL`, `MaxTTL` | all but validations | signs only the caller's own alias name on `SubjectMount` |
-| `SSHMount` | `Path`, `Description`, `KeyType`, `Roles` | path, key type, a role | the CA key is generated inside OpenBAO |
-| `SSHRole` | `Name`, `AllowedUsers`, `DefaultUser`, `KeyTypes`, `KeyIDFormat`, `Extensions`, `TTL`, `MaxTTL` | all but extensions | principals spelled out; never root |
+| `SSHMount` | `Path`, `Description`, `KeyType`, `Roles` | path, key type, a role | the CA key is generated inside OpenBAO; a user CA, never a host CA's mount |
+| `SSHRole` | `Name`, `AllowedUsers`, `DefaultUser`, `KeyTypes`, `KeyIDFormat`, `Extensions`, `ForceCommand`, `TTL`, `MaxTTL` | all but extensions and `ForceCommand` | principals spelled out; never root; `ForceCommand` refuses `permit-pty` or a forwarding extension alongside it, and needs a grant that denies `critical_options` (docs/safety.md) |
+| `SSHHostMount` | `Path`, `Description`, `KeyType`, `Roles` | path, key type, a role | the host CA key is generated inside OpenBAO, on a mount of its own -- never the same key as an `SSHMount`'s |
+| `SSHHostRole` | `Name`, `AllowedDomains`, `AllowBareDomains`, `AllowSubdomains`, `KeyTypes`, `KeyIDFormat`, `TTL`, `MaxTTL` | all | domains spelled out literally; no wildcard, no template; `MaxTTL` capped at 30 days, always |
 | `KVLayout` | rows of `Kind`, `Key`, `Properties`, `Writer` | kind, key, properties | `Validate`, `SecretsFor(kind)`, `SecretForKey(key)`, `Kinds()`; `{name}` placeholders |
 
 The access-roster preset ([integrations/access-roster.md](integrations/access-roster.md#the-preset)):
@@ -402,10 +404,12 @@ model owns on `ctx` ([model.md](model.md#applying-it)).
 
 `Deploy` returns `Result`: `Provider`, `Namespaces`, `Certificates`
 (self-signed issuers' certificates by issuer name), `CertificateRequests`
-(external issuers' requests by issuer name) and `SSHCAPublicKeys` (by
-`MountRef{Namespace, Path}`). `apply.NewProvider(ctx, name, address, login)`
-creates the same provider for another program that writes into OpenBAO as
-the same operator.
+(external issuers' requests by issuer name), `SSHCAPublicKeys` (a user
+CA's public key by `MountRef{Namespace, Path}`) and `SSHHostCAPublicKeys`
+(the same, for a host CA -- never the same key as the user CA at the same
+`MountRef.Path`, for rendering an `@cert-authority` line).
+`apply.NewProvider(ctx, name, address, login)` creates the same provider
+for another program that writes into OpenBAO as the same operator.
 
 `apply.SnapshotJob` is the pre-apply snapshot; pass its `Run` as
 `BeforeApply`.
