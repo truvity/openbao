@@ -229,6 +229,10 @@ func (a *applier) door(s *scope, mount *model.JWTMount, policies map[string]*vau
 		Type:             pulumi.String(model.MethodJWT),
 		OidcDiscoveryUrl: pulumi.String(mount.DiscoveryURL),
 		BoundIssuer:      pulumi.String(mount.DiscoveryURL),
+		// The plugin's own default is RS256 alone for an oidc role ("all"
+		// for a jwt role); state the algorithms explicitly so an ES256 or
+		// ES384 issuer is not refused on a mount this library applies.
+		JwtSupportedAlgs: pulumi.ToStringArray(mount.Algorithms()),
 	}
 
 	if mount.Description != "" {

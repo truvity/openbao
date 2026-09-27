@@ -13,6 +13,24 @@ const (
 	MethodJWT = "jwt"
 )
 
+// DefaultSupportedAlgorithms is what a mount accepts when it names no
+// SupportedAlgorithms of its own. The plugin's own default is RS256 alone
+// for an oidc-type role ("all" for a jwt-type role), which refuses an
+// issuer that signs ES256 or ES384; this library states these three
+// explicitly instead, on every mount it applies. See JWTMount.Algorithms.
+var DefaultSupportedAlgorithms = []string{"RS256", "ES256", "ES384"}
+
+// jwtSigningAlgorithms is every signing algorithm SupportedAlgorithms may
+// name. HS256/HS384/HS512 (a shared secret) and "none" are never among
+// them: a mount that accepted either would let anyone who can read the
+// issuer's public JWKS -- which is everyone -- mint its own tokens.
+var jwtSigningAlgorithms = map[string]bool{
+	"RS256": true, "RS384": true, "RS512": true,
+	"PS256": true, "PS384": true, "PS512": true,
+	"ES256": true, "ES384": true, "ES512": true,
+	"EdDSA": true,
+}
+
 type (
 	// JWTMount is one auth method of the JWT/OIDC plugin: whose tokens it
 	// accepts, and the roles a login names.
@@ -40,7 +58,13 @@ type (
 		// DiscoveryURL is the issuer's OIDC discovery base, which is also
 		// the bound issuer.
 		DiscoveryURL string `yaml:"discoveryUrl"`
-		Roles        []Role `yaml:"roles"`
+		// SupportedAlgorithms is the signing algorithms this mount accepts
+		// from a token, whether the login is a jwt role's or an oidc role's
+		// browser callback. Empty means DefaultSupportedAlgorithms; call
+		// Algorithms rather than reading this field, so the default lives
+		// in one place.
+		SupportedAlgorithms []string `yaml:"supportedAlgorithms,omitempty"`
+		Roles               []Role   `yaml:"roles"`
 	}
 
 	// Role is one role on a JWT/OIDC mount.
@@ -69,6 +93,18 @@ type (
 	}
 )
 
+// Algorithms is what this mount actually accepts: SupportedAlgorithms if it
+// names any, DefaultSupportedAlgorithms otherwise. pkg/apply calls this,
+// never SupportedAlgorithms directly, so the default resolution lives in
+// this one place.
+func (m *JWTMount) Algorithms() []string {
+	if len(m.SupportedAlgorithms) > 0 {
+		return m.SupportedAlgorithms
+	}
+
+	return DefaultSupportedAlgorithms
+}
+
 // ServiceAccountSubject is the `sub` of a Kubernetes ServiceAccount's
 // projected token, which a workload role binds.
 func ServiceAccountSubject(namespace, serviceAccount string) string {
@@ -95,6 +131,10 @@ func (m *JWTMount) Validate() error {
 		return fmt.Errorf("oidc mount %q signs in as no client", m.Path)
 	}
 
+	if err := validateAlgorithms(m.SupportedAlgorithms); err != nil {
+		return fmt.Errorf("auth mount %q: %w", m.Path, err)
+	}
+
 	seen := make(map[string]bool, len(m.Roles))
 
 	for i := range m.Roles {
@@ -116,6 +156,27 @@ func (m *JWTMount) Validate() error {
 
 	if m.DefaultRole != "" && !seen[m.DefaultRole] {
 		return fmt.Errorf("auth mount %q defaults to role %q, which it does not declare", m.Path, m.DefaultRole)
+	}
+
+	return nil
+}
+
+// validateAlgorithms refuses a name jwtSigningAlgorithms does not list --
+// which is every HS* algorithm and "none" along with any typo -- and a
+// name repeated.
+func validateAlgorithms(algorithms []string) error {
+	seen := make(map[string]bool, len(algorithms))
+
+	for _, algorithm := range algorithms {
+		if !jwtSigningAlgorithms[algorithm] {
+			return fmt.Errorf("supported algorithm %q is not one the JWT plugin signs with", algorithm)
+		}
+
+		if seen[algorithm] {
+			return fmt.Errorf("supported algorithm %q named twice", algorithm)
+		}
+
+		seen[algorithm] = true
 	}
 
 	return nil

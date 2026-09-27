@@ -1,8 +1,8 @@
 // Package fakeissuer is an OIDC issuer in the shape of access-roster's
-// access-issuer, small enough to read in one sitting: an RS256 key, a
-// discovery document, a key set, tokens with a flat groups claim, and the
-// authorization-code flow a confidential client (OpenBAO's web UI door)
-// runs through a browser.
+// access-issuer, small enough to read in one sitting: an RS256 key and an
+// ES384 one, a discovery document, a key set naming both, tokens with a
+// flat groups claim, and the authorization-code flow a confidential client
+// (OpenBAO's web UI door) runs through a browser.
 //
 // It is a test double. It proves nothing about who a caller is: whoever
 // the test says signs in next, signs in. What it is for is the other side
@@ -12,9 +12,12 @@ package fakeissuer
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,6 +29,11 @@ import (
 	"sync"
 	"time"
 )
+
+// es384CoordinateSize is the byte length of a P-384 field element: the
+// curve's order is just under 2^384, so its coordinates and an ES384
+// signature's r and s each take ceil(384/8) = 48 bytes, zero-padded.
+const es384CoordinateSize = 48
 
 // Paths the issuer serves under its URL.
 const (
@@ -43,9 +51,14 @@ type (
 		// discovery document.
 		URL string
 
-		server  *httptest.Server
-		key     *rsa.PrivateKey
-		keyID   string
+		server *httptest.Server
+		key    *rsa.PrivateKey
+		keyID  string
+		// esKey and esKeyID are the issuer's ES384 (P-384) signing key,
+		// published in the JWKS alongside the RS256 one, so a mount that
+		// trusts this issuer can be handed either kind of token.
+		esKey   *ecdsa.PrivateKey
+		esKeyID string
 		clients map[string]string
 
 		mu       sync.Mutex
@@ -84,9 +97,16 @@ func New(clients map[string]string) (*Issuer, error) {
 		return nil, fmt.Errorf("fakeissuer: generate a key: %w", err)
 	}
 
+	esKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("fakeissuer: generate an ES384 key: %w", err)
+	}
+
 	issuer := &Issuer{
 		key:      key,
 		keyID:    "fake-1",
+		esKey:    esKey,
+		esKeyID:  "fake-es384",
 		clients:  clients,
 		codes:    map[string]grant{},
 		accesses: map[string]map[string]any{},
@@ -108,9 +128,17 @@ func New(clients map[string]string) (*Issuer, error) {
 // Close stops the issuer.
 func (i *Issuer) Close() { i.server.Close() }
 
-// Token signs the claims with the issuer's key.
+// Token signs the claims RS256, with the issuer's key. It is the default:
+// what access-issuer signs with today.
 func (i *Issuer) Token(claims Claims) string {
 	return i.sign(i.key, i.keyID, i.payload(claims))
+}
+
+// ES384Token signs the claims ES384, with the issuer's P-384 key. It proves
+// the other side of the contract: an issuer that signs ES384 (or ES256)
+// rather than RS256 must still be admitted by a mount this library applies.
+func (i *Issuer) ES384Token(claims Claims) string {
+	return i.signES384(i.payload(claims))
 }
 
 // ForeignToken signs the same claims with a key the issuer never published:
@@ -181,6 +209,29 @@ func (i *Issuer) sign(key *rsa.PrivateKey, keyID string, payload map[string]any)
 	return input + "." + encode(signature)
 }
 
+// signES384 signs a JWS the way ES384 requires: not the ASN.1 DER
+// ecdsa.Sign produces, but r and s each padded to the curve's coordinate
+// size and concatenated raw.
+func (i *Issuer) signES384(payload map[string]any) string {
+	header, _ := json.Marshal(map[string]string{"alg": "ES384", "typ": "JWT", "kid": i.esKeyID})
+	body, _ := json.Marshal(payload)
+	input := encode(header) + "." + encode(body)
+	digest := sha512.Sum384([]byte(input))
+
+	r, s, err := ecdsa.Sign(rand.Reader, i.esKey, digest[:])
+	if err != nil {
+		// A P-384 key signing a digest cannot fail short of a broken
+		// random source, after which nothing here means anything.
+		panic(fmt.Sprintf("fakeissuer: sign ES384: %v", err))
+	}
+
+	signature := make([]byte, 2*es384CoordinateSize)
+	r.FillBytes(signature[:es384CoordinateSize])
+	s.FillBytes(signature[es384CoordinateSize:])
+
+	return input + "." + encode(signature)
+}
+
 func (i *Issuer) discovery(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issuer":                                i.URL,
@@ -190,7 +241,7 @@ func (i *Issuer) discovery(w http.ResponseWriter, _ *http.Request) {
 		"jwks_uri":                              i.URL + KeysPath,
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256"},
+		"id_token_signing_alg_values_supported": []string{"RS256", "ES384"},
 		"scopes_supported":                      []string{"openid", "profile", "email"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
 		"grant_types_supported":                 []string{"authorization_code"},
@@ -198,16 +249,42 @@ func (i *Issuer) discovery(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// keys publishes both signing keys: the RS256 one Token uses and the
+// ES384 one ES384Token uses. A relying party that only ever asks for RS256
+// tokens simply never matches the second entry by `kid`.
 func (i *Issuer) keys(w http.ResponseWriter, _ *http.Request) {
 	public := i.key.PublicKey
-	writeJSON(w, http.StatusOK, map[string]any{"keys": []map[string]string{{
-		"kty": "RSA",
-		"use": "sig",
-		"alg": "RS256",
-		"kid": i.keyID,
-		"n":   encode(public.N.Bytes()),
-		"e":   encode(big.NewInt(int64(public.E)).Bytes()),
-	}}})
+
+	// Bytes is the uncompressed SEC1 point: a 0x04 prefix, then X and Y,
+	// each already padded to the curve's coordinate size.
+	point, err := i.esKey.PublicKey.Bytes()
+	if err != nil {
+		// A key this package generated itself cannot produce an invalid
+		// point.
+		panic(fmt.Sprintf("fakeissuer: encode the ES384 public key: %v", err))
+	}
+
+	x, y := point[1:1+es384CoordinateSize], point[1+es384CoordinateSize:]
+
+	writeJSON(w, http.StatusOK, map[string]any{"keys": []map[string]string{
+		{
+			"kty": "RSA",
+			"use": "sig",
+			"alg": "RS256",
+			"kid": i.keyID,
+			"n":   encode(public.N.Bytes()),
+			"e":   encode(big.NewInt(int64(public.E)).Bytes()),
+		},
+		{
+			"kty": "EC",
+			"use": "sig",
+			"alg": "ES384",
+			"crv": "P-384",
+			"kid": i.esKeyID,
+			"x":   encode(x),
+			"y":   encode(y),
+		},
+	}})
 }
 
 // authorize is the browser's stop at the issuer: whoever SignIn named signs
