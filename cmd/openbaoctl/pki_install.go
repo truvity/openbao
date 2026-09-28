@@ -70,9 +70,11 @@ const (
 )
 
 type (
-	// kubeFactory builds the Kubernetes client for a kubeconfig path and
-	// context. Tests replace it with a fake clientset; nothing else does.
-	kubeFactory func(kubeconfigPath, kubeContext string) (kubernetes.Interface, error)
+	// kubeFactory resolves a kubeconfig path and context into a client and
+	// the cluster's API server URL, so the plan an operator confirms can
+	// name the cluster, not just the flag they typed. Tests replace it
+	// with a fake clientset and a stub server string; nothing else does.
+	kubeFactory func(kubeconfigPath, kubeContext string) (kubernetes.Interface, string, error)
 
 	installEmergencyServerOptions struct {
 		certificatePath string
@@ -117,7 +119,7 @@ func pkiInstallEmergencyServerCommand() *cli.Command {
 			&cli.StringFlag{Name: flagKeyDataKey, Usage: "Secret data key for the private key", Value: defaultKeyDataKey},
 			&cli.StringFlag{Name: flagCADataKey, Usage: "Secret data key for the CA bundle", Value: defaultCADataKey},
 			&cli.StringFlag{Name: flagKubeconfig, Usage: "kubeconfig path (default: KUBECONFIG or ~/.kube/config)"},
-			&cli.StringFlag{Name: flagKubeContext, Usage: "kubeconfig context (default: its current-context)"},
+			&cli.StringFlag{Name: flagKubeContext, Usage: "kubeconfig context to write to -- required; there is no current-context fallback", Required: true},
 			&cli.BoolFlag{Name: flagYes, Usage: "write without an interactive confirmation"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -142,6 +144,14 @@ func pkiInstallEmergencyServerCommand() *cli.Command {
 }
 
 func runInstallEmergencyServer(ctx context.Context, out io.Writer, options installEmergencyServerOptions) error {
+	// The one thing a break-glass write must confirm is the cluster: on an
+	// operator's laptop the current kube context is often the wrong one
+	// (a different cluster from the last thing they ran), and this write
+	// has no undo. Refuse rather than guess.
+	if strings.TrimSpace(options.kubeContext) == "" {
+		return fmt.Errorf("--%s is required: a break-glass write goes to the cluster named here, never the current kube context", flagKubeContext)
+	}
+
 	certificate, certificatePEM, err := loadSingleCertificate(options.certificatePath)
 	if err != nil {
 		return err
@@ -161,7 +171,16 @@ func runInstallEmergencyServer(ctx context.Context, out io.Writer, options insta
 		return err
 	}
 
-	if _, err := fmt.Fprint(out, describeInstallPlan(options, certificate, len(privateKeyPEM))); err != nil {
+	// Resolved before the plan is printed, so the operator confirms the
+	// cluster they are actually about to write to, not the name they
+	// typed: a stale or misspelled context fails here, before anything is
+	// asked to be confirmed.
+	client, server, err := options.kube(options.kubeconfigPath, options.kubeContext)
+	if err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprint(out, describeInstallPlan(options, certificate, len(privateKeyPEM), server)); err != nil {
 		return err
 	}
 
@@ -174,11 +193,6 @@ func runInstallEmergencyServer(ctx context.Context, out io.Writer, options insta
 		if !confirmed {
 			return fmt.Errorf("not confirmed: nothing written")
 		}
-	}
-
-	client, err := options.kube(options.kubeconfigPath, options.kubeContext)
-	if err != nil {
-		return err
 	}
 
 	data := map[string][]byte{
@@ -215,12 +229,19 @@ func runInstallEmergencyServer(ctx context.Context, out io.Writer, options insta
 // refuse before it ever contacts the cluster: a certificate whose public
 // key is not the given private key's, one that has expired or is not yet
 // valid, one whose declared lifetime exceeds the break-glass cap
-// (ceremony.MaxEmergencyServerLifetime), and one that does not chain to
-// the given bundle alone, as a TLS server, for its own name.
+// (ceremony.MaxEmergencyServerLifetime), one that is a CA, and one that
+// does not chain to the given bundle alone, as a TLS server, for its own
+// name. pkg/ceremony's own EmergencyServerTemplate already refuses a CA
+// leaf, but that guarantee ends at the file this command reads from disk
+// -- this is the last gate before it becomes cluster state.
 func verifyEmergencyLeaf(certificate *x509.Certificate, privateKey *ecdsa.PrivateKey, roots *x509.CertPool, now time.Time) error {
 	publicKey, ok := certificate.PublicKey.(*ecdsa.PublicKey)
 	if !ok || !publicKey.Equal(&privateKey.PublicKey) {
 		return fmt.Errorf("the private key does not match the certificate's public key; refusing to install a mismatched pair")
+	}
+
+	if certificate.IsCA {
+		return fmt.Errorf("the certificate is a CA; a break-glass leaf must not be")
 	}
 
 	if now.Before(certificate.NotBefore) {
@@ -252,7 +273,7 @@ func verifyEmergencyLeaf(certificate *x509.Certificate, privateKey *ecdsa.Privat
 	return nil
 }
 
-func describeInstallPlan(options installEmergencyServerOptions, certificate *x509.Certificate, privateKeyBytes int) string {
+func describeInstallPlan(options installEmergencyServerOptions, certificate *x509.Certificate, privateKeyBytes int, server string) string {
 	fingerprint := sha256.Sum256(certificate.Raw)
 
 	var b strings.Builder
@@ -262,6 +283,8 @@ func describeInstallPlan(options installEmergencyServerOptions, certificate *x50
 	}
 
 	b.WriteString("about to write a break-glass server certificate into a Secret\n")
+	line("context", options.kubeContext)
+	line("api server", server)
 	line("secret", fmt.Sprintf("%s/%s", options.namespace, options.secretName))
 	line("data keys", fmt.Sprintf("%s (certificate), %s (private key, %d bytes, not printed), %s (CA bundle)",
 		options.certKey, options.keyKey, privateKeyBytes, options.caKey))
@@ -365,29 +388,30 @@ func loadCABundle(path string) (*x509.CertPool, []byte, error) {
 }
 
 // defaultKubeFactory is the real kubeFactory: the caller's kubeconfig and
-// context, never a hardcoded one.
-func defaultKubeFactory(kubeconfigPath, kubeContext string) (kubernetes.Interface, error) {
+// a context that must be named explicitly (the caller already refused an
+// empty one), resolved through clientcmd -- never the file's
+// current-context, and never silently. The returned server URL is what
+// the operator confirms against: the cluster clientcmd actually resolved
+// kubeContext to, not the name they typed.
+func defaultKubeFactory(kubeconfigPath, kubeContext string) (kubernetes.Interface, string, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfigPath != "" {
 		rules.ExplicitPath = kubeconfigPath
 	}
 
-	overrides := &clientcmd.ConfigOverrides{}
-	if kubeContext != "" {
-		overrides.CurrentContext = kubeContext
-	}
-
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides).ClientConfig()
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, &clientcmd.ConfigOverrides{CurrentContext: kubeContext},
+	).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("load kubeconfig: %w", err)
+		return nil, "", fmt.Errorf("resolve kube context %q: %w", kubeContext, err)
 	}
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("build Kubernetes client: %w", err)
+		return nil, "", fmt.Errorf("build Kubernetes client: %w", err)
 	}
 
-	return client, nil
+	return client, config.Host, nil
 }
 
 // applyEmergencyServerSecret creates the Secret if it does not exist, with

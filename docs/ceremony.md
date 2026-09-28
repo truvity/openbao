@@ -230,10 +230,14 @@ openbaoctl pki install-emergency-server \
 
 `install-emergency-server` refuses before it touches the cluster: a leaf
 that does not chain to `--ca-bundle` alone, a key that is not the leaf's,
-one that is expired or lives past the 30-day break-glass cap. It prints
-what it is about to write -- the Secret, its keys, the certificate's
-subject, names, validity and fingerprint -- and never the key, then
-requires `--yes` or a typed confirmation before writing. With the chart's
+one that is a CA, or one that is expired or lives past the 30-day
+break-glass cap. `--kube-context` is required -- there is no
+current-context fallback, because the one thing a break-glass write must
+confirm is the cluster, and a laptop's current context is often the wrong
+one. It prints what it is about to write -- the resolved context and API
+server, the Secret, its keys, the certificate's subject, names, validity
+and fingerprint -- and never the key, then requires `--yes` or a typed
+confirmation before writing. With the chart's
 `tlsReload` sidecar the server serves the new certificate within minutes
 (nothing here reloads it: that sidecar watches the files it just wrote).
 Nothing is committed: both the leaf and the Secret write are incident

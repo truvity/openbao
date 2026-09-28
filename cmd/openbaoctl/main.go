@@ -8,7 +8,7 @@
 //	openbaoctl pki verify-intermediate --hierarchy pki.yaml --trust-domain private --chain-out private-chain.pem
 //	openbaoctl pki sign-emergency-server --hierarchy pki.yaml --csr openbao.csr --print-template
 //	openbaoctl pki install-emergency-server --certificate openbao.crt --private-key openbao.key \
-//	  --ca-bundle root.crt --namespace openbao
+//	  --ca-bundle root.crt --namespace openbao --kube-context <context>       # --kube-context is required
 //
 // Every signing command asks the root key for at most one signature, and
 // only for a template whose hash the operator confirmed. See
