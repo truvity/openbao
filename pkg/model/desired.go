@@ -65,6 +65,9 @@ type (
 		SSH     []SSHMount     `yaml:"ssh,omitempty"`
 		SSHHost []SSHHostMount `yaml:"sshHost,omitempty"`
 		Auth    []JWTMount     `yaml:"auth"`
+		// AWSAuth is this namespace's AWS IAM auth backends -- a machine
+		// login shape, disjoint from Auth's JWT/OIDC ones (AWSAuthMount).
+		AWSAuth []AWSAuthMount `yaml:"awsAuth,omitempty"`
 		// Projects are this namespace's child project namespaces -- only an
 		// environment (never root or bootstrap) declares any (ADR 0001).
 		Projects []ProjectNamespace `yaml:"projects,omitempty"`
@@ -174,6 +177,24 @@ func (n *Namespace) Validate() error {
 			return fmt.Errorf("model: namespace %s: %w", label, err)
 		}
 
+		if doors[mount.Path] {
+			return fmt.Errorf("model: namespace %s declares auth mount %q twice", label, mount.Path)
+		}
+
+		doors[mount.Path] = true
+	}
+
+	for i := range n.AWSAuth {
+		mount := &n.AWSAuth[i]
+		if err := mount.Validate(); err != nil {
+			return fmt.Errorf("model: namespace %s: %w", label, err)
+		}
+
+		// AWS auth mounts share sys/auth/<path> with the JWT/OIDC ones
+		// above: one path can be only one auth backend. AWS auth mounts
+		// are never a group's door or a credential role's subject mount
+		// (they admit no person and no group), so they join doors here
+		// for the path collision check alone.
 		if doors[mount.Path] {
 			return fmt.Errorf("model: namespace %s declares auth mount %q twice", label, mount.Path)
 		}

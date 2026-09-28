@@ -168,6 +168,15 @@ func (a *applier) namespace(namespace *model.Namespace) error {
 		accessors[namespace.Auth[i].Path] = accessor
 	}
 
+	// AWS auth mounts grant policies directly (awsAuthMount's doc
+	// comment): no accessor, no group alias, so they register after the
+	// JWT doors but need no accessors map entry.
+	for i := range namespace.AWSAuth {
+		if err := a.awsAuthMount(s, &namespace.AWSAuth[i], policies); err != nil {
+			return err
+		}
+	}
+
 	for i := range namespace.Groups {
 		if err := a.group(s, &namespace.Groups[i], accessors, policies); err != nil {
 			return err

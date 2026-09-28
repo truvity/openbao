@@ -13,6 +13,33 @@
     maxLeaseTtlSeconds: 1200
     maxRetries: 2
     skipChildToken: true
+- type: vault:aws/authBackendClient:AuthBackendClient
+  name: dev-auth-aws-client
+  dependsOn:
+    - dev-auth-aws
+    - ns-dev
+  inputs:
+    backend: aws
+    iamServerIdHeaderValue: dev-openbao-aws-auth
+    namespace: dev
+- type: vault:aws/authBackendRole:AuthBackendRole
+  name: dev-role-aws-ec2-host
+  dependsOn:
+    - dev-auth-aws
+    - dev-policy-ssh-host-ec2-sign
+    - ns-dev
+  inputs:
+    authType: iam
+    backend: aws
+    boundIamPrincipalArns:
+      - arn:aws:iam::111122223333:role/example-ec2-host
+    namespace: dev
+    resolveAwsUniqueIds: false
+    role: ec2-host
+    tokenMaxTtl: 900
+    tokenPolicies:
+      - ssh-host-ec2-sign
+    tokenTtl: 300
 - type: vault:identity/group:Group
   name: dev-group-dev-billing-reader
   dependsOn:
@@ -301,6 +328,15 @@
     canonicalId: root-group-all-openbao-operator-oidc_id
     mountAccessor: root-auth-oidc#accessor
     name: all:openbao:operator
+- type: vault:index/authBackend:AuthBackend
+  name: dev-auth-aws
+  dependsOn:
+    - ns-dev
+  inputs:
+    description: EC2 hosts that sign in with their own instance role, for a host certificate
+    namespace: dev
+    path: aws
+    type: aws
 - type: vault:index/mount:Mount
   name: dev-billing-kv
   dependsOn:
@@ -546,6 +582,17 @@
     - ns-dev
   inputs:
     name: ssh-host-agent-sign
+    namespace: dev
+    policy: |
+      path "ssh-host/sign/host" {
+        capabilities = ["update"]
+      }
+- type: vault:index/policy:Policy
+  name: dev-policy-ssh-host-ec2-sign
+  dependsOn:
+    - ns-dev
+  inputs:
+    name: ssh-host-ec2-sign
     namespace: dev
     policy: |
       path "ssh-host/sign/host" {

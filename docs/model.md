@@ -55,9 +55,10 @@ Two worked examples, the small one first:
   and `conformance/` applies it to a real server.
 - [`desired.yaml`](../pkg/model/testdata/desired.yaml) — **the whole
   shape**: the same root and intermediate, a second intermediate signed
-  outside OpenBAO, an SSH user CA, the web UI's door, credential roles,
-  two environments, and one project (`billing`, in `dev`) beside `dev`'s
-  own KV mount.
+  outside OpenBAO, an SSH user CA, an AWS IAM auth backend beside the SSH
+  host CA it signs into, the web UI's door, credential roles, two
+  environments, and one project (`billing`, in `dev`) beside `dev`'s own
+  KV mount.
 
 Neither is a template to copy: an estate derives its own model from its
 own sources. They are what every field looks like when it is filled in.
@@ -335,14 +336,49 @@ lowers. `Result.SSHHostCAPublicKeys` carries the host CA's public key
 per mount, the same way `Result.SSHCAPublicKeys` does for a user mount, for
 a consumer to render into an `@cert-authority` line.
 
-**Who may sign a host certificate:** this repository adds no new auth
-method for it. A host proves itself the same way any other workload does
-— a Kubernetes pod's projected ServiceAccount token, on a `jwt` mount role
-bound to that ServiceAccount (`ServiceAccountSubject`) — whose policy
-grants `update` on exactly `<host mount>/sign/<host role>` and nothing
-else. `examples/roster` wires this up end to end (`HostAgentDoor`,
-`HostAgentRole`), and `conformance/roster_test.go` signs a host
-certificate through it against a real server.
+**Who may sign a host certificate:** a Kubernetes host proves itself the
+same way any other workload does — a pod's projected ServiceAccount
+token, on a `jwt` mount role bound to that ServiceAccount
+(`ServiceAccountSubject`) — whose policy grants `update` on exactly
+`<host mount>/sign/<host role>` and nothing else. `examples/roster` wires
+this up end to end (`HostAgentDoor`, `HostAgentRole`), and
+`conformance/roster_test.go` signs a host certificate through it against
+a real server. An EC2 instance with no Kubernetes identity of its own —
+a subnet router, say — proves itself the same way, through `awsAuth[]`
+below, instead.
+
+**`awsAuth[]` is an AWS IAM auth backend**, for exactly this case: a host
+that runs on AWS but not inside the cluster whose `jwt` mount it could
+otherwise bind to. A login signs an STS `GetCallerIdentity` request with
+its own IAM credentials — normally an instance role's, from EC2's
+metadata service — and hands OpenBAO the signed request instead of a
+bearer token; OpenBAO forwards it to AWS to learn who signed it, never
+trusting the caller's own claim. `AWSAuthMount`/`AWSAuthRole` support the
+`iam` auth type only, never `ec2` (the older, weaker
+instance-identity-document variant), and a role's tokens carry their
+`policies` directly — no identity group, no alias, the same
+`BoundSubject`-workload shape a `jwt` role's machine login takes, because
+an AWS login authenticates a host, not a person.
+
+Two things make this safe to mount at all. `iamServerIdHeaderValue` is
+**required**: every login's signed request must carry it in an
+`X-Vault-AWS-IAM-Server-ID` header, or OpenBAO would accept a signed
+request captured for a wholly different AWS auth mount, anywhere, that
+the caller happened to obtain — the header pins a signed request to THIS
+mount alone. `resolveAwsUniqueIds`, per role, decides whether OpenBAO
+also resolves each `boundIamPrincipalArns` entry to AWS's own opaque
+unique ID at write time (`iam:GetRole`/`iam:GetUser`, once): `true`
+survives an IAM role deleted and recreated under the same name (AWS
+treats that as a different principal; the ARN string alone would not),
+but needs that IAM read granted to whatever AWS credential OpenBAO's own
+auth-backend client configuration uses — a cross-account grant, when the
+role being bound is not in the account OpenBAO itself runs in, that
+`AWSAuthMount` does not create by being declared. `false` needs no such
+grant and matches OpenBAO's own historical default; the model requires
+an explicit choice either way rather than defaulting silently
+(`pkg/model/testdata/desired.yaml`'s example explains the trade-off
+inline). See [safety.md](safety.md#aws-iam-auth) for the replay this
+closes and what it does not.
 
 **A machine role can force one command.** `SSHRole.ForceCommand`, when
 set, is the one command every certificate that role signs carries as its
@@ -455,8 +491,9 @@ name never changes in a minor version**:
 | KV, PKI, SSH and SSH host mounts | `<path>` in root, `<ns>-<path>` in a namespace -- `<environment>-<project>-<path>` inside a project |
 | canary | `<ns>-<canary>` |
 | policy | `<ns>-policy-<name>` (`:` becomes `-`) |
-| auth mount | `<ns>-auth-<path>` |
-| auth role | `<ns>-role-<mount>-<role>` |
+| auth mount (JWT/OIDC or AWS alike) | `<ns>-auth-<path>` |
+| AWS auth client configuration | `<ns>-auth-<path>-client` |
+| auth role (JWT/OIDC or AWS alike) | `<ns>-role-<mount>-<role>` |
 | identity group, alias | `<ns>-group-<name>`, `<ns>-alias-<name>`; `-<door>` appended off the primary door |
 | self-signed root | `<issuer>-certificate` |
 | request, signature, import, named issuer | `<issuer>-csr`, `<issuer>-signed`, `<issuer>-import`, `<issuer>-issuer` |
