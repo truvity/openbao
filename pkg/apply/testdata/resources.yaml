@@ -480,6 +480,13 @@
   name: ns-prod
   inputs:
     path: prod
+- type: vault:index/plugin:Plugin
+  name: plugin-auth-aws
+  inputs:
+    command: openbao-plugin-auth-aws
+    name: aws
+    sha256: 7a77057e62973c1aae6035f52110e3302605a47b622756d954915b7b55eca10c
+    type: auth
 - type: vault:index/policy:Policy
   name: dev-policy-dev-billing-reader
   dependsOn:

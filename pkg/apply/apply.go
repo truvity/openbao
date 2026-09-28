@@ -107,8 +107,10 @@ type (
 )
 
 // Deploy validates the desired state, runs BeforeApply unless this is a
-// preview, logs in, and registers every namespace the model owns --
-// never the bootstrap door, which the login itself goes through.
+// preview, logs in, registers the plugin catalog (global, so before any
+// namespace that might mount an entry in it), and registers every
+// namespace the model owns -- never the bootstrap door, which the login
+// itself goes through.
 func Deploy(c *pulumi.Context, desired *model.Desired, opts Options) (*Result, error) {
 	if err := desired.Validate(); err != nil {
 		return nil, err
@@ -137,6 +139,10 @@ func Deploy(c *pulumi.Context, desired *model.Desired, opts Options) (*Result, e
 
 	a.provider = provider
 	a.result.Provider = provider
+
+	if err := a.plugins(); err != nil {
+		return nil, err
+	}
 
 	for _, namespace := range desired.Applied() {
 		if err := a.namespace(namespace); err != nil {

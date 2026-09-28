@@ -42,6 +42,11 @@ type (
 		Root Namespace `yaml:"root"`
 		// Namespaces are the environments, each one level below root.
 		Namespaces []Namespace `yaml:"namespaces"`
+		// Plugins are the server's plugin catalog: entries every namespace
+		// sits below, applied once and before any of them (Plugin's own
+		// doc comment). Empty on a server with no external plugin -- every
+		// built-in auth and secrets engine needs no entry here.
+		Plugins []Plugin `yaml:"plugins,omitempty"`
 		// Identity is how groups become OpenBAO identity groups.
 		Identity Identity `yaml:"identity"`
 		// CredentialMaxTTL, when set, is the longest a short-lived
@@ -95,6 +100,24 @@ func (d *Desired) Validate() error {
 
 	if err := d.Root.Validate(); err != nil {
 		return err
+	}
+
+	seenPlugins := make(map[string]bool, len(d.Plugins))
+
+	for i := range d.Plugins {
+		plugin := &d.Plugins[i]
+
+		if err := plugin.Validate(); err != nil {
+			return fmt.Errorf("model: %w", err)
+		}
+
+		key := plugin.Type + "/" + plugin.Name
+
+		if seenPlugins[key] {
+			return fmt.Errorf("model: plugin %s is declared twice", key)
+		}
+
+		seenPlugins[key] = true
 	}
 
 	seen := make(map[string]bool, len(d.Namespaces))

@@ -5,6 +5,23 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.15.0
+
+### Added
+
+- **`pkg/model`/`pkg/apply`: a `Plugin` entry registers one binary in
+  OpenBAO's plugin catalog.** OpenBAO ships no cloud auth methods in the
+  server binary; an external plugin (an `aws` IAM auth method, for
+  instance) must be registered before any namespace can mount it, and
+  registration is a root-scoped call above the namespace tree, not a
+  per-namespace one. `Desired.Plugins` is applied once, before a single
+  namespace is, through the Pulumi vault provider's `Plugin` resource.
+  It assumes the binary is already on every server node, under the
+  server's own `plugin_directory` -- placing it there (typically a
+  declarative `plugin` block in the server's own HCL config, downloaded
+  and verified by OpenBAO itself) is a different, independently reviewed
+  change.
+
 ## v0.14.0
 
 ### Fixed
