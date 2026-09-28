@@ -3,6 +3,7 @@ package apply_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sort"
@@ -235,6 +236,48 @@ func TestASignatureWaitsForTheSignersMaintenance(t *testing.T) {
 
 	_, signedHere := m.named("example-edge-signed")
 	assert.False(t, signedHere, "an external issuer is never signed by the apply")
+}
+
+// A mount with PluginVersion set is created through the generic
+// sys/auth/<path> endpoint instead of vault.AuthBackend -- the only shape
+// that carries a pinned catalog version, since pulumi-vault v7's
+// AuthBackend has no such input -- and the client configuration and every
+// role still wait for it and still address it by the same mount path.
+func TestAWSAuthMountWithPluginVersionUsesTheGenericEndpoint(t *testing.T) {
+	desired := example(t)
+	desired.Namespaces[0].AWSAuth[0].PluginVersion = "v0.1.1"
+
+	m, _, err := deploy(t, desired, options(), false)
+	require.NoError(t, err)
+
+	mount, ok := m.named("dev-auth-aws")
+	require.True(t, ok)
+	assert.Equal(t, "vault:generic/endpoint:Endpoint", mount.Type)
+	assert.Contains(t, mount.DependsOn, "plugin-auth-aws")
+	assert.Equal(t, "sys/auth/aws", mount.Inputs["path"])
+	assert.Equal(t, "dev", mount.Inputs["namespace"])
+	assert.Equal(t, true, mount.Inputs["disableRead"])
+	assert.Equal(t, false, mount.Inputs["disableDelete"])
+	assert.Equal(t, true, mount.Inputs["ignoreAbsentFields"])
+
+	// dataJson is an additional secret output (generic.NewEndpoint wraps
+	// it in pulumi.ToSecret itself), so the mock records it as a
+	// *resource.Secret, its plaintext one level down.
+	secret, ok := mount.Inputs["dataJson"].(*resource.Secret)
+	require.True(t, ok, "dataJson must be a secret output")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(secret.Element.StringValue()), &body))
+	assert.Equal(t, "aws", body["type"])
+	assert.Equal(t, "v0.1.1", body["plugin_version"])
+	assert.Equal(t, "EC2 hosts that sign in with their own instance role, for a host certificate", body["description"])
+
+	for _, name := range []string{"dev-auth-aws-client", "dev-role-aws-ec2-host"} {
+		r, ok := m.named(name)
+		require.True(t, ok, name)
+		assert.Contains(t, r.DependsOn, "dev-auth-aws", "%s must depend on the Endpoint mount", name)
+		assert.Equal(t, "aws", r.Inputs["backend"], "%s must still address the mount by its plain path", name)
+	}
 }
 
 // The AWS auth mount waits for its plugin's catalog registration: Deploy

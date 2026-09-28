@@ -5,6 +5,32 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.16.0
+
+### Added
+
+- **`pkg/model`: `AWSAuthMount` gains `pluginVersion`, to pin the plugin
+  catalog version an `awsAuth[]` mount is created at.** A server that
+  registers the `aws` auth plugin as a VERSIONED catalog entry (a real
+  server's `v0.1.1`, say, rather than the unversioned key a plain
+  `Plugins` registration normally occupies) refuses an unversioned mount
+  outright with `plugin not found in the catalog`; `pluginVersion` closes
+  that gap. It takes OpenBAO's own `latest` sentinel or a `v`-prefixed
+  semver, such as `v0.1.1`; left unset, a mount is unversioned, exactly
+  as before this field existed.
+
+### Fixed
+
+- **`pkg/apply`: an `awsAuth[]` mount with `pluginVersion` set is now
+  created through the provider's generic `sys/auth/<path>` endpoint,
+  never `vault.AuthBackend`.** pulumi-vault v7's `AuthBackend` resource
+  (and its tune block) carries no `pluginVersion` input anywhere, so it
+  can only ever create the unversioned kind of mount -- useless against a
+  catalog that holds the plugin only as a versioned entry. The client
+  configuration and every role still wait for the mount and still
+  address it by the same plain path; a mount with no `pluginVersion` is
+  unaffected, still built the same `vault.AuthBackend` way as before.
+
 ## v0.15.0
 
 ### Added

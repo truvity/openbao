@@ -2,12 +2,25 @@ package model
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
 // arnPrefix is the one shape [AWSAuthRole.BoundIAMPrincipalARNs] admits:
 // a literal IAM role or user ARN, never a pattern.
 const arnPrefix = "arn:aws:iam::"
+
+// pluginVersionLatest is the one non-semver value
+// [AWSAuthMount.PluginVersion] admits: OpenBAO's own "latest" sentinel,
+// which always resolves to the newest version registered for that catalog
+// name (`internal/vault/plugin_catalog.go`'s `getExternal`).
+const pluginVersionLatest = "latest"
+
+// pluginVersionPattern is the one shape a real, pinned plugin version
+// takes: a `v`-prefixed semver, exactly what OpenBAO's catalog stores a
+// versioned entry under (e.g. `v0.1.1`), with an optional pre-release or
+// build-metadata suffix.
+var pluginVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
 
 type (
 	// AWSAuthMount is one AWS auth backend: a host proves who it is by
@@ -35,6 +48,23 @@ type (
 		// mount is what stops such a request from being replayed here.
 		IAMServerIDHeaderValue string        `yaml:"iamServerIdHeaderValue"`
 		Roles                  []AWSAuthRole `yaml:"roles"`
+		// PluginVersion pins the catalog version this mount is created
+		// at: "latest", or a `v`-prefixed semver such as "v0.1.1". Optional
+		// -- an empty value leaves the mount unversioned, the way every
+		// mount here worked before this field existed.
+		//
+		// OpenBAO 2.6.2 registers the `aws` auth plugin declaratively, as
+		// a VERSIONED catalog entry (`auth/aws` at a specific semver, not
+		// the unversioned key builtins and Command-registered plugins
+		// alike normally occupy). A mount created with no plugin_version
+		// looks up the unversioned key, then falls through to the
+		// server's built-in plugins, and finds neither -- OpenBAO refuses
+		// it with "plugin not found in the catalog" (the catalog's
+		// `getExternal`, and the `latest` sentinel it also understands).
+		// A server whose `aws` plugin is registered this way needs
+		// PluginVersion set to the version that was registered, or every
+		// mount this model creates for it fails the same way.
+		PluginVersion string `yaml:"pluginVersion,omitempty"`
 	}
 
 	// AWSAuthRole is one `iam`-type role: it admits a login whose signed
@@ -74,7 +104,8 @@ type (
 )
 
 // Validate refuses a mount with no path, no pinned server-id header value,
-// no role, or the same role name twice.
+// no role, the same role name twice, or a PluginVersion that is neither
+// empty, "latest", nor a v-prefixed semver.
 func (m *AWSAuthMount) Validate() error {
 	if strings.TrimSpace(m.Path) == "" {
 		return fmt.Errorf("an AWS auth mount has no path")
@@ -86,6 +117,11 @@ func (m *AWSAuthMount) Validate() error {
 
 	if len(m.Roles) == 0 {
 		return fmt.Errorf("AWS auth mount %q has no role", m.Path)
+	}
+
+	if m.PluginVersion != "" && m.PluginVersion != pluginVersionLatest && !pluginVersionPattern.MatchString(m.PluginVersion) {
+		return fmt.Errorf("AWS auth mount %q pins plugin version %q, which is neither %q nor a v-prefixed semver (e.g. v0.1.1)",
+			m.Path, m.PluginVersion, pluginVersionLatest)
 	}
 
 	seen := make(map[string]bool, len(m.Roles))

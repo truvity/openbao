@@ -306,6 +306,9 @@ func TestValidateRefuses(t *testing.T) {
 			dev(d).AWSAuth[0].Roles[0].Policies = nil
 		}},
 		{"an AWS auth role that never expires", "ttl", func(d *model.Desired) { dev(d).AWSAuth[0].Roles[0].TTL = "" }},
+		{"an AWS auth mount with a malformed plugin version", "neither", func(d *model.Desired) {
+			dev(d).AWSAuth[0].PluginVersion = "0.1.1"
+		}},
 		{"a plugin with an unrecognised type", "not one of auth, secret, database", func(d *model.Desired) {
 			d.Plugins[0].Type = "kms"
 		}},
@@ -421,6 +424,45 @@ func TestJWTMountAlgorithms(t *testing.T) {
 
 	explicit := model.JWTMount{SupportedAlgorithms: []string{"RS256"}}
 	assert.Equal(t, []string{"RS256"}, explicit.Algorithms())
+}
+
+// validAWSAuthMount returns an otherwise-valid mount, so each case below
+// tests PluginVersion alone.
+func validAWSAuthMount() model.AWSAuthMount {
+	return model.AWSAuthMount{
+		Path:                   "aws",
+		IAMServerIDHeaderValue: "example-aws-auth",
+		Roles: []model.AWSAuthRole{{
+			Name:                  "ec2-host",
+			BoundIAMPrincipalARNs: []string{"arn:aws:iam::111122223333:role/example-ec2-host"},
+			Policies:              []string{"example"},
+			TTL:                   "5m",
+			MaxTTL:                "15m",
+		}},
+	}
+}
+
+// PluginVersion is optional; when set, it must be OpenBAO's own "latest"
+// sentinel or a v-prefixed semver -- the one shape its catalog stores a
+// versioned plugin entry under.
+func TestAWSAuthMountPluginVersion(t *testing.T) {
+	for _, version := range []string{"", "latest", "v0.1.1", "v1.0.0-rc1", "v1.0.0+build.5"} {
+		t.Run("accepts "+version, func(t *testing.T) {
+			m := validAWSAuthMount()
+			m.PluginVersion = version
+			assert.NoError(t, m.Validate())
+		})
+	}
+
+	for _, version := range []string{"0.1.1", "v1", "v1.2", "V0.1.1", "Latest", " latest"} {
+		t.Run("refuses "+version, func(t *testing.T) {
+			m := validAWSAuthMount()
+			m.PluginVersion = version
+			err := m.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "neither")
+		})
+	}
 }
 
 func TestServiceAccountSubject(t *testing.T) {

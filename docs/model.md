@@ -431,6 +431,38 @@ does not build in and no `Plugins` entry names is indistinguishable, to
 `Validate`, from a type that IS built in); only the next login against it
 fails, the same live 400 that first exposed the ordering problem.
 
+**`pluginVersion` pins the catalog version the mount is created at**, and
+is required by some deployments even when a matching `Plugins` entry
+exists. OpenBAO 2.6.2 can register `aws` (and other external plugins)
+declaratively, as a VERSIONED catalog entry — `auth/aws` at a specific
+semver such as `v0.1.1`, not the unversioned key a `Command`-registered
+plugin normally occupies. A mount created with no `plugin_version` looks
+up that unversioned key, falls through to the server's built-in plugins,
+finds neither, and OpenBAO refuses it with `plugin not found in the
+catalog` (OpenBAO's own `internal/vault/plugin_catalog.go`, `getExternal`
+— it also understands a `latest` sentinel, which always resolves to the
+newest version registered under that name). `pluginVersion` takes either
+`latest` or a `v`-prefixed semver; leaving it empty keeps the mount
+unversioned, the way every `awsAuth[]` mount here worked before this
+field existed, and is the right choice against a catalog that holds `aws`
+unversioned.
+
+Setting `pluginVersion` changes how the apply mounts the backend, not
+just what it sends: pulumi-vault v7's `vault.AuthBackend` (and its tune
+block) has no `pluginVersion` input at all, so a mount that needs one is
+built through the provider's generic `sys/auth/<path>` endpoint instead
+(`generic.NewEndpoint`, `pkg/apply/awsauth.go`'s `awsAuthMountVersioned`)
+— a raw JSON write of `type`/`description`/`plugin_version` to the same
+path `vault.AuthBackend` would otherwise manage. That resource reads
+nothing back (`sys/auth/<path>` does not return the shape it was written
+in) and still deletes the mount on removal (`DELETE sys/auth/<path>` is
+how OpenBAO disables an auth backend, the same effect any other mount's
+removal has here). Everything downstream — the client configuration, the
+roles — addresses the mount by the same plain path either way, and waits
+on whichever resource created it. Leave `pluginVersion` unset and the
+mount is byte-identical to what this model produced before the field
+existed.
+
 **A machine role can force one command.** `SSHRole.ForceCommand`, when
 set, is the one command every certificate that role signs carries as its
 `force-command` critical option — a machine identity that should only ever
