@@ -1,0 +1,17 @@
+# openbao-hostcert.timer — every 12h, plus once shortly after boot, with
+# jitter so a fleet of these hosts does not all hit OpenBAO in the same
+# second. `systemctl enable --now openbao-hostcert.timer` is the whole of
+# what installs this pilot; the router-side doc (whichever of (a)/(b)/(c)
+# gitops picks) says where that line goes.
+[Unit]
+Description=Periodic SSH host-certificate renewal (openbao-hostcert)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=12h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=openbao-hostcert.service
+
+[Install]
+WantedBy=timers.target
