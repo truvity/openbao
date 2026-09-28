@@ -1503,6 +1503,7 @@
     allowedDomainsTemplate: false
     allowedOtherSans: []
     allowedUriSans: []
+    allowedUriSansTemplate: false
     allowedUserIds: []
     backend: pki
     clientFlag: false
@@ -1583,6 +1584,7 @@
     allowedDomainsTemplate: false
     allowedOtherSans: []
     allowedUriSans: []
+    allowedUriSansTemplate: false
     allowedUserIds: []
     backend: pki
     clientFlag: false
@@ -1619,6 +1621,7 @@
     allowedDomainsTemplate: false
     allowedOtherSans: []
     allowedUriSans: []
+    allowedUriSansTemplate: false
     allowedUserIds: []
     backend: pki
     clientFlag: true
@@ -1656,6 +1659,7 @@
     allowedDomainsTemplate: false
     allowedOtherSans: []
     allowedUriSans: []
+    allowedUriSansTemplate: false
     allowedUserIds: []
     backend: pki-edge
     clientFlag: false

@@ -359,9 +359,10 @@ func (a *applier) pinAndMaintain(s *scope, mount *pkiMount, issuer *pkiIssuer) e
 	return nil
 }
 
-// pkiRole registers one host-name role, addressed to its issuer rather
-// than to whatever the mount's default happens to be, with everything it
-// does not allow spelled out rather than left to a default.
+// pkiRole registers one leaf role -- the service shape (host names) or the
+// identity shape (a URI SAN alone, ADR 0002) -- addressed to its issuer
+// rather than to whatever the mount's default happens to be, with
+// everything it does not allow spelled out rather than left to a default.
 func (a *applier) pkiRole(s *scope, mount *model.PKIMount, role *model.PKIRole) error {
 	issuer := a.issuers[model.IssuerRef{Namespace: s.namespace.Name, Mount: mount.Path, Issuer: role.Issuer}]
 
@@ -388,7 +389,8 @@ func (a *applier) pkiRole(s *scope, mount *model.PKIMount, role *model.PKIRole) 
 		AllowWildcardCertificates: pulumi.Bool(role.AllowWildcards),
 		AllowAnyName:              pulumi.Bool(false),
 		AllowIpSans:               pulumi.Bool(false),
-		AllowedUriSans:            pulumi.StringArray{},
+		AllowedUriSans:            pulumi.ToStringArray(role.AllowedURISANs),
+		AllowedUriSansTemplate:    pulumi.Bool(role.AllowedURISANsTemplate),
 		AllowedOtherSans:          pulumi.StringArray{},
 		AllowedUserIds:            pulumi.StringArray{},
 		AllowLocalhost:            pulumi.Bool(false),
@@ -405,6 +407,23 @@ func (a *applier) pkiRole(s *scope, mount *model.PKIMount, role *model.PKIRole) 
 		Ttl:                 pulumi.String(strconv.Itoa(ttl)),
 		MaxTtl:              pulumi.String(strconv.Itoa(maxTTL)),
 		NoStore:             pulumi.Bool(false),
+	}
+
+	if role.IdentityShape() {
+		// Confirmed against a real server while building this: OpenBAO
+		// 2.6.2's `use_csr_sans` defaults to true, and when it is true the
+		// request's own `uri_sans` parameter is silently dropped -- the
+		// signed certificate carries no URI SAN at all, which is not a
+		// refusal, it is a certificate that looks scoped but never got the
+		// identity onto it. An identity role is never signed from
+		// whatever the CSR itself carries, only from the explicit request
+		// (or a template bound to the caller's own identity), so this
+		// must be false. `enforce_hostnames` and CN validation describe
+		// the service shape's DNS names and CN, neither of which an
+		// identity role has (RequireCn is already false above).
+		args.UseCsrSans = pulumi.Bool(false)
+		args.EnforceHostnames = pulumi.Bool(false)
+		args.CnValidations = pulumi.StringArray{}
 	}
 
 	// Not protected: a leaf role holds no key, and changing what it signs

@@ -448,3 +448,97 @@ func TestSignerDepthCountsTheWholeChain(t *testing.T) {
 	dev.Projects = nil
 	require.NoError(t, desired.Validate())
 }
+
+// TestPKIRoleIdentityShape is ADR 0002's role half: a URI SAN alone, never
+// mixed with the service shape's DNS fields, standing on its own (the
+// example golden carries no identity role yet, so this builds the role
+// literal directly rather than editing the shared fixture).
+func TestPKIRoleIdentityShape(t *testing.T) {
+	base := func() model.PKIRole {
+		return model.PKIRole{
+			Name:     "identity",
+			Issuer:   "example-dev",
+			Server:   true,
+			Client:   true,
+			KeyCurve: model.CurveP384,
+			TTL:      "1h",
+			MaxTTL:   "1h",
+		}
+	}
+
+	t.Run("a literal URI SAN validates", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{"spiffe://dev.example.internal/ns/a/sa/b"}
+		require.NoError(t, role.Validate())
+		assert.True(t, role.IdentityShape())
+	})
+
+	t.Run("a templated URI SAN validates", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{
+			"spiffe://dev.example.internal/ns/{{identity.entity.aliases.x.metadata.service_account_namespace}}" +
+				"/sa/{{identity.entity.aliases.x.metadata.service_account_name}}",
+		}
+		role.AllowedURISANsTemplate = true
+		require.NoError(t, role.Validate())
+	})
+
+	t.Run("no domain and no URI SAN signs nothing", func(t *testing.T) {
+		role := base()
+		require.ErrorContains(t, role.Validate(), "allows no domain and no URI SAN")
+		assert.False(t, role.IdentityShape())
+	})
+
+	t.Run("an empty URI SAN", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{""}
+		require.ErrorContains(t, role.Validate(), "empty URI SAN")
+	})
+
+	t.Run("mixing DNS names into an identity role", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{"spiffe://dev.example.internal/ns/a/sa/b"}
+		role.AllowedDomains = []string{"dev.example.internal"}
+		require.ErrorContains(t, role.Validate(), "mixes allowedDomains into an identity role")
+	})
+
+	t.Run("service-shape flags on an identity role", func(t *testing.T) {
+		for name, mutate := range map[string]func(*model.PKIRole){
+			"allow bare domains": func(r *model.PKIRole) { r.AllowBareDomains = true },
+			"allow subdomains":   func(r *model.PKIRole) { r.AllowSubdomains = true },
+			"allow wildcards":    func(r *model.PKIRole) { r.AllowWildcards = true },
+		} {
+			t.Run(name, func(t *testing.T) {
+				role := base()
+				role.AllowedURISANs = []string{"spiffe://dev.example.internal/ns/a/sa/b"}
+				mutate(&role)
+				require.ErrorContains(t, role.Validate(), "describe DNS SANs and do not apply")
+			})
+		}
+	})
+
+	t.Run("an untemplated wildcard trust domain signs any caller", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{"spiffe://*/ns/a/sa/b"}
+		require.ErrorContains(t, role.Validate(), "without templating it to the caller")
+	})
+
+	t.Run("a templated wildcard trust domain is allowed", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{"spiffe://*/ns/a/sa/b"}
+		role.AllowedURISANsTemplate = true
+		require.NoError(t, role.Validate())
+	})
+
+	t.Run("an untemplated wildcard path, trust domain held fixed, is the documented CSI fallback and is allowed", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{"spiffe://dev.example.internal/*"}
+		require.NoError(t, role.Validate())
+	})
+
+	t.Run("a URI with no host", func(t *testing.T) {
+		role := base()
+		role.AllowedURISANs = []string{"not-a-uri"}
+		require.ErrorContains(t, role.Validate(), "not a URI with a host")
+	})
+}

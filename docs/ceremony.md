@@ -39,6 +39,11 @@ intermediates:
     subject: { commonName: example.com Origin Intermediate CA, organization: Example Org }
     lifetime: 87600h             # no constraint: limited by OpenBAO role policy
     artifact: roots/example-root-2026-01-intermediate-origin.yaml
+  - trustDomain: identity
+    subject: { commonName: Workload Identity Intermediate CA, organization: Example Org }
+    lifetime: 87600h
+    permittedUriDomains: [example.internal]   # every environment's SPIFFE trust domain is a subdomain of this
+    artifact: roots/example-root-2026-01-intermediate-identity.yaml
 emergencyServer:
   dnsName: openbao.example.internal
   # lifetime: 168h               # the default; at most 720h
@@ -59,6 +64,21 @@ an error. The full field list is in [reference.md](reference.md#hierarchy-file).
 | root name constraint | none | a root that lives 20 years must not encode today's zone list |
 | intermediate name constraint | where the names are yours alone | re-issuable under the same root; the constrained one also excludes every IP |
 | `maxPathLen` | the depth you will need, bounded | each layer is exactly one less than its parent, so a leaf-level CA cannot mint a sub-CA |
+
+**A workload-identity domain intermediate carries `permittedUriDomains`
+alone -- no `permittedDnsDomains`.** It sits beside the DNS-constrained
+domain intermediates, signed by the same root, and per-environment
+identity issuing CAs go underneath it
+([ADR 0002](decisions/0002-workload-mtls-service-and-identity-roles.md)).
+`IntermediateTemplate` marks the whole name-constraints extension
+critical and excludes every IP whenever either subtree is set, and
+`verifyIntermediate` checks whichever the spec authored -- DNS, URI, both
+or (for an intermediate limited by OpenBAO role policy alone, like
+`origin` above) neither. The URI constraint is minted here, never by
+OpenBAO's own root or intermediate generation endpoints, which is worth
+restating from [model.md](model.md#pki-mounts-issuers-roles): OpenBAO
+2.6.2 silently ignores `permitted_uri_domains` on those endpoints, the
+same way it already ignores `excludedIpRanges`.
 
 ## 1. The root
 

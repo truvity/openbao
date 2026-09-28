@@ -351,3 +351,50 @@ func TestDeployRefuses(t *testing.T) {
 		})
 	}
 }
+
+// TestIdentityRoleShape is ADR 0002's apply half: an identity role (a URI
+// SAN alone) renders the role's own list and template flag rather than
+// the always-empty/false the service shape sends, and it turns off
+// use_csr_sans, enforce_hostnames and CN validation -- none of which an
+// identity role has any business honouring (docs/model.md).
+func TestIdentityRoleShape(t *testing.T) {
+	desired := example(t)
+	dev := &desired.Namespaces[0]
+	pki := &dev.PKI[0]
+
+	pki.Roles = append(pki.Roles, model.PKIRole{
+		Name:     "identity",
+		Issuer:   pki.Roles[0].Issuer,
+		Server:   true,
+		Client:   true,
+		KeyCurve: model.CurveP384,
+		TTL:      "1h",
+		MaxTTL:   "1h",
+		AllowedURISANs: []string{
+			"spiffe://dev.example.internal/ns/{{identity.entity.aliases.x.metadata.service_account_namespace}}" +
+				"/sa/{{identity.entity.aliases.x.metadata.service_account_name}}",
+		},
+		AllowedURISANsTemplate: true,
+	})
+	require.NoError(t, desired.Validate())
+
+	m, _, err := deploy(t, desired, options(), false)
+	require.NoError(t, err)
+
+	role, ok := m.named(pki.Roles[0].Issuer + "-role-identity")
+	require.True(t, ok)
+
+	assert.Equal(t, []any{
+		"spiffe://dev.example.internal/ns/{{identity.entity.aliases.x.metadata.service_account_namespace}}" +
+			"/sa/{{identity.entity.aliases.x.metadata.service_account_name}}",
+	}, role.Inputs["allowedUriSans"])
+	assert.Equal(t, true, role.Inputs["allowedUriSansTemplate"])
+	assert.Equal(t, false, role.Inputs["useCsrSans"], "the identity SAN never comes from whatever the CSR itself carries")
+	assert.Equal(t, false, role.Inputs["enforceHostnames"], "an identity role has no DNS name to enforce hostname shape on")
+	assert.Equal(t, []any{}, role.Inputs["cnValidations"], "an identity role has no common name to validate")
+	assert.Equal(t, false, role.Inputs["requireCn"])
+	assert.Equal(t, []any{}, role.Inputs["allowedDomains"], "the identity shape carries no DNS domain")
+	assert.Equal(t, false, role.Inputs["allowBareDomains"])
+	assert.Equal(t, false, role.Inputs["allowSubdomains"])
+	assert.Equal(t, false, role.Inputs["allowWildcardCertificates"])
+}

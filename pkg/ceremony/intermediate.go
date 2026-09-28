@@ -48,10 +48,16 @@ type (
 		Lifetime     time.Duration
 		// MaxPathLen must be exactly one less than the root's.
 		MaxPathLen int
-		// PermittedDNSDomains nil means no name-constraints extension at
-		// all. When set, the constraint is critical and every IP address
-		// is excluded.
+		// PermittedDNSDomains and PermittedURIDomains, each nil, means no
+		// name-constraints extension at all. Either set means the
+		// extension is present and critical, and every IP address is
+		// excluded; the two are independent -- a DNS-shaped domain
+		// intermediate sets PermittedDNSDomains alone, a workload-identity
+		// domain intermediate sets PermittedURIDomains alone
+		// (docs/decisions/0002-workload-mtls-service-and-identity-roles.md),
+		// and nothing here requires exactly one of them.
 		PermittedDNSDomains []string
+		PermittedURIDomains []string
 		RootArtifactPath    string
 		ArtifactPath        string
 		// SerialNamespace is the root's (RootSpec.SerialNamespace).
@@ -217,11 +223,18 @@ func (p *IntermediatePlan) Text() string {
 	line("key usage", "critical, Certificate Sign, CRL Sign")
 	line("subject key id", strings.ToUpper(hex.EncodeToString(template.SubjectKeyId)))
 	line("authority key id", strings.ToUpper(hex.EncodeToString(template.AuthorityKeyId)))
-	if len(template.PermittedDNSDomains) == 0 {
+	if len(template.PermittedDNSDomains) == 0 && len(template.PermittedURIDomains) == 0 {
 		line("name constraints", "none (names are constrained by role policy only)")
 	} else {
-		line("name constraints", "critical, permitted DNS: "+strings.Join(template.PermittedDNSDomains, ", ")+
-			"; excluded IP: "+strings.Join(ipRangeStrings(template.ExcludedIPRanges), ", "))
+		var parts []string
+		if len(template.PermittedDNSDomains) > 0 {
+			parts = append(parts, "permitted DNS: "+strings.Join(template.PermittedDNSDomains, ", "))
+		}
+		if len(template.PermittedURIDomains) > 0 {
+			parts = append(parts, "permitted URI: "+strings.Join(template.PermittedURIDomains, ", "))
+		}
+		parts = append(parts, "excluded IP: "+strings.Join(ipRangeStrings(template.ExcludedIPRanges), ", "))
+		line("name constraints", "critical, "+strings.Join(parts, "; "))
 	}
 	line("template sha256", p.TemplateSHA256)
 	return b.String()
@@ -251,10 +264,22 @@ func IntermediateTemplate(spec IntermediateSpec, root *x509.Certificate, publicK
 		SubjectKeyId:          ski,
 		AuthorityKeyId:        append([]byte(nil), root.SubjectKeyId...),
 	}
-	if len(spec.PermittedDNSDomains) > 0 {
+	// The two subtree kinds are independent: an identity intermediate
+	// carries a URI subtree and no DNS one, a DNS-shaped intermediate the
+	// reverse, and either alone makes the whole extension present and
+	// critical (x509.Certificate has one criticality flag for the entire
+	// name-constraints extension, not one per subtree kind -- Go's own
+	// PermittedDNSDomainsCritical field name is the historical name for
+	// it).
+	if len(spec.PermittedDNSDomains) > 0 || len(spec.PermittedURIDomains) > 0 {
 		template.PermittedDNSDomainsCritical = true
-		template.PermittedDNSDomains = append([]string(nil), spec.PermittedDNSDomains...)
 		template.ExcludedIPRanges = mustIPRanges(allIPv4, allIPv6)
+	}
+	if len(spec.PermittedDNSDomains) > 0 {
+		template.PermittedDNSDomains = append([]string(nil), spec.PermittedDNSDomains...)
+	}
+	if len(spec.PermittedURIDomains) > 0 {
+		template.PermittedURIDomains = append([]string(nil), spec.PermittedURIDomains...)
 	}
 	return template, nil
 }
@@ -488,21 +513,37 @@ func verifyIntermediate(certificate *x509.Certificate, plan *IntermediatePlan) (
 	hasConstraints := slices.ContainsFunc(certificate.Extensions, func(extension pkix.Extension) bool {
 		return extension.Id.Equal(oidNameConstraints)
 	})
-	if len(spec.PermittedDNSDomains) == 0 {
-		if err := prove(!hasConstraints && len(certificate.PermittedDNSDomains) == 0 && len(certificate.ExcludedIPRanges) == 0,
+	hasDNS := len(spec.PermittedDNSDomains) > 0
+	hasURI := len(spec.PermittedURIDomains) > 0
+	switch {
+	case !hasDNS && !hasURI:
+		if err := prove(!hasConstraints && len(certificate.PermittedDNSDomains) == 0 &&
+			len(certificate.PermittedURIDomains) == 0 && len(certificate.ExcludedIPRanges) == 0,
 			"no name-constraints extension (the "+spec.TrustDomain+" domain is constrained by role policy only)",
 			"certificate carries name constraints the "+spec.TrustDomain+" domain must not have"); err != nil {
 			return nil, err
 		}
-	} else {
+	default:
+		// Either subtree kind, or both, makes the whole extension present
+		// and critical; whichever kind the spec does not author must
+		// carry none, and neither the email nor the two "excluded"
+		// subtree kinds are ever authored here.
 		constrained := hasConstraints && certificate.PermittedDNSDomainsCritical &&
 			reflect.DeepEqual(certificate.PermittedDNSDomains, template.PermittedDNSDomains) &&
+			reflect.DeepEqual(certificate.PermittedURIDomains, template.PermittedURIDomains) &&
 			reflect.DeepEqual(ipRangeStrings(certificate.ExcludedIPRanges), ipRangeStrings(template.ExcludedIPRanges)) &&
 			len(certificate.ExcludedDNSDomains)+len(certificate.PermittedIPRanges)+len(certificate.PermittedEmailAddresses)+
-				len(certificate.ExcludedEmailAddresses)+len(certificate.PermittedURIDomains)+len(certificate.ExcludedURIDomains) == 0
-		if err := prove(constrained,
-			"critical name constraints permit DNS "+strings.Join(certificate.PermittedDNSDomains, ", ")+
-				" and exclude IP "+strings.Join(ipRangeStrings(certificate.ExcludedIPRanges), ", "),
+				len(certificate.ExcludedEmailAddresses)+len(certificate.ExcludedURIDomains) == 0
+		statement := "critical name constraints"
+		var parts []string
+		if hasDNS {
+			parts = append(parts, "permit DNS "+strings.Join(certificate.PermittedDNSDomains, ", "))
+		}
+		if hasURI {
+			parts = append(parts, "permit URI "+strings.Join(certificate.PermittedURIDomains, ", "))
+		}
+		parts = append(parts, "exclude IP "+strings.Join(ipRangeStrings(certificate.ExcludedIPRanges), ", "))
+		if err := prove(constrained, statement+" "+strings.Join(parts, " and "),
 			"certificate name constraints do not match the authored template"); err != nil {
 			return nil, err
 		}

@@ -12,16 +12,19 @@ import (
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/pem"
+	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIntermediateTemplateGolden(t *testing.T) {
-	for _, trustDomain := range []string{fixturePrivate, fixtureOrigin} {
+	for _, trustDomain := range []string{fixturePrivate, fixtureOrigin, fixtureIdentity} {
 		t.Run(trustDomain, func(t *testing.T) {
 			spec, _, root, csr := fixture(t, trustDomain)
 			// Paths are part of the text; pin them to a stable layout.
@@ -48,7 +51,7 @@ func TestIntermediateTemplateGolden(t *testing.T) {
 }
 
 func TestSignIntermediateSignsOnceThenRerunsWithoutSigning(t *testing.T) {
-	for _, trustDomain := range []string{fixturePrivate, fixtureOrigin} {
+	for _, trustDomain := range []string{fixturePrivate, fixtureOrigin, fixtureIdentity} {
 		t.Run(trustDomain, func(t *testing.T) {
 			spec, client, root, csr := fixture(t, trustDomain)
 			plan, err := PrepareIntermediate(spec, root, csr)
@@ -252,6 +255,79 @@ func TestConstrainedIntermediateIsCriticalAndUnconstrainedHasNone(t *testing.T) 
 	assert.Empty(t, origin.PermittedDNSDomains)
 	assert.Empty(t, origin.ExcludedIPRanges)
 	assert.Equal(t, fixtureRootMaxLen-1, origin.MaxPathLen)
+
+	identity := signed(fixtureIdentity)
+	extension, present = nameConstraints(identity)
+	require.True(t, present, "the URI-constrained identity intermediate must carry name constraints")
+	assert.True(t, extension.Critical, "the name constraints must be critical")
+	assert.True(t, identity.PermittedDNSDomainsCritical, "Go's one criticality flag covers the whole extension")
+	assert.Empty(t, identity.PermittedDNSDomains, "the identity intermediate carries no DNS constraint")
+	assert.Equal(t, []string{"example.internal"}, identity.PermittedURIDomains)
+	assert.Equal(t, []string{allIPv4, allIPv6}, ipRangeStrings(identity.ExcludedIPRanges))
+	assert.Equal(t, fixtureRootMaxLen-1, identity.MaxPathLen)
+}
+
+// TestIdentityLeafVerifiesOnlyWithinItsPermittedURIDomain proves the whole
+// point of a URI-constrained intermediate with Go's own x509.Verify: a
+// SPIFFE leaf under the permitted trust domain chains and verifies, and
+// one under a foreign domain fails name-constraint verification, exactly
+// the property docs/decisions/0002-workload-mtls-service-and-identity-roles.md
+// relies on OpenBAO's own PKI mount never being asked to enforce.
+func TestIdentityLeafVerifiesOnlyWithinItsPermittedURIDomain(t *testing.T) {
+	spec, client, root, csr := fixture(t, fixtureIdentity)
+	plan, err := PrepareIntermediate(spec, root, csr)
+	require.NoError(t, err)
+	result, err := SignIntermediate(context.Background(), client, plan, IntermediateOptions{KeyARN: fixtureKeyARN, ConfirmTemplateSHA256: plan.TemplateSHA256})
+	require.NoError(t, err)
+	intermediate := result.Certificate
+	// The intermediate's own private key, never the root's: a leaf is
+	// issued by the intermediate, and fixture() derives the CSR key from
+	// this same seed (fixtures_test.go's csrSeed map).
+	intermediateKey := fixtureKey(t, 0x51)
+
+	rootCertificate, err := plan.RootArtifact.Certificate()
+	require.NoError(t, err)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(rootCertificate)
+	intermediates := x509.NewCertPool()
+	intermediates.AddCert(intermediate)
+
+	leaf := func(t *testing.T, uri string) *x509.Certificate {
+		t.Helper()
+		leafKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		require.NoError(t, err)
+		parsed, err := url.Parse(uri)
+		require.NoError(t, err)
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: ""},
+			NotBefore:    spec.NotBefore.Add(time.Hour),
+			NotAfter:     spec.NotBefore.Add(2 * time.Hour),
+			URIs:         []*url.URL{parsed},
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, intermediate, &leafKey.PublicKey, intermediateKey)
+		require.NoError(t, err)
+		certificate, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		return certificate
+	}
+
+	allowed := leaf(t, "spiffe://dev.example.internal/ns/a/sa/b")
+	_, err = allowed.Verify(x509.VerifyOptions{
+		Roots: roots, Intermediates: intermediates, CurrentTime: spec.NotBefore.Add(90 * time.Minute),
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	})
+	require.NoError(t, err, "a SPIFFE ID under the permitted trust domain verifies")
+
+	foreign := leaf(t, "spiffe://other.test/ns/a/sa/b")
+	_, err = foreign.Verify(x509.VerifyOptions{
+		Roots: roots, Intermediates: intermediates, CurrentTime: spec.NotBefore.Add(90 * time.Minute),
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	})
+	require.ErrorContains(t, err, "URI", "a SPIFFE ID outside the permitted trust domain fails name-constraint verification")
 }
 
 func TestIntermediateSerialIsDeterministicPerDomainAndKey(t *testing.T) {

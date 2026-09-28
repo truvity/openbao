@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -95,11 +96,15 @@ type (
 		PermittedURIDomains     []string `yaml:"permittedUriDomains,omitempty"`
 	}
 
-	// PKIRole is one leaf profile for host names: what it may sign, with
-	// which issuer, for how long. Everything a role does not allow is
-	// refused by the apply whatever is written here: no templated or glob
-	// domains, no any-name, no IP, URI or other SAN, no localhost, no
-	// e-mail protection; a common name, when present, must be a host name.
+	// PKIRole is one leaf profile: either the **service** shape (the
+	// original one) -- host names, for whatever is reached by name -- or
+	// the **identity** shape (ADR 0002) -- a URI SAN alone, for a
+	// workload's own SPIFFE identity -- never both at once. Everything a
+	// role does not allow is refused by the apply whatever is written
+	// here: no templated or glob domains (unless AllowedURISANsTemplate
+	// says otherwise, and only for the URI SAN), no any-name, no IP or
+	// other SAN, no localhost, no e-mail protection; a common name, when
+	// present, must be a host name.
 	PKIRole struct {
 		Name string `yaml:"name"`
 		// Issuer is one of the mount's issuers.
@@ -110,12 +115,25 @@ type (
 		// AllowWildcards admits a wildcard certificate. An exact wildcard
 		// entry in AllowedDomains matches as a bare domain, so a role may
 		// sign exactly the wildcards it lists and nothing deeper.
-		AllowWildcards bool   `yaml:"allowWildcardCertificates"`
-		Server         bool   `yaml:"server"`
-		Client         bool   `yaml:"client"`
-		KeyCurve       string `yaml:"keyCurve"`
-		TTL            string `yaml:"ttl"`
-		MaxTTL         string `yaml:"maxTtl"`
+		//
+		// AllowedDomains, AllowBareDomains, AllowSubdomains and
+		// AllowWildcards are the service shape; an identity role
+		// (AllowedURISANs non-empty) leaves all four at their zero value.
+		AllowWildcards bool `yaml:"allowWildcardCertificates"`
+		// AllowedURISANs and AllowedURISANsTemplate are the identity
+		// shape: the SPIFFE URI(s) the role signs, e.g.
+		// `spiffe://<trust domain>/ns/<namespace>/sa/<service account>`,
+		// and whether each entry is a template bound to the caller's own
+		// identity (`{{identity.entity.aliases.<accessor>.metadata.…}}`)
+		// rather than a literal. A role never mixes this with
+		// AllowedDomains -- Validate refuses both non-empty at once.
+		AllowedURISANs         []string `yaml:"allowedUriSans,omitempty"`
+		AllowedURISANsTemplate bool     `yaml:"allowedUriSansTemplate,omitempty"`
+		Server                 bool     `yaml:"server"`
+		Client                 bool     `yaml:"client"`
+		KeyCurve               string   `yaml:"keyCurve"`
+		TTL                    string   `yaml:"ttl"`
+		MaxTTL                 string   `yaml:"maxTtl"`
 		// RenewBefore is when a consumer should renew. It is not an
 		// OpenBAO setting; it travels with the role so the consumers'
 		// configuration can be derived from the same row.
@@ -273,25 +291,68 @@ func (i *PKIIssuer) Validate() error {
 	return nil
 }
 
-// Validate refuses a role that signs no name, a wildcard pattern it could
-// not bound, or for longer than it allows.
+// IdentityShape reports whether the role is the identity shape (ADR 0002):
+// a URI SAN alone, never a DNS one.
+func (r *PKIRole) IdentityShape() bool { return len(r.AllowedURISANs) > 0 }
+
+// Validate refuses a role that signs no name and no URI, mixes the two
+// shapes, a domain or URI pattern it could not bound, a service-shape flag
+// on an identity role, or one that lives for longer than it allows.
 func (r *PKIRole) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("a PKI role has no name")
 	}
 
-	if len(r.AllowedDomains) == 0 {
-		return fmt.Errorf("PKI role %q allows no domain, so it could sign nothing", r.Name)
-	}
-
-	for _, domain := range r.AllowedDomains {
-		if strings.TrimSpace(domain) == "" || strings.Contains(domain, "{{") {
-			return fmt.Errorf("PKI role %q allows %q, which is not a domain", r.Name, domain)
+	if r.IdentityShape() {
+		if len(r.AllowedDomains) > 0 {
+			return fmt.Errorf("PKI role %q mixes allowedDomains into an identity role (allowedUriSans); the two shapes are never combined", r.Name)
 		}
-	}
 
-	if !r.AllowBareDomains && !r.AllowSubdomains {
-		return fmt.Errorf("PKI role %q allows neither bare domains nor subdomains, so it could sign nothing", r.Name)
+		if r.AllowBareDomains || r.AllowSubdomains || r.AllowWildcards {
+			return fmt.Errorf("PKI role %q is an identity role (allowedUriSans); the bare/subdomain/wildcard flags describe DNS SANs and do not apply", r.Name)
+		}
+
+		for _, uri := range r.AllowedURISANs {
+			if strings.TrimSpace(uri) == "" {
+				return fmt.Errorf("PKI role %q allows an empty URI SAN", r.Name)
+			}
+
+			// The trust domain (the URI's host) is the boundary the chain
+			// and this role are meant to hold; a wildcard IN it --
+			// `spiffe://*` or `spiffe://*.example.internal` -- signs a
+			// caller from any trust domain at all, so it is refused
+			// unless it is templated to the caller's own identity. A
+			// wildcard deeper in the path, with the trust domain held
+			// fixed -- `spiffe://dev.example.internal/*` -- is the
+			// deliberate, narrower fallback a caller that cannot template
+			// to its own identity uses instead (docs/model.md): OpenBAO
+			// still enforces the trust domain, and per-workload attestation
+			// moves to whatever approves the certificate request before it
+			// reaches OpenBAO.
+			parsed, err := url.Parse(uri)
+			if err != nil || parsed.Host == "" {
+				return fmt.Errorf("PKI role %q allows %q, which is not a URI with a host", r.Name, uri)
+			}
+
+			if strings.Contains(parsed.Host, "*") && !r.AllowedURISANsTemplate {
+				return fmt.Errorf("PKI role %q allows the wildcard trust domain %q without templating it to the caller; "+
+					"an untemplated wildcard host signs a caller from any trust domain, not just its own", r.Name, uri)
+			}
+		}
+	} else {
+		if len(r.AllowedDomains) == 0 {
+			return fmt.Errorf("PKI role %q allows no domain and no URI SAN, so it could sign nothing", r.Name)
+		}
+
+		for _, domain := range r.AllowedDomains {
+			if strings.TrimSpace(domain) == "" || strings.Contains(domain, "{{") {
+				return fmt.Errorf("PKI role %q allows %q, which is not a domain", r.Name, domain)
+			}
+		}
+
+		if !r.AllowBareDomains && !r.AllowSubdomains {
+			return fmt.Errorf("PKI role %q allows neither bare domains nor subdomains, so it could sign nothing", r.Name)
+		}
 	}
 
 	if !r.Server && !r.Client {
