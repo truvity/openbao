@@ -36,7 +36,8 @@ func (a *applier) awsAuthMount(s *scope, desired *model.AWSAuthMount, policies m
 		args.Description = pulumi.String(desired.Description)
 	}
 
-	backend, err := vault.NewAuthBackend(a.c, a.name(s.label+"-auth-"+desired.Path), args, s.inside...)
+	backend, err := vault.NewAuthBackend(a.c, a.name(s.label+"-auth-"+desired.Path), args,
+		a.pluginDependency(s.inside, "auth", awsAuthType)...)
 	if err != nil {
 		return fmt.Errorf("%s aws auth %s: %w", s.label, desired.Path, err)
 	}
