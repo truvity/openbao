@@ -46,7 +46,14 @@ type (
 		Organization string
 		NotBefore    time.Time
 		Lifetime     time.Duration
-		// MaxPathLen must be exactly one less than the root's.
+		// MaxPathLen must be less than the root's. A domain intermediate
+		// spends exactly one level of the root's budget (MaxPathLen = the
+		// root's minus one): another CA is expected below it. A CA signed
+		// directly by the root that issues leaves only -- never another CA
+		// -- may spend more of the budget at once, e.g. MaxPathLen 0 under
+		// a root of MaxPathLen 3: RFC 5280's pathLenConstraint only bounds
+		// how many CA certificates may follow, it does not require each
+		// level to consume exactly one unit of it.
 		MaxPathLen int
 		// PermittedDNSDomains and PermittedURIDomains, each nil, means no
 		// name-constraints extension at all. Either set means the
@@ -325,9 +332,11 @@ func parseIntermediateRoot(artifact RootArtifact, spec IntermediateSpec) (*x509.
 			root.NotBefore.UTC().Format(time.RFC3339), root.NotAfter.UTC().Format(time.RFC3339))
 	}
 	rootBounded := root.MaxPathLen > 0 || root.MaxPathLenZero
-	if !rootBounded || root.MaxPathLen != spec.MaxPathLen+1 {
-		return nil, fmt.Errorf("root maxPathLen must be exactly %d for a domain intermediate with maxPathLen %d, got %d",
-			spec.MaxPathLen+1, spec.MaxPathLen, root.MaxPathLen)
+	if !rootBounded || spec.MaxPathLen >= root.MaxPathLen {
+		return nil, fmt.Errorf("root maxPathLen must be greater than this intermediate's maxPathLen %d, got %d "+
+			"(a domain intermediate spends exactly one level, maxPathLen root-1; a leaf-issuing CA signed "+
+			"directly by the root may spend more of the root's budget at once)",
+			spec.MaxPathLen, root.MaxPathLen)
 	}
 	if len(root.PermittedDNSDomains) > 0 {
 		for _, permitted := range spec.PermittedDNSDomains {

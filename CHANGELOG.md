@@ -5,6 +5,29 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Changed
+
+- **`pkg/ceremony`: `IntermediateSpec.MaxPathLen` no longer needs to be
+  exactly one less than the root's.** The offline ceremony that signs a
+  domain intermediate under a committed root artifact
+  (`PrepareIntermediate`/`SignIntermediate`) required
+  `root.MaxPathLen == spec.MaxPathLen + 1`, on the assumption that every
+  intermediate signed directly by the root is itself followed by another
+  CA. That is not true of a leaf-issuing CA signed directly by the root
+  with no domain intermediate above it and no CA of its own below it --
+  for example a per-environment issuing CA with `maxPathLen: 0` under a
+  root of `maxPathLen: 3`. The check is now `spec.MaxPathLen <
+  root.MaxPathLen`: a domain intermediate that still spends exactly one
+  level of the root's budget continues to validate unchanged, and a
+  leaf-issuing CA may now spend more of it at once. RFC 5280's
+  `pathLenConstraint` only bounds how many CA certificates may follow; it
+  never required each level to consume exactly one unit of the budget.
+  The refusal message changed from `root maxPathLen must be exactly N`
+  to `root maxPathLen must be greater than this intermediate's maxPathLen
+  N`.
+
 ## v0.16.0
 
 ### Added
