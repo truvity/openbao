@@ -42,13 +42,22 @@ type (
 	}
 
 	// HierarchyIntermediate is one domain intermediate below the root. Its
-	// validity starts with the root's and its path length is one less.
+	// validity starts with the root's and its path length is one less. An
+	// intermediate carries DNS constraints, URI constraints, both or
+	// neither -- a DNS-shaped domain (the existing "private"/"origin"
+	// kind) permits none, and a URI-only identity domain permits none.
 	HierarchyIntermediate struct {
 		TrustDomain         string           `yaml:"trustDomain"`
 		Subject             HierarchySubject `yaml:"subject"`
 		Lifetime            string           `yaml:"lifetime"`
 		PermittedDNSDomains []string         `yaml:"permittedDnsDomains,omitempty"`
-		Artifact            string           `yaml:"artifact"`
+		// PermittedURIDomains constrains a workload-identity domain
+		// intermediate to the trust domain(s) its SPIFFE URIs may name
+		// (docs/decisions/0002-workload-mtls-service-and-identity-roles.md).
+		// It carries no DNS constraint of its own, and a DNS-shaped
+		// intermediate carries none of these.
+		PermittedURIDomains []string `yaml:"permittedUriDomains,omitempty"`
+		Artifact            string   `yaml:"artifact"`
 	}
 
 	// HierarchyEmergency is the one name a break-glass leaf may serve.
@@ -70,9 +79,9 @@ func LoadHierarchy(path string) (*Hierarchy, error) {
 	if hierarchy.Root.Artifact == "" {
 		return nil, fmt.Errorf("hierarchy %s: root.artifact is required", path)
 	}
-	for _, intermediate := range hierarchy.Intermediates {
-		if intermediate.Artifact == "" {
-			return nil, fmt.Errorf("hierarchy %s: the %q intermediate's artifact is required", path, intermediate.TrustDomain)
+	for i := range hierarchy.Intermediates {
+		if hierarchy.Intermediates[i].Artifact == "" {
+			return nil, fmt.Errorf("hierarchy %s: the %q intermediate's artifact is required", path, hierarchy.Intermediates[i].TrustDomain)
 		}
 	}
 
@@ -86,12 +95,13 @@ func LoadHierarchy(path string) (*Hierarchy, error) {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	for _, intermediate := range hierarchy.Intermediates {
-		if seen[intermediate.TrustDomain] {
-			return nil, fmt.Errorf("hierarchy declares the %q intermediate twice", intermediate.TrustDomain)
+	for i := range hierarchy.Intermediates {
+		trustDomain := hierarchy.Intermediates[i].TrustDomain
+		if seen[trustDomain] {
+			return nil, fmt.Errorf("hierarchy declares the %q intermediate twice", trustDomain)
 		}
-		seen[intermediate.TrustDomain] = true
-		if _, err := hierarchy.Intermediate(intermediate.TrustDomain); err != nil {
+		seen[trustDomain] = true
+		if _, err := hierarchy.Intermediate(trustDomain); err != nil {
 			return nil, err
 		}
 	}
@@ -132,7 +142,8 @@ func (h *Hierarchy) RootSpec() (RootSpec, error) {
 
 // Intermediate is the named domain intermediate as a ceremony takes it.
 func (h *Hierarchy) Intermediate(trustDomain string) (IntermediateSpec, error) {
-	for _, intermediate := range h.Intermediates {
+	for i := range h.Intermediates {
+		intermediate := &h.Intermediates[i]
 		if intermediate.TrustDomain != trustDomain {
 			continue
 		}
@@ -149,6 +160,7 @@ func (h *Hierarchy) Intermediate(trustDomain string) (IntermediateSpec, error) {
 			Lifetime:            lifetime,
 			MaxPathLen:          h.Root.MaxPathLen - 1,
 			PermittedDNSDomains: intermediate.PermittedDNSDomains,
+			PermittedURIDomains: intermediate.PermittedURIDomains,
 			RootArtifactPath:    h.Root.Artifact,
 			ArtifactPath:        intermediate.Artifact,
 			SerialNamespace:     h.SerialNamespace,
@@ -159,8 +171,8 @@ func (h *Hierarchy) Intermediate(trustDomain string) (IntermediateSpec, error) {
 		return spec, nil
 	}
 	known := make([]string, 0, len(h.Intermediates))
-	for _, intermediate := range h.Intermediates {
-		known = append(known, intermediate.TrustDomain)
+	for i := range h.Intermediates {
+		known = append(known, h.Intermediates[i].TrustDomain)
 	}
 	return IntermediateSpec{}, fmt.Errorf("unknown trust domain %q (declared: %v)", trustDomain, known)
 }

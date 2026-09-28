@@ -166,3 +166,61 @@ control that runs at issuance time and can be misconfigured or bypassed;
 a name-constrained intermediate is a property of the certificate chain
 itself, checked by every verifier, that holds even if the approver's own
 policy has a gap nobody has noticed yet.
+
+## Amendment, 2026-09-28: templating works, but the CSI flow cannot use it
+
+Building the `identity` role (step 1 of this record, library only)
+answered the question this record left open: whether an `identity` role's
+`allowedUriSans` can be templated to the caller's own SPIFFE ID rather
+than authored per workload. Two findings, both confirmed against a real
+OpenBAO 2.6.2 server, not read from documentation:
+
+**The template syntax works, with one trap.** A role can bind its URI SAN
+to the caller's own identity --
+`spiffe://<trust domain>/ns/{{identity.entity.aliases.<jwt
+accessor>.metadata.service_account_namespace}}/sa/{{identity.entity.aliases.<jwt
+accessor>.metadata.service_account_name}}` -- exactly as
+[pkg/model](../model.md#auth-workloads-and-people)'s existing
+`claimMappings` support already lets a workload role copy those two
+claims into its own login's alias metadata. Proved directly: a login
+bound to one ServiceAccount gets a certificate for exactly its own SPIFFE
+ID and is refused for another's. The trap is `use_csr_sans`, a role field
+this record never mentioned: OpenBAO 2.6.2 defaults it to `true`, and when
+true the request's own `uri_sans` parameter is silently dropped --
+whatever the role's `allowedUriSans` says, the signed certificate carries
+**no** URI SAN at all. That is not a refusal a caller notices; it is a
+certificate that looks scoped and is simply empty. An identity role must
+set `use_csr_sans: false`, which is also the more defensible default on
+its own terms: an identity certificate's SAN should never come from
+whatever the CSR itself happens to carry.
+
+**The CSI flow cannot use this templating, because it is never the
+workload that logs in.** This record's own "Issued through cert-manager's
+CSI SPIFFE driver" already says who asks OpenBAO for the certificate --
+and having now built the templated role, it is worth being explicit about
+what that means for it: the driver requests a workload's certificate on
+the workload's behalf, authenticating to OpenBAO with **cert-manager's
+own** login (its controller's identity, or the issuer's configured
+credential) -- not the pod's. `identity.entity.aliases.<accessor>.metadata.*`
+would resolve to cert-manager's own claims, the same for every pod it
+ever requests a certificate for, never the requesting pod's namespace or
+ServiceAccount. Templating an `identity` role to "the caller's own
+identity" is therefore a real capability this record confirms works, but
+not one the CSI flow can reach: the caller OpenBAO sees is always
+cert-manager, whichever pod is actually asking.
+
+**The fallback this record already named is what the CSI flow uses.**
+"the chain+role constraint is `spiffe://<trust domain>/*`" -- literal, not
+templated, with the trust domain held fixed and only the path open.
+`pkg/model`'s `PKIRole.Validate` treats this as a distinct, deliberate
+case: a wildcard in the URI's **host** (`spiffe://*`, or a foreign trust
+domain reachable through one) is refused unless templated, because that
+would let a caller claim to be from any trust domain at all; a wildcard
+held to one fixed, already-constrained trust domain is accepted
+untemplated, because OpenBAO's own chain and role already hold that
+boundary -- what is left open is exactly the per-workload namespace and
+ServiceAccount this record already assigns to the SPIFFE driver's own
+approver, not to OpenBAO. Nothing about this amendment changes that
+assignment; it only confirms, with a real server, that OpenBAO could not
+have enforced the narrower promise here even if the approver did not
+exist.

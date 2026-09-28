@@ -20,7 +20,7 @@ func TestLoadHierarchyResolvesSpecsAgainstTheFile(t *testing.T) {
 	assert.Equal(t, fixtureRootSpec(), root)
 	assert.Equal(t, filepath.Join("testdata", "roots", fixtureGeneration+".yaml"), hierarchy.Root.Artifact)
 
-	for _, trustDomain := range []string{fixturePrivate, fixtureOrigin} {
+	for _, trustDomain := range []string{fixturePrivate, fixtureOrigin, fixtureIdentity} {
 		spec, err := hierarchy.Intermediate(trustDomain)
 		require.NoError(t, err)
 		assert.Equal(t, fixtureIntermediateSpec(trustDomain, filepath.Join("testdata", "roots")), spec,

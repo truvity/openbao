@@ -29,8 +29,13 @@ const (
 	fixtureOrg        = "Example Org"
 	fixturePrivateCN  = "example.internal Intermediate CA"
 	fixtureOriginCN   = "example.com Origin Intermediate CA"
+	fixtureIdentityCN = "Workload Identity Intermediate CA"
 	fixturePrivate    = "private"
 	fixtureOrigin     = "origin"
+	// fixtureIdentity is the URI-only domain intermediate
+	// (docs/decisions/0002-workload-mtls-service-and-identity-roles.md):
+	// no DNS constraint, a URI one alone.
+	fixtureIdentity   = "identity"
 	fixtureNotAfter   = "2035-12-30T00:00:00Z" // 2026-01-01 + 87600h, two leap days included
 	fixtureRootMaxLen = 3
 )
@@ -164,6 +169,9 @@ func fixtureIntermediateSpec(trustDomain, dir string) IntermediateSpec {
 	case fixturePrivate:
 		spec.CommonName = fixturePrivateCN
 		spec.PermittedDNSDomains = []string{"example.internal", "cluster.local"}
+	case fixtureIdentity:
+		spec.CommonName = fixtureIdentityCN
+		spec.PermittedURIDomains = []string{"example.internal"}
 	default:
 		spec.CommonName = fixtureOriginCN
 	}
@@ -184,7 +192,7 @@ func fixture(t *testing.T, trustDomain string) (IntermediateSpec, *fakeKMS, Root
 	spec := fixtureIntermediateSpec(trustDomain, t.TempDir())
 	client := fixtureRootKMS(t)
 	root := targetRoot(t, client, fixtureGeneration)
-	csrSeed := map[string]byte{fixturePrivate: 0x21, fixtureOrigin: 0x31}[trustDomain]
+	csrSeed := map[string]byte{fixturePrivate: 0x21, fixtureOrigin: 0x31, fixtureIdentity: 0x51}[trustDomain]
 	csr := fixtureCSR(t, fixtureKey(t, csrSeed), spec.subject())
 	return spec, client, root, csr
 }

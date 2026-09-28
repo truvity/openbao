@@ -5,6 +5,67 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.11.0
+
+### Added
+
+- **pkg/ceremony: URI name constraints, independent of DNS ones.**
+  `IntermediateSpec` (and the hierarchy file's `permittedUriDomains`) grow
+  a URI subtree alongside the existing DNS one -- either, both or neither
+  may be set, and setting either makes the whole name-constraints
+  extension present and critical (Go's `x509.Certificate` has one
+  criticality flag for the extension, not one per subtree kind).
+  `IntermediateTemplate` builds the two independently, and
+  `verifyIntermediate` checks the signed certificate against whichever the
+  spec authored, symmetrically. This is
+  [ADR 0002](docs/decisions/0002-workload-mtls-service-and-identity-roles.md)'s
+  workload-identity domain intermediate: a URI subtree alone, no DNS one,
+  minted by the ceremony because OpenBAO 2.6.2's own
+  `pki/root/generate/internal` and `pki/intermediate/generate/internal`
+  endpoints silently ignore `permitted_uri_domains` (confirmed against a
+  real server while building this -- the same gap `excludedIpRanges`
+  already had, [docs/model.md](docs/model.md) documents). A new
+  `identity` fixture and golden prove the shape, and a test proves with
+  Go's own `x509.Verify` that a SPIFFE leaf under the permitted trust
+  domain verifies and one under a foreign domain fails name-constraint
+  verification.
+- **pkg/model: an identity-shaped `PKIRole`.** `PKIRole` grows
+  `AllowedURISANs` and `AllowedURISANsTemplate`: a URI SAN alone, never
+  mixed with the existing DNS shape's `AllowedDomains` (`Validate` refuses
+  both non-empty at once, and the DNS shape's
+  `AllowBareDomains`/`AllowSubdomains`/`AllowWildcards` flags on an
+  identity role). `Validate` also refuses an identity role with an empty
+  URI list and a wildcard trust domain (`spiffe://*`) that is not
+  templated to the caller's own identity -- a wildcard held to a fixed
+  trust domain with only the path open (`spiffe://<trust
+  domain>/*`) is exactly the documented CSI-driven fallback and is
+  allowed untemplated. `pkg/apply/pki.go`'s `pkiRole` renders the role's
+  own `AllowedURISANs`/`AllowedURISANsTemplate` instead of always sending
+  an empty list, and, for an identity role, also turns off `use_csr_sans`,
+  `enforce_hostnames` and CN validation. `use_csr_sans` matters more than
+  it looks: confirmed against a real server while building this, OpenBAO
+  2.6.2 defaults it to true, and when true the request's own `uri_sans`
+  parameter is silently dropped -- the signed certificate carries no URI
+  SAN at all, which is not a refusal, it is a certificate that looks
+  scoped but never got the identity onto it. Existing (DNS-shaped) roles
+  render byte-identical apart from the new, always-`[]`/`false`
+  `allowedUriSans`/`allowedUriSansTemplate` fields.
+- **docs: the identity role's templating finding, and the CSI-flow
+  amendment to ADR 0002.** `allowed_uri_sans_template` binding a URI SAN
+  to the caller's own identity
+  (`{{identity.entity.aliases.<accessor>.metadata.…}}`, fed by a JWT
+  role's `claimMappings`) works, proved against a real server: a workload
+  login bound to one ServiceAccount gets a certificate for exactly its own
+  SPIFFE ID and is refused for another's. In the estate's actual flow,
+  though, certificates are requested by cert-manager's CSI SPIFFE driver
+  on cert-manager's own login, never the pod's -- so this templating
+  cannot bind to the requesting pod's identity there, and the model's
+  identity role instead uses the fixed-trust-domain, open-path fallback
+  above, leaving per-pod attestation to the SPIFFE approver. See
+  [docs/model.md](docs/model.md#pki-mounts-issuers-roles) and
+  [ADR 0002](docs/decisions/0002-workload-mtls-service-and-identity-roles.md)'s
+  2026-09-28 amendment.
+
 ## v0.10.0
 
 ### Added

@@ -274,6 +274,7 @@ Strict: an unknown key is an error. Paths are relative to the file.
 | `intermediates[].subject` | as above | CN yes | must equal the CSR's subject exactly |
 | `intermediates[].lifetime` | Go duration | yes | from the root's `notBefore`; must end inside the root |
 | `intermediates[].permittedDnsDomains` | list | no | a critical constraint that also excludes every IP; each name must sit inside the root's constraint, if any |
+| `intermediates[].permittedUriDomains` | list | no | a critical constraint (independent of `permittedDnsDomains`; either makes the extension critical) that also excludes every IP -- a workload-identity domain intermediate's SPIFFE trust domain(s), ADR 0002 |
 | `intermediates[].artifact` | path | yes | the intermediate artifact, and its `.attempt` |
 | `emergencyServer.dnsName` | DNS name | for `sign-emergency-server` | the one name a break-glass leaf serves; no wildcard |
 | `emergencyServer.lifetime` | Go duration | no, `168h` | at most `720h` |

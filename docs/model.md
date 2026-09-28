@@ -228,11 +228,62 @@ it ignores the parameter and says so in a warning — which is why the
 one-environment example, the one applied to a real server, constrains
 domains only.
 
-A host-name role (`roles[]`) signs the names it lists; everything else is
-off whatever is written: no templates, globs, any-name, IP, URI or other
-SANs, localhost or e-mail protection, and a common name, when present, must
-be a host name. An exact wildcard entry matches as a bare domain, so
-`allowWildcardCertificates` signs exactly the wildcards the role lists.
+A role (`roles[]`) is one of two shapes, never both at once. The
+**service** shape -- the original one -- signs the DNS names it lists;
+everything else is off whatever is written: no templates, globs, any-name,
+IP, URI or other SANs, localhost or e-mail protection, and a common name,
+when present, must be a host name. An exact wildcard entry matches as a
+bare domain, so `allowWildcardCertificates` signs exactly the wildcards
+the role lists.
+
+The **identity** shape (`allowedUriSans`, ADR 0002) signs a URI SAN alone
+— a SPIFFE ID, `spiffe://<trust domain>/ns/<namespace>/sa/<service
+account>` — never a DNS one: `Validate` refuses `allowedDomains` and
+`allowedUriSans` both non-empty on the same role, and refuses the DNS
+shape's `allowBareDomains`/`allowSubdomains`/`allowWildcardCertificates`
+flags on an identity role. `allowedUriSansTemplate` binds an entry to the
+caller's own identity —
+`spiffe://<trust domain>/ns/{{identity.entity.aliases.<jwt
+accessor>.metadata.service_account_namespace}}/sa/{{identity.entity.aliases.<jwt
+accessor>.metadata.service_account_name}}`, fed by a workload role's
+`claimMappings` — and this **works**, proved against a real server: a
+login bound to one ServiceAccount gets a certificate for exactly its own
+SPIFFE ID and is refused for another's. `Validate` refuses a wildcard in
+the URI's *host* (`spiffe://*`, or a name a foreign trust domain could
+also satisfy) unless it is templated — an untemplated one would let a
+caller claim to be from any trust domain — but allows a wildcard held to
+one fixed, already-constrained trust domain with only the *path* open
+(`spiffe://<trust domain>/*`) untemplated: OpenBAO's chain and role
+already hold the trust-domain boundary there, and nothing narrower is
+being promised.
+
+**The apply turns off `useCsrSans`, `enforceHostnames` and CN validation
+for an identity role.** `useCsrSans` matters more than it looks: OpenBAO
+2.6.2 defaults it to `true`, and confirmed against a real server while
+building this, when it is `true` the sign request's own `uriSans`
+parameter is silently dropped — the signed certificate carries no URI SAN
+at all, which is not a refusal, it is a certificate that looks scoped and
+is simply empty. An identity certificate's SAN must come from the
+explicit request (or a template bound to the caller), never from whatever
+the CSR itself happens to carry.
+
+**Which identity OpenBAO actually sees decides whether templating is
+reachable.** The templating above binds to *whoever logged in and asked
+for the certificate* — and in the estate's real flow, that is never the
+workload. Certificates are requested by cert-manager's CSI SPIFFE driver
+on the workload's behalf, authenticating with cert-manager's **own**
+login, the same one for every pod it ever asks on behalf of; OpenBAO never
+sees the requesting pod's own identity, so
+`identity.entity.aliases.<accessor>.metadata.*` would resolve to
+cert-manager's claims, not the pod's, and templating an identity role to
+"the caller's own identity" cannot reach the pod there. The model's
+identity role for that flow is therefore the fixed-trust-domain,
+open-path fallback above (`spiffe://<trust domain>/*`, untemplated), and
+per-workload attestation — which namespace and ServiceAccount a given
+certificate request is actually for — is the SPIFFE driver's own
+approver's job, never OpenBAO's role
+([ADR 0002](decisions/0002-workload-mtls-service-and-identity-roles.md)'s
+2026-09-28 amendment has the full finding).
 
 A credential role (`credentialRoles[]`) signs a CSR for the caller and
 nobody else: the only common name it accepts is the caller's own alias name

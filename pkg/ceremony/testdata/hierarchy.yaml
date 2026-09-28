@@ -23,5 +23,12 @@ intermediates:
       organization: Example Org
     lifetime: 87600h
     artifact: roots/example-root-2026-01-intermediate-origin.yaml
+  - trustDomain: identity
+    subject:
+      commonName: Workload Identity Intermediate CA
+      organization: Example Org
+    lifetime: 87600h
+    permittedUriDomains: [example.internal]
+    artifact: roots/example-root-2026-01-intermediate-identity.yaml
 emergencyServer:
   dnsName: openbao.example.internal
