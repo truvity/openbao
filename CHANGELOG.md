@@ -5,6 +5,24 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.14.0
+
+### Fixed
+
+- **`pkg/apply`: an identity-shaped PKI role no longer diffs on every
+  refresh.** Building the role that carries `AllowedURISANs` (ADR 0002's
+  identity shape), the apply sent `cn_validations` as an empty list --
+  confirmed against a real OpenBAO 2.6.2 server, the API accepts an
+  empty list but silently substitutes its own default
+  (`["email","hostname"]`) when it is empty, so the very next read (and
+  so a Pulumi refresh, forever after) never matched what was written.
+  The apply now writes that same default explicitly for an identity
+  role, same as `RequireCn: false` already makes the field inert for one
+  either way -- an identity certificate carries no CN for either
+  validation to ever apply to. `TestIdentityRoleShape` now asserts the
+  actual persisted value instead of the value that was sent and never
+  stuck.
+
 ## v0.13.0
 
 ### Added
