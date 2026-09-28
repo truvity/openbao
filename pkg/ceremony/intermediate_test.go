@@ -183,13 +183,13 @@ func TestPrepareIntermediateRefusesBadRequests(t *testing.T) {
 func TestPrepareIntermediateRefusesRootsThatCannotCarryIt(t *testing.T) {
 	spec, client, _, csr := fixture(t, fixturePrivate)
 
-	shallow := fixtureRoot(t, client, spec.GenerationID, fixtureRootOptions{maxPathLen: fixtureRootMaxLen - 1})
+	shallow := fixtureRoot(t, client, spec.GenerationID, fixtureRootOptions{maxPathLen: spec.MaxPathLen})
 	_, err := PrepareIntermediate(spec, shallow, csr)
-	require.ErrorContains(t, err, "root maxPathLen must be exactly 3")
+	require.ErrorContains(t, err, "root maxPathLen must be greater than this intermediate's maxPathLen")
 
 	unbounded := fixtureRoot(t, client, spec.GenerationID, fixtureRootOptions{maxPathLen: -1})
 	_, err = PrepareIntermediate(spec, unbounded, csr)
-	require.ErrorContains(t, err, "root maxPathLen must be exactly 3")
+	require.ErrorContains(t, err, "root maxPathLen must be greater than this intermediate's maxPathLen")
 
 	// A root that only permits two suffixes would make every cluster.local
 	// leaf fail below a private intermediate that permits it.
@@ -220,6 +220,39 @@ func TestPrepareIntermediateRefusesRootsThatCannotCarryIt(t *testing.T) {
 	tooLong.Lifetime *= 3
 	_, err = PrepareIntermediate(tooLong, targetRoot(t, client, spec.GenerationID), csr)
 	require.ErrorContains(t, err, "not within the root's")
+}
+
+// TestPrepareIntermediateAllowsALeafIssuingCAToSpendMoreOfTheRootsBudget
+// proves a CA signed directly by the root may set a maxPathLen well below
+// root.MaxPathLen-1 -- a per-environment issuing CA with no domain
+// intermediate above it and no CA of its own below it, e.g. maxPathLen 0
+// under a root of maxPathLen 3. Only maxPathLen equal to or past the
+// root's own is refused; nothing between is.
+func TestPrepareIntermediateAllowsALeafIssuingCAToSpendMoreOfTheRootsBudget(t *testing.T) {
+	spec, client, root, _ := fixture(t, fixtureIdentity)
+
+	leafOnly := spec
+	leafOnly.MaxPathLen = 0
+	leafOnly.ArtifactPath = filepath.Join(t.TempDir(), fixtureGeneration+"-identity-devel.yaml")
+	csr := fixtureCSR(t, fixtureKey(t, 0x61), leafOnly.subject())
+
+	plan, err := PrepareIntermediate(leafOnly, root, csr)
+	require.NoError(t, err)
+	assert.Equal(t, 0, plan.Template.MaxPathLen)
+	assert.True(t, plan.Template.MaxPathLenZero)
+
+	result, err := SignIntermediate(context.Background(), client, plan, IntermediateOptions{KeyARN: fixtureKeyARN, ConfirmTemplateSHA256: plan.TemplateSHA256})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Certificate.MaxPathLen)
+	assert.True(t, result.Certificate.MaxPathLenZero)
+
+	// The root's own maxPathLen, or more, is still refused: the root
+	// cannot delegate a budget it does not have.
+	atRootsOwn := spec
+	atRootsOwn.MaxPathLen = fixtureRootMaxLen
+	atRootsOwn.ArtifactPath = filepath.Join(t.TempDir(), fixtureGeneration+"-identity-toobig.yaml")
+	_, err = PrepareIntermediate(atRootsOwn, root, csr)
+	require.ErrorContains(t, err, "root maxPathLen must be greater than this intermediate's maxPathLen")
 }
 
 func TestConstrainedIntermediateIsCriticalAndUnconstrainedHasNone(t *testing.T) {
