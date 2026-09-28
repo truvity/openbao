@@ -39,6 +39,36 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   suite does not have, the same boundary `pkg/ceremony`'s KMS double
   already draws for the real KMS root.
 
+- **`cmd/openbao-hostcert`: a generic EC2 host-certificate renewer**, the
+  operational half of the AWS IAM auth support above -- a small,
+  standalone binary (not an `openbaoctl` subcommand: it runs unattended,
+  as root, with no kubeconfig or KMS credential in reach, and dragging
+  in `openbaoctl`'s ceremony/Kubernetes dependencies would bloat every
+  host that installs it for no reason) that signs an STS
+  `GetCallerIdentity` request with the process's own AWS credentials
+  (IMDSv2 instance-role, via the AWS SDK's default chain), logs in to an
+  `AWSAuthMount`, and asks a `SSHHostMount` role to sign the host's own
+  public key (`cert_type=host`, configured `valid_principals`).
+  `--principal-pattern` refuses to even ask for a principal outside a
+  configured glob -- defense in depth, since OpenBAO's own SSH secrets
+  engine has no CIDR- or glob-aware way to restrict which hostname a
+  role may sign for (exact or DNS-suffix match only; see this release's
+  `pkg/model` entry above and `docs/hostcert-renew.md`). The
+  certificate is written atomically and sshd is reloaded
+  (`--reload-cmd`) only when it actually changed; every failure path --
+  a refused login, a refused sign, an unreadable public key -- leaves
+  whatever certificate (or none) was already on disk untouched. No loop,
+  no retry: `systemd/openbao-hostcert.timer` (this release's own asset,
+  published via `release.extra_files`, checksummed like every archive)
+  is the scheduler, every 12h plus once near boot with jitter. Every
+  input is a flag or its matching `OPENBAO_HOSTCERT_*` environment
+  variable, so a systemd `EnvironmentFile` is the whole of its
+  configuration surface -- see `docs/hostcert-renew.md`, including what
+  its test suite proves (the OpenBAO-facing protocol, against an
+  `httptest` double, with the AWS login itself faked) and what it does
+  not (the real SigV4 signing, which needs a real AWS credential and STS
+  endpoint this repository's tests do not have).
+
 - **`openbaoctl pki install-emergency-server`: the other half of the
   break-glass ceremony.** `pki sign-emergency-server` produces a leaf and
   needs no cluster; getting that leaf, its key and the root into the

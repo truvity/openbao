@@ -1,0 +1,36 @@
+# openbao-hostcert.service — one renewal run. Installed alongside the
+# openbao-hostcert binary and openbao-hostcert.timer (this release's own
+# assets); enabled by the timer, never directly (`systemctl start
+# openbao-hostcert.service` runs one renewal by hand, which is also how
+# to test a new configuration without waiting for the timer).
+#
+# All configuration is environment variables (main.go's own doc comment
+# names them: OPENBAO_HOSTCERT_ADDRESS, _NAMESPACE, _AUTH_MOUNT,
+# _AUTH_ROLE, _SERVER_ID_HEADER, _SSH_MOUNT, _SSH_ROLE, _PRINCIPALS,
+# _PUBLIC_KEY, _CERT_PATH, _RELOAD_CMD, and optionally _CA_CERT) — an
+# EnvironmentFile the installer writes, e.g.
+# /etc/openbao-hostcert/openbao-hostcert.env, never edited here: this
+# unit is generic, and every value it needs is estate- or host-specific.
+[Unit]
+Description=Renew this host's SSH host certificate from OpenBAO
+After=network-online.target
+Wants=network-online.target
+# StartLimitIntervalSec/Burst bound a crash loop: openbao-hostcert never
+# retries on its own (renew.go's own doc comment), so a persistently
+# unreachable OpenBAO fails once every timer tick, not in a tight loop.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/openbao-hostcert/openbao-hostcert.env
+ExecStart=/usr/local/bin/openbao-hostcert
+# No shell, no capability beyond what the reload command itself needs
+# (systemctl reload sshd needs root, or a narrower unit's ReloadPropagatedFrom
+# grant — the installer decides; this unit is written assuming root, the
+# same account router-setup.sh's own units already run as).
+User=root
+Group=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/ssh
+PrivateTmp=yes

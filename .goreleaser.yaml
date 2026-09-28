@@ -3,10 +3,14 @@
 # ghcr.io/truvity/charts at the tag's version.
 #
 # One tag stamps everything: the charts, the Go module (a module needs no
-# build step; the tag is its version) and the openbaoctl binaries built
-# here. openbaoctl is a binary, not an image: it is run by a person at a
+# build step; the tag is its version), the openbaoctl binaries built
+# here, and openbao-hostcert's own binaries and systemd units.
+# openbaoctl is a binary, not an image: it is run by a person at a
 # ceremony, against a KMS key they were granted, and a container adds a
-# credential hand-off and nothing else.
+# credential hand-off and nothing else. openbao-hostcert is a binary and
+# not a container for a different reason: it runs unattended, as root, on
+# a small EC2 instance a container runtime would be one more thing to
+# install and trust on (cmd/openbao-hostcert's own doc comment).
 version: 2
 
 project_name: openbao
@@ -20,12 +24,28 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X main.Version={{.Version}}
+  - id: openbao-hostcert
+    main: ./cmd/openbao-hostcert
+    binary: openbao-hostcert
+    env: [CGO_ENABLED=0]
+    # linux only: an unattended host-certificate renewer has no reason to
+    # run anywhere else. amd64+arm64 both, because the estate's first
+    # consumer (an EC2 subnet router) is arm64 (t4g), but this tool
+    # names no router and no estate.
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
 
 archives:
   - id: openbaoctl
     ids: [openbaoctl]
     formats: [tar.gz]
     name_template: "openbaoctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: openbao-hostcert
+    ids: [openbao-hostcert]
+    formats: [tar.gz]
+    name_template: "openbao-hostcert_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
@@ -49,3 +69,20 @@ release:
     Go module: `go get github.com/truvity/openbao@{{ .Tag }}`.
     CLI: the `openbaoctl` archives below, or
     `go run github.com/truvity/openbao/cmd/openbaoctl@{{ .Tag }} --help`.
+    openbao-hostcert: the archives below, plus
+    `openbao-hostcert.service`/`openbao-hostcert.timer` -- checksum
+    against `checksums.txt` the same as every other asset here, the same
+    discipline truvity/tailscale's `router-setup.sh` uses.
+  # openbao-hostcert.service/.timer are not archived WITH the binary: a
+  # systemd unit is installed once, by whatever wrote the binary's
+  # install path in the first place (a launch-template user-data block,
+  # a config management run), and downloading a fresh copy on every
+  # binary upgrade would silently reformat a unit an installer had
+  # customized (its EnvironmentFile path, say). Published here as their
+  # own checksummed assets instead -- an installer fetches them once, by
+  # the same checksum-then-run discipline every other pinned download in
+  # this estate follows (truvity/tailscale's router-setup.sh is the
+  # model).
+  extra_files:
+    - glob: ./cmd/openbao-hostcert/systemd/openbao-hostcert.service
+    - glob: ./cmd/openbao-hostcert/systemd/openbao-hostcert.timer
