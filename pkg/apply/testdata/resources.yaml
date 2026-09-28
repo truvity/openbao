@@ -332,6 +332,7 @@
   name: dev-auth-aws
   dependsOn:
     - ns-dev
+    - plugin-auth-aws
   inputs:
     description: EC2 hosts that sign in with their own instance role, for a host certificate
     namespace: dev

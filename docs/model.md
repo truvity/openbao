@@ -406,6 +406,31 @@ an explicit choice either way rather than defaulting silently
 inline). See [safety.md](safety.md#aws-iam-auth) for the replay this
 closes and what it does not.
 
+**`awsAuth[]` needs a `Plugins` entry, or its mount never comes up.**
+Unlike Vault, OpenBAO ships no cloud auth methods in the server binary —
+`aws`, like every other IAM/cloud auth backend, is an external plugin
+that must be registered in the plugin catalog (a root-scoped registry
+above the namespace tree, one for the whole server, never per namespace)
+before any namespace can mount it. `Desired.Plugins` is that
+registration (`type: auth`, `name: aws`, `command`/`sha256` naming the
+binary this apply assumes already sits under the server's own
+`plugin_directory` — placing it there is a different, independently
+reviewed change, typically a declarative `plugin` block in the server's
+own HCL config). `Deploy` applies every `Plugins` entry before a single
+namespace is, and every mount the apply builds whose type matches a
+declared plugin's name gets an explicit `DependsOn` its own catalog
+registration (`pluginDependency`, `pkg/apply/plugin.go`) — necessary
+because Go call order alone only orders this program, never the Pulumi
+deployment it builds: two resources with no dependency edge between them
+are free to be created in either order, and a mount created before its
+plugin is registered reproduces the exact `plugin not found in the
+catalog` error this exists to prevent. Declare an `awsAuth[]` mount with
+no matching root-level `Plugins` entry and the mount itself still
+applies cleanly (nothing here can refuse it offline — a type OpenBAO
+does not build in and no `Plugins` entry names is indistinguishable, to
+`Validate`, from a type that IS built in); only the next login against it
+fails, the same live 400 that first exposed the ordering problem.
+
 **A machine role can force one command.** `SSHRole.ForceCommand`, when
 set, is the one command every certificate that role signs carries as its
 `force-command` critical option — a machine identity that should only ever

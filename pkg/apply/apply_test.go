@@ -237,6 +237,39 @@ func TestASignatureWaitsForTheSignersMaintenance(t *testing.T) {
 	assert.False(t, signedHere, "an external issuer is never signed by the apply")
 }
 
+// The AWS auth mount waits for its plugin's catalog registration: Deploy
+// calls plugins() before a single namespace is registered, but that only
+// orders this Go program, not the Pulumi deployment it builds. With no
+// dependency edge between two independent resources, Pulumi is free to
+// create them in either order -- so a fresh apply with no explicit
+// DependsOn here could create the mount first and reproduce the exact
+// "plugin not found in the catalog: aws" error Desired.Plugins exists to
+// prevent.
+func TestAWSAuthMountDependsOnItsPlugin(t *testing.T) {
+	m, _, err := deploy(t, example(t), options(), false)
+	require.NoError(t, err)
+
+	mount, ok := m.named("dev-auth-aws")
+	require.True(t, ok)
+	assert.Contains(t, mount.DependsOn, "plugin-auth-aws")
+}
+
+// A mount of a built-in type -- nothing in the example desired state
+// declares a plugin named "jwt" -- gets no such dependency: pluginDependency
+// is generic over every plugin category and type, and must stay a no-op
+// whenever nothing in Desired.Plugins matches.
+func TestABuiltinMountGetsNoPluginDependency(t *testing.T) {
+	m, _, err := deploy(t, example(t), options(), false)
+	require.NoError(t, err)
+
+	mount, ok := m.named("dev-auth-jwt-dev")
+	require.True(t, ok)
+
+	for _, dep := range mount.DependsOn {
+		assert.NotContains(t, dep, "plugin-", "a built-in auth mount should depend on no plugin catalog entry, got %q", dep)
+	}
+}
+
 // An unconstrained issuer's signature carries no name-constraints
 // extension at all, not an empty one.
 func TestNoConstraintIsSentEmpty(t *testing.T) {

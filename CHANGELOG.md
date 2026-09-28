@@ -22,6 +22,20 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   and verified by OpenBAO itself) is a different, independently reviewed
   change.
 
+### Fixed
+
+- **`pkg/apply`: a plugin-backed mount now waits for its own catalog
+  registration.** `Deploy` already registered every `Plugins` entry
+  before a single namespace, but that only orders the Go program that
+  builds a Pulumi deployment, never the deployment itself: two resources
+  with no dependency edge between them are created in whatever order
+  Pulumi likes, so a fresh apply could still create an `aws` auth mount
+  before its plugin was registered and reproduce the exact `plugin not
+  found in the catalog: aws` error `Plugin` was added to prevent. Every
+  mount the apply builds whose type matches a declared plugin's name now
+  gets an explicit `DependsOn` that registration; a mount of a built-in
+  type (`jwt`, `oidc`, ...) matches nothing and is unaffected.
+
 ## v0.14.0
 
 ### Fixed

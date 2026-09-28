@@ -25,6 +25,18 @@ type (
 		result   *Result
 		mounts   map[MountRef]*pkiMount
 		issuers  map[model.IssuerRef]*pkiIssuer
+		// registeredPlugins are the plugin catalog entries plugins() has
+		// registered so far, keyed "<category>/<name>" (a mount's
+		// OpenBAO type is its catalog Name; category is Plugin.Type,
+		// "auth" or "secret"). pluginDependency reads this to make a
+		// mount of a plugin's type wait for its registration -- Deploy
+		// calls plugins() before a single namespace is, but that only
+		// orders THIS PROGRAM; Pulumi itself creates resources with no
+		// edge between them in parallel, so the wait must be an
+		// explicit DependsOn, or a fresh apply can create the mount
+		// before the registration and reproduce the same "plugin not
+		// found in the catalog" error this model exists to prevent.
+		registeredPlugins map[string]*vault.Plugin
 	}
 
 	// scope is one namespace being registered: its label, its `namespace`
@@ -59,8 +71,9 @@ func newApplier(c *pulumi.Context, desired *model.Desired, opts Options) (*appli
 			SSHCAPublicKeys:     map[MountRef]pulumi.StringOutput{},
 			SSHHostCAPublicKeys: map[MountRef]pulumi.StringOutput{},
 		},
-		mounts:  map[MountRef]*pkiMount{},
-		issuers: map[model.IssuerRef]*pkiIssuer{},
+		mounts:            map[MountRef]*pkiMount{},
+		issuers:           map[model.IssuerRef]*pkiIssuer{},
+		registeredPlugins: map[string]*vault.Plugin{},
 	}, nil
 }
 
@@ -248,10 +261,17 @@ func (a *applier) kvMount(s *scope, desired *model.KVMount) error {
 // door registers one auth mount and its roles, and returns the mount's
 // accessor for the group aliases and the credential roles.
 func (a *applier) door(s *scope, mount *model.JWTMount, policies map[string]*vault.Policy) (pulumi.StringOutput, error) {
+	// authType is model.MethodJWT or model.MethodOIDC as a plain string,
+	// kept alongside args.Type (a pulumi.StringInput) so pluginDependency
+	// below can look it up -- neither is ever a plugin's name today (both
+	// are OpenBAO built-ins), but the lookup is generic over any type a
+	// future Desired.Plugins entry might declare.
+	authType := model.MethodJWT
+
 	args := &jwt.AuthBackendArgs{
 		Namespace:        s.arg,
 		Path:             pulumi.String(mount.Path),
-		Type:             pulumi.String(model.MethodJWT),
+		Type:             pulumi.String(authType),
 		OidcDiscoveryUrl: pulumi.String(mount.DiscoveryURL),
 		BoundIssuer:      pulumi.String(mount.DiscoveryURL),
 		// The plugin's own default is RS256 alone for an oidc role ("all"
@@ -265,7 +285,8 @@ func (a *applier) door(s *scope, mount *model.JWTMount, policies map[string]*vau
 	}
 
 	if mount.Type == model.MethodOIDC {
-		args.Type = pulumi.String(model.MethodOIDC)
+		authType = model.MethodOIDC
+		args.Type = pulumi.String(authType)
 		args.OidcClientId = pulumi.String(mount.ClientID)
 		args.OidcClientSecret = a.opts.OIDCClientSecrets[mount.ClientID]
 		args.DefaultRole = pulumi.String(mount.DefaultRole)
@@ -273,7 +294,8 @@ func (a *applier) door(s *scope, mount *model.JWTMount, policies map[string]*vau
 		args.Tune = &jwt.AuthBackendTuneArgs{ListingVisibility: pulumi.String("unauth")}
 	}
 
-	backend, err := jwt.NewAuthBackend(a.c, a.name(s.label+"-auth-"+mount.Path), args, s.inside...)
+	backend, err := jwt.NewAuthBackend(a.c, a.name(s.label+"-auth-"+mount.Path), args,
+		a.pluginDependency(s.inside, "auth", authType)...)
 	if err != nil {
 		return pulumi.StringOutput{}, fmt.Errorf("%s auth %s: %w", s.label, mount.Path, err)
 	}
