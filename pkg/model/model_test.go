@@ -306,6 +306,17 @@ func TestValidateRefuses(t *testing.T) {
 			dev(d).AWSAuth[0].Roles[0].Policies = nil
 		}},
 		{"an AWS auth role that never expires", "ttl", func(d *model.Desired) { dev(d).AWSAuth[0].Roles[0].TTL = "" }},
+		{"a plugin with an unrecognised type", "not one of auth, secret, database", func(d *model.Desired) {
+			d.Plugins[0].Type = "kms"
+		}},
+		{"a plugin with no name", "has no name", func(d *model.Desired) { d.Plugins[0].Name = "" }},
+		{"a plugin with no command", "has no command", func(d *model.Desired) { d.Plugins[0].Command = "" }},
+		{"a plugin with a malformed sha256", "64 lowercase hex characters", func(d *model.Desired) {
+			d.Plugins[0].SHA256 = "not-a-checksum"
+		}},
+		{"a plugin declared twice", "declared twice", func(d *model.Desired) {
+			d.Plugins = append(d.Plugins, d.Plugins[0])
+		}},
 		{"a KV canary that is a pattern", "not one secret path", func(d *model.Desired) { dev(d).KV[0].Canary = "canary/*" }},
 		{"no primary door", "primary door", func(d *model.Desired) { d.Identity.PrimaryDoor = "" }},
 		{"metadata writing the door key", "may not set", func(d *model.Desired) { d.Identity.Metadata = map[string]string{"door": "x"} }},

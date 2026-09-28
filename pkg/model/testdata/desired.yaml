@@ -525,6 +525,11 @@ namespaces:
           - prod:openbao:reader
         doors:
           - jwt-people
+plugins:
+  - type: auth
+    name: aws
+    command: openbao-plugin-auth-aws
+    sha256: 7a77057e62973c1aae6035f52110e3302605a47b622756d954915b7b55eca10c
 identity:
   primaryDoor: jwt-people
   metadata:
