@@ -9,6 +9,36 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ### Added
 
+- **`pkg/model`, `pkg/apply`: AWS IAM auth, for a host that runs on AWS
+  but has no Kubernetes ServiceAccount to bind a `jwt` role to** -- an EC2
+  subnet router, signing its own SSH host certificate, is the first
+  consumer. `Namespace.AWSAuth` (`AWSAuthMount`/`AWSAuthRole`) mounts the
+  `aws` auth backend's `iam` login type only, never `ec2`: a login signs
+  an STS `GetCallerIdentity` request with its own IAM credentials, which
+  OpenBAO verifies against AWS directly rather than trusting a bearer
+  token or the unsigned EC2 instance-identity document. A role binds one
+  or more literal instance-role ARNs (no wildcard), grants `Policies`
+  directly with no identity group or alias -- the same machine-login
+  shape a `jwt` role's `BoundSubject` takes -- and its `TTL`/`MaxTTL` are
+  a plain Go duration pair, same as every other role in this model.
+  `IAMServerIDHeaderValue` is required on the mount (refused empty by
+  `Validate`): it is the `X-Vault-AWS-IAM-Server-ID` header every login
+  must carry, and without it a signed request captured for any other AWS
+  auth mount, anywhere, would be accepted here too.
+  `AWSAuthRole.ResolveAWSUniqueIDs` is written explicitly per role, no
+  default: `true` survives an IAM role deleted and recreated under the
+  same name, but costs an `iam:GetRole`/`iam:GetUser` grant -- a
+  cross-account one, when the bound ARN's account is not the one OpenBAO
+  itself runs in -- that this library does not create by itself; `false`
+  needs none. See `docs/model.md`'s SSH section and `docs/safety.md`'s
+  "AWS IAM auth" for the full reasoning, and
+  `pkg/model/testdata/desired.yaml`'s `dev.awsAuth` for a worked example
+  signing into the same `ssh-host/sign/host` role a Kubernetes host
+  agent already can. No live-AWS conformance test: verifying a real
+  signed STS login needs a real AWS credential this repository's test
+  suite does not have, the same boundary `pkg/ceremony`'s KMS double
+  already draws for the real KMS root.
+
 - **`openbaoctl pki install-emergency-server`: the other half of the
   break-glass ceremony.** `pki sign-emergency-server` produces a leaf and
   needs no cluster; getting that leaf, its key and the root into the

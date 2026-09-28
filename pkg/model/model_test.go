@@ -283,6 +283,29 @@ func TestValidateRefuses(t *testing.T) {
 		{"a rule denying a parameter twice", "twice", func(d *model.Desired) {
 			policyNamed(d, "dev:ssh:runner").Rules[0].DeniedParameters = []string{"critical_options", "critical_options"}
 		}},
+		{"an AWS auth mount with no header value", "iamServerIdHeaderValue", func(d *model.Desired) {
+			dev(d).AWSAuth[0].IAMServerIDHeaderValue = ""
+		}},
+		{"an AWS auth mount with no role", "has no role", func(d *model.Desired) { dev(d).AWSAuth[0].Roles = nil }},
+		{"an AWS auth role twice", "declares role", func(d *model.Desired) {
+			dev(d).AWSAuth[0].Roles = append(dev(d).AWSAuth[0].Roles, dev(d).AWSAuth[0].Roles[0])
+		}},
+		{"an AWS auth mount on a path a JWT mount already holds", "auth mount", func(d *model.Desired) {
+			dev(d).AWSAuth[0].Path = "jwt-dev"
+		}},
+		{"an AWS auth role with no bound principal", "binds no IAM principal", func(d *model.Desired) {
+			dev(d).AWSAuth[0].Roles[0].BoundIAMPrincipalARNs = nil
+		}},
+		{"an AWS auth role with a wildcard principal", "wildcard pattern", func(d *model.Desired) {
+			dev(d).AWSAuth[0].Roles[0].BoundIAMPrincipalARNs = []string{"arn:aws:iam::111122223333:role/*"}
+		}},
+		{"an AWS auth role with a non-IAM principal", "not an IAM ARN", func(d *model.Desired) {
+			dev(d).AWSAuth[0].Roles[0].BoundIAMPrincipalARNs = []string{"not-an-arn"}
+		}},
+		{"an AWS auth role with no policy", "grants no policy", func(d *model.Desired) {
+			dev(d).AWSAuth[0].Roles[0].Policies = nil
+		}},
+		{"an AWS auth role that never expires", "ttl", func(d *model.Desired) { dev(d).AWSAuth[0].Roles[0].TTL = "" }},
 		{"a KV canary that is a pattern", "not one secret path", func(d *model.Desired) { dev(d).KV[0].Canary = "canary/*" }},
 		{"no primary door", "primary door", func(d *model.Desired) { d.Identity.PrimaryDoor = "" }},
 		{"metadata writing the door key", "may not set", func(d *model.Desired) { d.Identity.Metadata = map[string]string{"door": "x"} }},

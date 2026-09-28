@@ -330,6 +330,19 @@ namespaces:
               - profile
               - email
             ttl: 1h
+    awsAuth:
+      - path: aws
+        description: EC2 hosts that sign in with their own instance role, for a host certificate
+        iamServerIdHeaderValue: dev-openbao-aws-auth
+        roles:
+          - name: ec2-host
+            boundIamPrincipalArns:
+              - arn:aws:iam::111122223333:role/example-ec2-host
+            resolveAwsUniqueIds: false
+            policies:
+              - ssh-host-ec2-sign
+            ttl: 5m
+            maxTtl: 15m
     projects:
       - name: billing
         kv:
@@ -410,6 +423,11 @@ namespaces:
             capabilities:
               - update
       - name: ssh-host-agent-sign
+        rules:
+          - path: ssh-host/sign/host
+            capabilities:
+              - update
+      - name: ssh-host-ec2-sign
         rules:
           - path: ssh-host/sign/host
             capabilities:

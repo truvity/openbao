@@ -129,6 +129,46 @@ critical options (the forced command survives), then repeats the request
 with a conflicting `force-command` of its own and asserts the refusal --
 proof, not the first assumption.
 
+## AWS IAM auth
+
+`AWSAuthMount` supports the `iam` auth type only: a login signs an STS
+`GetCallerIdentity` request with its own AWS credentials and hands OpenBAO
+the signed request, which OpenBAO then replays to AWS's own STS endpoint
+to learn who signed it. `ec2` (the older auth type, keyed to the instance
+identity document EC2's metadata service hands any process on the
+instance, no signature) is never emitted by this model -- `apply` always
+writes `auth_type = "iam"` -- because a document with no signature is
+whatever the metadata service was asked for, and anything with SSRF into
+the instance can ask for it too.
+
+**A signed `GetCallerIdentity` request is not, by itself, bound to one
+OpenBAO mount.** It is a normal, valid AWS API request; anything holding a
+copy of it can replay it against any AWS IAM auth mount that will accept
+it, on any OpenBAO or Vault server, unless something in the request ties
+it to the mount it was made for. That something is the
+`X-Vault-AWS-IAM-Server-ID` header: the AWS auth plugin refuses a login
+whose request lacks it, or carries the wrong value, once the mount's
+client configuration pins one. `AWSAuthMount.IAMServerIDHeaderValue` is
+therefore **required**, not optional -- `Validate` refuses a mount that
+leaves it empty -- because an unset value is not "no extra check," it is
+"accept a request signed for anywhere."
+
+**`resolveAwsUniqueIds` trades a cross-account IAM read for surviving a
+role recreated under the same name.** AWS's own unique ID
+(`iam:GetRole`/`iam:GetUser`) is stable across a role's lifetime but a
+brand-new value if the role is deleted and a new one created with the
+identical name and ARN -- the same failure class SSH host keys have
+without a CA, at the IAM-role layer instead. Resolving to it, once, when
+the OpenBAO role is written, closes that gap; leaving it unresolved
+(`false`) matches on the ARN string alone, which the newly-created role
+would also match. Whichever a caller picks, the model requires it
+written explicitly (`AWSAuthRole.ResolveAWSUniqueIDs` has no meaningful
+zero value to default through) -- `true` needs an `iam:GetRole` grant, on
+the account the bound ARN names, for whatever AWS credential the mount's
+own client configuration authenticates as, which is a cross-account grant
+this library does not create by itself when that account is not the one
+OpenBAO runs in.
+
 ## The apply: a configuration that cannot lock itself out
 
 `pkg/apply` converges a whole server, so the ways it can hurt are the ways a
