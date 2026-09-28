@@ -325,7 +325,33 @@ this type existed.
 A host role's `allowedDomains` are literal host names — no `*`, no
 identity template, exactly like a PKI host-name role's own `allowedDomains`
 — and at least one of `allowBareDomains`/`allowSubdomains` must be true, or
-the role signs nothing. Its lifetime is capped at 30 days, always — not by
+the role signs nothing.
+
+**A host role's own domain check is exact-match or DNS-suffix match
+only — never a glob, a CIDR, or any other pattern.** Checked against
+OpenBAO 2.6.2's actual source
+(`internal/builtin/logical/ssh/path_issue_sign.go`'s
+`validateValidPrincipalForHosts`): a requested principal is accepted
+only if it equals an `allowedDomains` entry outright
+(`allowBareDomains`) or that entry is a DNS suffix of it
+(`allowSubdomains`, `strings.HasSuffix(principal, "."+domain)`). There
+is no way to narrow that further from inside this model or from
+OpenBAO's own role configuration — a role that signs for
+`example.internal` signs for every name under it, without exception,
+whatever else is true about the caller. A consumer that needs
+narrower scoping (two environments sharing one domain suffix, say, each
+with its own host CA) has to enforce it elsewhere: the caller refusing
+to ask for a principal outside its own expected range before it signs
+(defense in depth), and, load-bearing, the CLIENT that will trust the
+resulting certificate scoping ITS OWN trust of that CA to a narrower
+pattern than the domain suffix alone — OpenSSH's `known_hosts`
+`@cert-authority` matching does support glob patterns, even though this
+model's own role check does not. See a consumer's own docs for a worked
+example of exactly this (an EC2 host whose hostname suffix is shared
+across every deployment environment, scoped instead by each
+environment's own non-overlapping IP range).
+
+Its lifetime is capped at 30 days, always — not by
 `credentialMaxTtl`, which reaches only `ssh[]` and `credentialRoles[]` and
 is an estate's own, lower ceiling on short-lived credentials. A host
 certificate is trusted by whatever holds the CA's public key, with no
