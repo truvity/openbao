@@ -5,7 +5,7 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
-## v0.12.0
+## v0.13.0
 
 ### Added
 
@@ -68,6 +68,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   `httptest` double, with the AWS login itself faked) and what it does
   not (the real SigV4 signing, which needs a real AWS credential and STS
   endpoint this repository's tests do not have).
+
+## v0.12.0
+
+### Added
 
 - **`openbaoctl pki install-emergency-server`: the other half of the
   break-glass ceremony.** `pki sign-emergency-server` produces a leaf and
