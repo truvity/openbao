@@ -142,10 +142,12 @@ one, nothing has answered yet, so that Secret does not exist the first
 time a GitOps controller syncs whatever installs the server -- and
 whatever issuer normally requests through OpenBAO cannot issue until
 something does. [docs/ceremony.md](ceremony.md#4-the-break-glass-server-certificate)'s
-`openbaoctl pki sign-emergency-server` then `install-emergency-server`
-is what creates that Secret by hand, from the KMS root directly, before
-that first sync; a consuming estate's cluster-bootstrap runbook should
-place it as an explicit, numbered step. Once cert-manager can reach
+`openbaoctl pki sign-emergency-server` then `install-emergency-server
+--kube-context <context>` (required -- no current-context fallback, so
+the plan it prints names the cluster it resolved, not just the name
+typed) is what creates that Secret by hand, from the KMS root directly,
+before that first sync; a consuming estate's cluster-bootstrap runbook
+should place it as an explicit, numbered step. Once cert-manager can reach
 OpenBAO it reissues and takes the Secret over normally -- nothing here
 needs to know it was ever bootstrapped by hand.
 

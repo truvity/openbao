@@ -13,20 +13,23 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   break-glass ceremony.** `pki sign-emergency-server` produces a leaf and
   needs no cluster; getting that leaf, its key and the root into the
   Kubernetes Secret OpenBAO's listener mounts is now its own command,
-  needing a kubeconfig and no KMS credential. It refuses a certificate
-  that does not chain to the given `--ca-bundle` alone, a private key
-  that is not the certificate's, and one that is expired or lives past
-  the 30-day break-glass cap (`ceremony.MaxEmergencyServerLifetime`);
-  prints what it is about to write -- the Secret, its data keys, the
-  certificate's subject, names, validity and fingerprint -- and never the
-  private key; and requires `--yes` or a typed confirmation before
-  writing. A Secret that already exists (an expired certificate on a
-  running cluster) keeps its type, annotations, labels and every other
-  data key -- only the certificate, key and CA entries are replaced. A
-  Secret that does not exist yet (a new cluster, or a restore onto one,
-  before OpenBAO or cert-manager exist) is created as `kubernetes.io/tls`
-  when the data key names are the upstream chart's defaults
-  (`docs/server.md`). See `docs/ceremony.md` §4.
+  needing a kubeconfig and no KMS credential. `--kube-context` is
+  required -- there is no current-context fallback, because the one
+  thing a break-glass write must confirm is the cluster. It refuses a
+  certificate that does not chain to the given `--ca-bundle` alone, a
+  private key that is not the certificate's, one that is a CA, and one
+  that is expired or lives past the 30-day break-glass cap
+  (`ceremony.MaxEmergencyServerLifetime`); prints what it is about to
+  write -- the resolved context and API server, the Secret, its data
+  keys, the certificate's subject, names, validity and fingerprint --
+  and never the private key; and requires `--yes` or a typed
+  confirmation before writing. A Secret that already exists (an expired
+  certificate on a running cluster) keeps its type, annotations, labels
+  and every other data key -- only the certificate, key and CA entries
+  are replaced. A Secret that does not exist yet (a new cluster, or a
+  restore onto one, before OpenBAO or cert-manager exist) is created as
+  `kubernetes.io/tls` when the data key names are the upstream chart's
+  defaults (`docs/server.md`). See `docs/ceremony.md` §4.
 - **A rehearsal that proves the whole restore-path TLS bootstrap without
   AWS.** `conformance.TestBootstrapTLS` (`just rehearse-bootstrap-tls`,
   and part of `just test`/`just check` in CI) signs a break-glass leaf

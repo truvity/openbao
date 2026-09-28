@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -25,7 +25,11 @@ import (
 	"github.com/truvity/openbao/pkg/ceremony"
 )
 
-const testDNSName = "openbao.example.internal"
+const (
+	testDNSName     = "openbao.example.internal"
+	testKubeContext = "test-context"
+	testServer      = "https://cluster.example:6443"
+)
 
 // testChain is one self-signed test root and one leaf it signed, the way
 // sign-emergency-server's output and an operator's openssl key would
@@ -39,7 +43,9 @@ type testChain struct {
 	keyPEM   []byte
 }
 
-func newTestChain(t *testing.T, notBefore time.Time, lifetime time.Duration) testChain {
+// newTestRoot is a throwaway self-signed P-384 CA, the stand-in for the
+// KMS root in these tests.
+func newTestRoot(t *testing.T, notBefore time.Time) (*ecdsa.PrivateKey, *x509.Certificate, []byte) {
 	t.Helper()
 
 	rootKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
@@ -62,10 +68,24 @@ func newTestChain(t *testing.T, notBefore time.Time, lifetime time.Duration) tes
 	rootCert, err := x509.ParseCertificate(rootDER)
 	require.NoError(t, err)
 
-	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
+	return rootKey, rootCert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
+}
+
+// newTestLeaf signs one break-glass-shaped leaf under rootCert/rootKey.
+// isCA lets a test build the one shape install-emergency-server must
+// refuse: a "leaf" that is itself a CA.
+func newTestLeaf(
+	t *testing.T, rootKey *ecdsa.PrivateKey, rootCert *x509.Certificate, notBefore time.Time, lifetime time.Duration, isCA bool,
+) (*x509.Certificate, []byte, []byte) {
+	t.Helper()
 
 	leafKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	require.NoError(t, err)
+
+	keyUsage := x509.KeyUsageDigitalSignature
+	if isCA {
+		keyUsage |= x509.KeyUsageCertSign
+	}
 
 	leafTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(2),
@@ -73,9 +93,10 @@ func newTestChain(t *testing.T, notBefore time.Time, lifetime time.Duration) tes
 		DNSNames:              []string{testDNSName},
 		NotBefore:             notBefore,
 		NotAfter:              notBefore.Add(lifetime),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
+		KeyUsage:              keyUsage,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
+		IsCA:                  isCA,
 		AuthorityKeyId:        rootCert.SubjectKeyId,
 	}
 
@@ -91,6 +112,15 @@ func newTestChain(t *testing.T, notBefore time.Time, lifetime time.Duration) tes
 	require.NoError(t, err)
 
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	return leafCert, leafPEM, keyPEM
+}
+
+func newTestChain(t *testing.T, notBefore time.Time, lifetime time.Duration) testChain {
+	t.Helper()
+
+	rootKey, rootCert, rootPEM := newTestRoot(t, notBefore)
+	leafCert, leafPEM, keyPEM := newTestLeaf(t, rootKey, rootCert, notBefore, lifetime, false)
 
 	return testChain{rootCert: rootCert, rootPEM: rootPEM, leafCert: leafCert, leafPEM: leafPEM, keyPEM: keyPEM}
 }
@@ -116,6 +146,7 @@ func baseOptions(t *testing.T, chain testChain, now time.Time, kube kubeFactory)
 		certKey:         defaultCertDataKey,
 		keyKey:          defaultKeyDataKey,
 		caKey:           defaultCADataKey,
+		kubeContext:     testKubeContext,
 		yes:             true,
 		in:              strings.NewReader(""),
 		now:             func() time.Time { return now },
@@ -123,8 +154,11 @@ func baseOptions(t *testing.T, chain testChain, now time.Time, kube kubeFactory)
 	}
 }
 
-func fakeKube(clientset kubernetes.Interface) kubeFactory {
-	return func(string, string) (kubernetes.Interface, error) { return clientset, nil }
+// fakeKube is the test kubeFactory: a fake clientset plus a stub server
+// URL, standing in for what clientcmd would have resolved a real context
+// to.
+func fakeKube(clientset kubernetes.Interface, server string) kubeFactory {
+	return func(string, string) (kubernetes.Interface, string, error) { return clientset, server, nil }
 }
 
 func TestRunInstallEmergencyServer_CreatesSecret(t *testing.T) {
@@ -133,7 +167,7 @@ func TestRunInstallEmergencyServer_CreatesSecret(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	var out bytes.Buffer
-	require.NoError(t, runInstallEmergencyServer(context.Background(), &out, baseOptions(t, chain, now, fakeKube(clientset))))
+	require.NoError(t, runInstallEmergencyServer(context.Background(), &out, baseOptions(t, chain, now, fakeKube(clientset, testServer))))
 
 	secret, err := clientset.CoreV1().Secrets("test-ns").Get(context.Background(), defaultSecretName, metav1.GetOptions{})
 	require.NoError(t, err)
@@ -168,7 +202,7 @@ func TestRunInstallEmergencyServer_UpdatesSecretPreservingMetadata(t *testing.T)
 	clientset := fake.NewSimpleClientset(existing)
 
 	var out bytes.Buffer
-	require.NoError(t, runInstallEmergencyServer(context.Background(), &out, baseOptions(t, chain, now, fakeKube(clientset))))
+	require.NoError(t, runInstallEmergencyServer(context.Background(), &out, baseOptions(t, chain, now, fakeKube(clientset, testServer))))
 
 	secret, err := clientset.CoreV1().Secrets("test-ns").Get(context.Background(), defaultSecretName, metav1.GetOptions{})
 	require.NoError(t, err)
@@ -184,7 +218,7 @@ func TestRunInstallEmergencyServer_RefusesKeyMismatch(t *testing.T) {
 	chain := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
 	other := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
 
-	options := baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset()))
+	options := baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset(), testServer))
 	options.privateKeyPath = writeTemp(t, "other.key", other.keyPEM)
 
 	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, options)
@@ -197,7 +231,7 @@ func TestRunInstallEmergencyServer_RefusesWrongChain(t *testing.T) {
 	chain := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
 	other := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
 
-	options := baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset()))
+	options := baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset(), testServer))
 	options.caBundlePath = writeTemp(t, "wrong-ca.crt", other.rootPEM)
 
 	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, options)
@@ -209,7 +243,7 @@ func TestRunInstallEmergencyServer_RefusesExpired(t *testing.T) {
 	now := time.Now().UTC()
 	chain := newTestChain(t, now.Add(-48*time.Hour), 24*time.Hour) // NotAfter 24h ago
 
-	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset())))
+	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset(), testServer)))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expired")
 }
@@ -218,7 +252,7 @@ func TestRunInstallEmergencyServer_RefusesLifetimeOverCap(t *testing.T) {
 	now := time.Now().UTC()
 	chain := newTestChain(t, now.Add(-time.Hour), 45*24*time.Hour) // over the 30-day cap
 
-	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset())))
+	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset(), testServer)))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cap")
 }
@@ -226,16 +260,72 @@ func TestRunInstallEmergencyServer_RefusesLifetimeOverCap(t *testing.T) {
 func TestRunInstallEmergencyServer_RequiresConfirmation(t *testing.T) {
 	now := time.Now().UTC()
 	chain := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
+	clientset := fake.NewSimpleClientset()
 
-	options := baseOptions(t, chain, now, func(string, string) (kubernetes.Interface, error) {
-		return nil, errors.New("kube must not be reached without confirmation")
-	})
+	options := baseOptions(t, chain, now, fakeKube(clientset, testServer))
 	options.yes = false
 	options.in = strings.NewReader("no\n")
 
 	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, options)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not confirmed")
+
+	_, getErr := clientset.CoreV1().Secrets("test-ns").Get(context.Background(), defaultSecretName, metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(getErr), "nothing should be written without confirmation")
+}
+
+func TestRunInstallEmergencyServer_RefusesEmptyKubeContext(t *testing.T) {
+	now := time.Now().UTC()
+	chain := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
+
+	options := baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset(), testServer))
+	options.kubeContext = ""
+
+	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, options)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--kube-context")
+	assert.Contains(t, err.Error(), "required")
+}
+
+func TestRunInstallEmergencyServer_PlanNamesTheClusterContextAndServer(t *testing.T) {
+	now := time.Now().UTC()
+	chain := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
+
+	var out bytes.Buffer
+	options := baseOptions(t, chain, now, fakeKube(fake.NewSimpleClientset(), testServer))
+	require.NoError(t, runInstallEmergencyServer(context.Background(), &out, options))
+
+	assert.Contains(t, out.String(), "context:")
+	assert.Contains(t, out.String(), testKubeContext)
+	assert.Contains(t, out.String(), "api server:")
+	assert.Contains(t, out.String(), testServer)
+}
+
+func TestRunInstallEmergencyServer_RefusesCALeaf(t *testing.T) {
+	now := time.Now().UTC()
+	notBefore := now.Add(-time.Hour)
+	rootKey, rootCert, rootPEM := newTestRoot(t, notBefore)
+	_, leafPEM, keyPEM := newTestLeaf(t, rootKey, rootCert, notBefore, ceremony.DefaultEmergencyServerLifetime, true)
+
+	options := installEmergencyServerOptions{
+		certificatePath: writeTemp(t, "tls.crt", leafPEM),
+		privateKeyPath:  writeTemp(t, "tls.key", keyPEM),
+		caBundlePath:    writeTemp(t, "ca.crt", rootPEM),
+		namespace:       "test-ns",
+		secretName:      defaultSecretName,
+		certKey:         defaultCertDataKey,
+		keyKey:          defaultKeyDataKey,
+		caKey:           defaultCADataKey,
+		kubeContext:     testKubeContext,
+		yes:             true,
+		in:              strings.NewReader(""),
+		now:             func() time.Time { return now },
+		kube:            fakeKube(fake.NewSimpleClientset(), testServer),
+	}
+
+	err := runInstallEmergencyServer(context.Background(), &bytes.Buffer{}, options)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CA")
 }
 
 func TestRunInstallEmergencyServer_TypedConfirmationWrites(t *testing.T) {
@@ -243,7 +333,7 @@ func TestRunInstallEmergencyServer_TypedConfirmationWrites(t *testing.T) {
 	chain := newTestChain(t, now.Add(-time.Hour), ceremony.DefaultEmergencyServerLifetime)
 	clientset := fake.NewSimpleClientset()
 
-	options := baseOptions(t, chain, now, fakeKube(clientset))
+	options := baseOptions(t, chain, now, fakeKube(clientset, testServer))
 	options.yes = false
 	options.in = strings.NewReader("yes\n")
 
