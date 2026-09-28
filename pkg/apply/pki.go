@@ -418,12 +418,22 @@ func (a *applier) pkiRole(s *scope, mount *model.PKIMount, role *model.PKIRole) 
 		// identity onto it. An identity role is never signed from
 		// whatever the CSR itself carries, only from the explicit request
 		// (or a template bound to the caller's own identity), so this
-		// must be false. `enforce_hostnames` and CN validation describe
-		// the service shape's DNS names and CN, neither of which an
-		// identity role has (RequireCn is already false above).
+		// must be false. `enforce_hostnames` describes the service
+		// shape's DNS names, which an identity role has none of
+		// (RequireCn is already false above, so there is no CN for
+		// either `cn_validations` entry to ever apply to either way).
 		args.UseCsrSans = pulumi.Bool(false)
 		args.EnforceHostnames = pulumi.Bool(false)
-		args.CnValidations = pulumi.StringArray{}
+		// NOT an empty list: confirmed against a real server, OpenBAO
+		// 2.6.2 silently substitutes its own default
+		// (["email","hostname"]) whenever a role write sends
+		// cn_validations as []string{} -- the API accepts it, but a
+		// READ immediately afterward (and so a Pulumi refresh, forever
+		// after) sees the substituted default instead, which never
+		// matches what was sent. Writing that same default explicitly
+		// is what actually stops the perpetual diff; RequireCn above
+		// already makes the field inert either way.
+		args.CnValidations = pulumi.ToStringArray([]string{model.CNValidationEmail, model.CNValidationHostname})
 	}
 
 	// Not protected: a leaf role holds no key, and changing what it signs

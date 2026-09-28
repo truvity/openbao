@@ -391,7 +391,9 @@ func TestIdentityRoleShape(t *testing.T) {
 	assert.Equal(t, true, role.Inputs["allowedUriSansTemplate"])
 	assert.Equal(t, false, role.Inputs["useCsrSans"], "the identity SAN never comes from whatever the CSR itself carries")
 	assert.Equal(t, false, role.Inputs["enforceHostnames"], "an identity role has no DNS name to enforce hostname shape on")
-	assert.Equal(t, []any{}, role.Inputs["cnValidations"], "an identity role has no common name to validate")
+	assert.Equal(t, []any{"email", "hostname"}, role.Inputs["cnValidations"],
+		"OpenBAO's own default, written explicitly: an empty list here reads back as this same default on every refresh, "+
+			"a perpetual diff neither value actually avoids -- requireCn false already makes the field inert either way")
 	assert.Equal(t, false, role.Inputs["requireCn"])
 	assert.Equal(t, []any{}, role.Inputs["allowedDomains"], "the identity shape carries no DNS domain")
 	assert.Equal(t, false, role.Inputs["allowBareDomains"])
