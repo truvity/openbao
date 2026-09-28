@@ -5,6 +5,41 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.12.0
+
+### Added
+
+- **`openbaoctl pki install-emergency-server`: the other half of the
+  break-glass ceremony.** `pki sign-emergency-server` produces a leaf and
+  needs no cluster; getting that leaf, its key and the root into the
+  Kubernetes Secret OpenBAO's listener mounts is now its own command,
+  needing a kubeconfig and no KMS credential. It refuses a certificate
+  that does not chain to the given `--ca-bundle` alone, a private key
+  that is not the certificate's, and one that is expired or lives past
+  the 30-day break-glass cap (`ceremony.MaxEmergencyServerLifetime`);
+  prints what it is about to write -- the Secret, its data keys, the
+  certificate's subject, names, validity and fingerprint -- and never the
+  private key; and requires `--yes` or a typed confirmation before
+  writing. A Secret that already exists (an expired certificate on a
+  running cluster) keeps its type, annotations, labels and every other
+  data key -- only the certificate, key and CA entries are replaced. A
+  Secret that does not exist yet (a new cluster, or a restore onto one,
+  before OpenBAO or cert-manager exist) is created as `kubernetes.io/tls`
+  when the data key names are the upstream chart's defaults
+  (`docs/server.md`). See `docs/ceremony.md` §4.
+- **A rehearsal that proves the whole restore-path TLS bootstrap without
+  AWS.** `conformance.TestBootstrapTLS` (`just rehearse-bootstrap-tls`,
+  and part of `just test`/`just check` in CI) signs a break-glass leaf
+  with a local stand-in for the KMS root -- the same double
+  `pkg/ceremony`'s own tests use -- installs it, starts a real `bao
+  server` with it, and proves a client holding only the root verifies it.
+  It then simulates the normal issuer taking over: a domain intermediate
+  signed by the same root issues its own leaf, swapped onto disk and
+  reloaded with `SIGHUP`, and the same client still verifies. `docs/ceremony.md`
+  now also describes the yearly drill that runs this same path once with
+  the real KMS root, by hand, and records it in the consuming estate's
+  restore runbook.
+
 ## v0.11.0
 
 ### Added

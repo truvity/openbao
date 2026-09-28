@@ -219,14 +219,63 @@ openbaoctl pki sign-emergency-server --hierarchy pki.yaml --csr "$d/openbao.csr"
 openbaoctl pki sign-emergency-server --hierarchy pki.yaml --csr "$d/openbao.csr" \
   --not-before <printed> --confirm-template <sha256> --out "$d/tls.crt" \
   --aws-profile <admin profile> --role-arn <ceremony role ARN>
+
+# 4. Install: writes (or replaces) tls.crt, tls.key and ca.crt in the
+#    Secret the server mounts, keeping the Secret itself -- its type and
+#    cert-manager's annotations, when it already exists.
+openbaoctl pki install-emergency-server \
+  --certificate "$d/tls.crt" --private-key "$d/tls.key" --ca-bundle <the root's certificate PEM> \
+  --namespace <the server's namespace> --kubeconfig <kubeconfig> --kube-context <context>
 ```
 
-Then put `tls.crt`, `tls.key` and the root as `ca.crt` into the Secret
-the server mounts, keeping the Secret itself (its type and cert-manager's
-annotations); with the chart's `tlsReload` sidecar the server serves it
-within minutes. Nothing is committed: the leaf is an incident artifact.
-The command refuses an existing `--out` before it signs, because a
-signature whose output cannot be written is an alarm for nothing.
+`install-emergency-server` refuses before it touches the cluster: a leaf
+that does not chain to `--ca-bundle` alone, a key that is not the leaf's,
+one that is expired or lives past the 30-day break-glass cap. It prints
+what it is about to write -- the Secret, its keys, the certificate's
+subject, names, validity and fingerprint -- and never the key, then
+requires `--yes` or a typed confirmation before writing. With the chart's
+`tlsReload` sidecar the server serves the new certificate within minutes
+(nothing here reloads it: that sidecar watches the files it just wrote).
+Nothing is committed: both the leaf and the Secret write are incident
+artifacts. `sign-emergency-server` refuses an existing `--out` before it
+signs, because a signature whose output cannot be written is an alarm for
+nothing.
+
+### On a new or restored cluster, this runs before OpenBAO's first sync
+
+The two moments this section opens with are not symmetric. On a running
+cluster with an expired certificate, the Secret already exists --
+`install-emergency-server` only replaces its data. On a new cluster, or a
+restore onto one, **no OpenBAO has ever answered, so the Secret does not
+exist, and whatever issuer normally requests through OpenBAO cannot issue
+until something does.** Steps 1-4 above must run, and the Secret must
+exist, **before** a GitOps controller's first sync of whatever installs
+the server: a consuming estate's cluster-bootstrap runbook should say
+exactly where in its ordering this belongs. Getting this backwards is the
+same outage either way: the issuer retries against an OpenBAO that cannot
+answer, on its own backoff, indefinitely.
+
+### The yearly drill: the real KMS root, once, by hand
+
+Every rehearsal that runs in CI or on a schedule -- `just
+rehearse-bootstrap-tls` (`openbao`'s own conformance suite) and the
+weekly restore-check -- signs with a **local stand-in signer**: the same
+`kmssigner.API` double `pkg/ceremony`'s own tests use, never a KMS
+credential. That proves the mechanism (the template, the install, the
+listener, the handoff to a normal issuer) but never that an operator can
+actually drive steps 1-4 against the **real** KMS root, with a real
+two-person review, under real custody controls (the Sign alarm actually
+reaching someone, the ceremony role actually being assumable).
+
+Once a year, run steps 1-4 for real, against a non-production
+hierarchy: generate a throwaway root generation (`create-root`), sign a
+break-glass leaf for a throwaway name with the real KMS ceremony role,
+install it as this section describes, confirm a client verifies it
+against the root alone, and confirm the Sign alarm arrived. Record the
+date and who ran it in the consuming estate's restore runbook, with the
+next one due one year later. **A real bootstrap must still re-sign the
+leaf before its 7 days lapse** -- the drill proves the mechanism works,
+not that a 7-day-old leaf from last year's drill is still good.
 
 ## What never to do
 

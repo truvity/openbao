@@ -34,12 +34,24 @@ lint:
 
 # Golden renders (every chart test case against tests/golden) and the Go
 # tests, which run every ceremony against a KMS double and every apply
-# under Pulumi's mocks -- and the access-roster conformance test against a
-# real `bao server -dev`, which the dev shell pins. Required here, so a
+# under Pulumi's mocks -- and the conformance tests against a real `bao
+# server` the dev shell pins: access-roster (`bao server -dev`) and the
+# break-glass TLS bootstrap rehearsal (`bao server`, TLS terminated by a
+# stand-in-signed leaf; see rehearse-bootstrap-tls). Required here, so a
 # shell without `bao` fails rather than skipping the proof.
 test:
     hack/golden.sh
     OPENBAO_CONFORMANCE=required go test ./...
+
+# The break-glass TLS bootstrap, alone: signs a leaf with a local
+# stand-in KMS signer, installs it, starts a real `bao server` with it,
+# verifies with only the root, then simulates the normal issuer taking
+# over and verifies again. No AWS credential, no cluster -- what `just
+# test` already runs as part of ./conformance, isolated for a quick
+# rehearsal. docs/ceremony.md's yearly drill is the same shape with the
+# real KMS root, run by hand, not by this recipe.
+rehearse-bootstrap-tls:
+    OPENBAO_CONFORMANCE=required go test ./conformance/... -run TestBootstrapTLS -v
 
 # Regenerate the golden renders, the ceremony's template goldens, the
 # model's example, the apply's registered resources and the access-roster

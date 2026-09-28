@@ -162,6 +162,7 @@ func pkiCommand() *cli.Command {
 					})
 				},
 			},
+			pkiInstallEmergencyServerCommand(),
 			{
 				Name:  "sign-emergency-server",
 				Usage: "BREAK-GLASS: sign a short-lived certificate for OpenBAO's endpoint directly with the KMS root",

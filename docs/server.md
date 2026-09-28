@@ -133,6 +133,29 @@ Otherwise copy the container from `ops.tlsReloadContainer` in
 `charts/openbao-ops/templates/_helpers.tpl` into `server.extraContainers`,
 with the `tlsReload` values filled in.
 
+## Before the first sync: bootstrapping the Secret
+
+`extraVolumes` above names one Secret, `openbao-tls`, that this
+repository never creates: cert-manager's `serverCertificate` does, once
+OpenBAO can answer its PKI mount. On a new cluster, or a restore onto
+one, nothing has answered yet, so that Secret does not exist the first
+time a GitOps controller syncs whatever installs the server -- and
+whatever issuer normally requests through OpenBAO cannot issue until
+something does. [docs/ceremony.md](ceremony.md#4-the-break-glass-server-certificate)'s
+`openbaoctl pki sign-emergency-server` then `install-emergency-server`
+is what creates that Secret by hand, from the KMS root directly, before
+that first sync; a consuming estate's cluster-bootstrap runbook should
+place it as an explicit, numbered step. Once cert-manager can reach
+OpenBAO it reissues and takes the Secret over normally -- nothing here
+needs to know it was ever bootstrapped by hand.
+
+Every rehearsal of that path in this repository (`just
+rehearse-bootstrap-tls`, run as part of `just test`/`just check` in CI)
+signs with a local stand-in for the KMS root, never a real key; the real
+KMS root signs this path only in the yearly drill `ceremony.md`
+describes, run by hand and recorded in the consuming estate's restore
+runbook.
+
 ## Rolling a configuration change
 
 The upstream StatefulSet uses `OnDelete`: a change to the server's
