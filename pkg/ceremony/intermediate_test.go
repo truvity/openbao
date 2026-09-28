@@ -233,7 +233,7 @@ func TestPrepareIntermediateAllowsALeafIssuingCAToSpendMoreOfTheRootsBudget(t *t
 
 	leafOnly := spec
 	leafOnly.MaxPathLen = 0
-	leafOnly.ArtifactPath = filepath.Join(t.TempDir(), fixtureGeneration+"-identity-devel.yaml")
+	leafOnly.ArtifactPath = filepath.Join(t.TempDir(), fixtureGeneration+"-identity-dev.yaml")
 	csr := fixtureCSR(t, fixtureKey(t, 0x61), leafOnly.subject())
 
 	plan, err := PrepareIntermediate(leafOnly, root, csr)
