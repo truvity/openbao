@@ -406,17 +406,31 @@ an explicit choice either way rather than defaulting silently
 inline). See [safety.md](safety.md#aws-iam-auth) for the replay this
 closes and what it does not.
 
-**`awsAuth[]` needs a `Plugins` entry, or its mount never comes up.**
+**`awsAuth[]` needs its plugin in the catalog, and how it gets there depends on where the binary comes from.**
 Unlike Vault, OpenBAO ships no cloud auth methods in the server binary —
 `aws`, like every other IAM/cloud auth backend, is an external plugin
-that must be registered in the plugin catalog (a root-scoped registry
-above the namespace tree, one for the whole server, never per namespace)
-before any namespace can mount it. `Desired.Plugins` is that
-registration (`type: auth`, `name: aws`, `command`/`sha256` naming the
-binary this apply assumes already sits under the server's own
-`plugin_directory` — placing it there is a different, independently
-reviewed change, typically a declarative `plugin` block in the server's
-own HCL config). `Deploy` applies every `Plugins` entry before a single
+that must be in the plugin catalog (a root-scoped registry above the
+namespace tree, one for the whole server, never per namespace) before any
+namespace can mount it. There are two ways in:
+
+- **A plugin downloaded from an OCI image is registered declaratively,
+  in the server's own config, and only there.** The server config carries
+  a `plugin` block for it, a `plugin_directory`, and the auto-download and
+  auto-register settings; the server downloads, verifies and registers
+  the binary at startup as a VERSIONED catalog entry (see
+  [server.md](server.md)). An API registration of such a plugin is
+  refused (the catalog will not execute a file outside the configured
+  plugin directory), so `Desired.Plugins` must NOT list it. The mount is
+  then declared with `awsAuth[].pluginVersion`, which is required for it
+  (below): without a `plugin_version` the mount looks up an unversioned
+  entry that does not exist.
+- **`Desired.Plugins` is for a binary placed by hand or baked into the
+  server image**, already sitting under the server's `plugin_directory`.
+  The entry (`type: auth`, `name: aws`, `command`/`sha256` naming that
+  binary) registers it through the catalog API. Placing the binary there
+  is a different, independently reviewed change.
+
+When `Desired.Plugins` is used, `Deploy` applies every entry before a single
 namespace is, and every mount the apply builds whose type matches a
 declared plugin's name gets an explicit `DependsOn` its own catalog
 registration (`pluginDependency`, `pkg/apply/plugin.go`) — necessary
@@ -424,16 +438,16 @@ because Go call order alone only orders this program, never the Pulumi
 deployment it builds: two resources with no dependency edge between them
 are free to be created in either order, and a mount created before its
 plugin is registered reproduces the exact `plugin not found in the
-catalog` error this exists to prevent. Declare an `awsAuth[]` mount with
-no matching root-level `Plugins` entry and the mount itself still
-applies cleanly (nothing here can refuse it offline — a type OpenBAO
-does not build in and no `Plugins` entry names is indistinguishable, to
+catalog` error this exists to prevent. Declare an `awsAuth[]` mount whose plugin is in the catalog by neither
+route and the mount itself still applies cleanly (nothing here can
+refuse it offline — a type OpenBAO
+does not build in and nothing registers is indistinguishable, to
 `Validate`, from a type that IS built in); only the next login against it
 fails, the same live 400 that first exposed the ordering problem.
 
-**`pluginVersion` pins the catalog version the mount is created at**, and
-is required by some deployments even when a matching `Plugins` entry
-exists. OpenBAO 2.6.2 can register `aws` (and other external plugins)
+**`pluginVersion` pins the catalog version the mount is created at.** It
+is required for a declaratively registered plugin, and optional for one
+registered through `Plugins` as an unversioned entry. OpenBAO 2.6.2 can register `aws` (and other external plugins)
 declaratively, as a VERSIONED catalog entry — `auth/aws` at a specific
 semver such as `v0.1.1`, not the unversioned key a `Command`-registered
 plugin normally occupies. A mount created with no `plugin_version` looks

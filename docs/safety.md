@@ -224,7 +224,7 @@ can answer. Nothing is registered before a refusal.
 
 | Refusal | What it prevents |
 |---|---|
-| a nested namespace name, a namespace declared twice, a named root | a tree the one-level design does not have, or one namespace written twice |
+| a nested namespace name, a namespace declared twice, a named root | a tree other than root, environment, project (a name is one path segment), or one namespace written twice |
 | a mount path, policy, group, role or issuer declared twice where it must be unique | the second write silently replacing the first |
 | a group through a door that is no auth mount in its namespace, or with no door or no policy | a group that exists without ever being reached, or grants nothing |
 | a JWT role with no audience, no user claim, no lifetime, or neither a bound subject nor a groups claim | a role that admits every token for its audience, or whose tokens never expire |

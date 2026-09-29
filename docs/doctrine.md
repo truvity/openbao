@@ -64,7 +64,7 @@ check should take.
 
 ## A watch is for a failure that is otherwise silent
 
-Three of the ways an install dies leave no trace anyone is looking at, and
+Four of the ways an install dies leave no trace anyone is looking at, and
 each has a part of its own:
 
 | Watch | Asks | Because |

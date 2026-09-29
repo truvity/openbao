@@ -117,6 +117,12 @@ migration:
   trustedGenerations: [example-root-2026-01]
 ```
 
+`serialNamespace` (top level, optional, default `private-pki`) prefixes the
+label every deterministic serial is derived from. The example omits it
+because the default is right for a new root; an estate whose root already
+exists must set it to the prefix that root was created with, and never
+change it afterwards ([adoption.md](adoption.md)).
+
 `Load` reads it strictly (an unknown key is an error) and calls `Validate`,
 which carries every invariant below. `ArtifactDir` (default `pki-roots`,
 relative to the contract file's own directory) is where `pkg/ceremony`'s

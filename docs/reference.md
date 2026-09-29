@@ -332,6 +332,18 @@ assumed on top of it.
 | `pki verify-intermediate` | `--hierarchy`, `--trust-domain` (required), `--chain-out` (must not exist; default prints the chain) | never; needs no credential |
 | `pki sign-emergency-server` | `--hierarchy`, `--csr` (required); exactly one of `--print-template` or `--confirm-template`; `--not-before` (required to sign: the value `--print-template` printed), `--out` (default `openbao-emergency.crt`, must not exist), `--key-arn`, `--aws-profile`, `--role-arn` | only with `--confirm-template`, once per run; nothing is committed |
 
+Each `pki` command reads its PKI from exactly one of `--hierarchy <file>`
+(above) or `--contract <file>`, a `pkg/pki` contract ([pki.md](pki.md));
+they are mutually exclusive. The contract flags:
+
+| Flag | Applies to | What |
+|---|---|---|
+| `--contract` | all four `pki` commands | the private-PKI contract file, in place of `--hierarchy` |
+| `--generation` | all four, with `--contract` | the root generation ID (required with a contract) |
+| `--artifacts` | all four, with `--contract` | overrides the contract's own artifact directory |
+| `--environment`, `--zone` | `sign-intermediate`, `verify-intermediate`, with `--contract` | sign or verify one environment's own root-signed CA under a workload-identity domain, instead of the domain's shared intermediate; `--zone` is that environment's own value for `{zone}` and is required with `--environment` |
+| `--dns-name` | `sign-emergency-server`, with `--contract` | the break-glass name to sign for (required with a contract; a hierarchy file carries it as `emergencyServer.dnsName`) |
+
 ## pkg/custody
 
 `custody.Deploy(ctx, custody.Args{...}, opts...)`; `opts` are appended to

@@ -64,9 +64,10 @@ a trust bundle. Object storage and alerting are containers with a
 contract, with S3, SNS and an Alertmanager webhook as presets; see
 [docs/doctrine.md](docs/doctrine.md).
 
-Inside the server, the **desired state** (`pkg/model`) is one level of
-namespaces -- root, and one per environment -- each holding the same
-engines: KV, JWT/OIDC doors, identity groups admitted through those doors,
+Inside the server, the **desired state** (`pkg/model`) is a namespace
+tree of `<environment>/<project>` -- root, one namespace per environment
+below it, and one per project below each environment -- each holding the
+same kinds of engines: KV, JWT/OIDC doors, identity groups admitted through those doors,
 policies, PKI mounts whose issuers are self-signed, signed by an earlier
 issuer or signed outside OpenBAO, and SSH CAs. The estate derives it;
 `pkg/apply` writes it, never touching the door it logs in through
@@ -225,7 +226,8 @@ _, err := apply.Deploy(c, desired, apply.Options{ // c is the *pulumi.Context
 })
 ```
 
-For the ceremony, a hierarchy file and one command per step
+For the ceremony, a hierarchy file (or a `pkg/pki` contract, `--contract`; see
+[docs/reference.md](docs/reference.md#openbaoctl)) and one command per step
 ([docs/ceremony.md](docs/ceremony.md) walks through all of them):
 
 ```sh
@@ -253,7 +255,9 @@ _, err := custody.Deploy(ctx, custody.Args{
 | Consumer | Surface |
 |---|---|
 | truvity/gitops | Go `model`, `apply`, `ceremony`, `custody`; charts `openbao-ops`, `openbao-consumers` |
-| A second, non-AWS estate | Go `custody` |
+
+This is the one production consumer. The library is AWS-only where it
+touches a key (see Status); it does not serve an estate on another cloud.
 
 ## Neighbours
 
@@ -300,8 +304,9 @@ _, err := custody.Deploy(ctx, custody.Args{
 
 ## The rule that makes this repository public
 
-**Mechanism only.** Nothing here names a cloud, a bucket, a key, a region,
-a cluster, a hostname or a secret path. Every such thing is an input with a
+**Mechanism only.** Nothing here names an account, a bucket, a key, a region,
+a cluster, a hostname or a secret path (the AWS presets and the AWS KMS
+coupling above are the mechanism, not an estate's values). Every such thing is an input with a
 neutral default, and the consuming estate supplies it from its own
 (private) repository. `hack/leak-canary.sh` enforces this in CI, and public
 history cannot be unpublished — so the rule is mechanical, not remembered.
@@ -313,7 +318,7 @@ This repository follows the shared
 
 Used in production by its maintainers. The charts are released from
 v0.1.0; the Go module and `openbaoctl` from v0.2.0; `pkg/model` and
-`pkg/apply` arrive in v0.3.0.
+`pkg/apply` from v0.3.0.
 
 As of 2026-09-29, the AWS coupling is real, not incidental: `pkg/serverpreset`
 renders an `awskms` seal stanza and refuses any other seal type outright,
@@ -321,6 +326,11 @@ and `pkg/ceremony` and `pkg/custody` are written against AWS KMS
 specifically (a multi-region P-384 key, its policy and roles, `aws sts`
 for the ceremony's caller identity) -- there is no GCP, Azure or other KMS
 provider behind any of the three today.
+
+This is policy, not a gap waiting to be filled: AWS KMS is used for
+exactly two things, OpenBAO's auto-unseal and the offline root signer of
+the private PKI. There is no software signer and no other-cloud signer,
+and `pkg/pki` refuses any `custody.provider` other than `aws-kms`.
 
 ## Development
 
