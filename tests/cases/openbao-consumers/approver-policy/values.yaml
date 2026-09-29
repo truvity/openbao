@@ -3,9 +3,9 @@
 # SPIFFE identity issuer renders as an issuer and gets NO policy.
 server: https://openbao.example.internal:8200
 caBundle: ZXhhbXBsZS1jYQ==
-vaultNamespace: devel
+vaultNamespace: east
 auth:
-  mountPath: jwt-devel
+  mountPath: jwt-east
 
 pki:
   enabled: true
@@ -28,15 +28,15 @@ pki:
 
 certificates:
   - name: example-private-smoke
-    commonName: smoke.devel.example.internal
-    dnsNames: [smoke.devel.example.internal]
+    commonName: smoke.east.example.internal
+    dnsNames: [smoke.east.example.internal]
 
 approverPolicy:
   enabled: true
   issuers:
     example-private:
-      commonName: "smoke.devel.example.internal"
-      dnsNames: ["*.devel.example.internal"]
+      commonName: "smoke.east.example.internal"
+      dnsNames: ["*.east.example.internal"]
     example-origin:
       dnsNames: ["*.example.com", "example.com"]
       maxDuration: 720h

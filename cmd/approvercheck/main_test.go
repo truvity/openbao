@@ -56,7 +56,7 @@ func runCLI(t *testing.T, args ...string) (code int, out, errOut string) {
 }
 
 func TestOfflineExitCodes(t *testing.T) {
-	good := requestFile(t, "example-private", "ClusterIssuer", "api.devel.example.internal", elliptic.P384())
+	good := requestFile(t, "example-private", "ClusterIssuer", "api.east.example.internal", elliptic.P384())
 	code, out, _ := runCLI(t, "--policies", chartPolicies, "--requests", good)
 	assert.Equal(t, 0, code, out)
 	assert.Contains(t, out, "approved: 1")
@@ -86,7 +86,7 @@ func TestIdentitySignerIsSkippedOnlyWhenNamed(t *testing.T) {
 }
 
 func TestUsageErrors(t *testing.T) {
-	good := requestFile(t, "example-private", "ClusterIssuer", "api.devel.example.internal", elliptic.P384())
+	good := requestFile(t, "example-private", "ClusterIssuer", "api.east.example.internal", elliptic.P384())
 	for name, args := range map[string][]string{
 		"no policies":               {"--requests", good},
 		"neither requests nor live": {"--policies", chartPolicies},

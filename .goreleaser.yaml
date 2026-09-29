@@ -24,6 +24,14 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X main.Version={{.Version}}
+  - id: approvercheck
+    main: ./cmd/approvercheck
+    binary: approvercheck
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
   - id: openbao-hostcert
     main: ./cmd/openbao-hostcert
     binary: openbao-hostcert
@@ -42,6 +50,10 @@ archives:
     ids: [openbaoctl]
     formats: [tar.gz]
     name_template: "openbaoctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: approvercheck
+    ids: [approvercheck]
+    formats: [tar.gz]
+    name_template: "approvercheck_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
   - id: openbao-hostcert
     ids: [openbao-hostcert]
     formats: [tar.gz]
@@ -69,6 +81,7 @@ release:
     Go module: `go get github.com/truvity/openbao@{{ .Tag }}`.
     CLI: the `openbaoctl` archives below, or
     `go run github.com/truvity/openbao/cmd/openbaoctl@{{ .Tag }} --help`.
+    approvercheck: the `approvercheck_*` archives below.
     openbao-hostcert: the archives below, plus
     `openbao-hostcert.service`/`openbao-hostcert.timer` -- checksum
     against `checksums.txt` the same as every other asset here, the same

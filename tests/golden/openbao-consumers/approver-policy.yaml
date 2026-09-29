@@ -104,9 +104,9 @@ metadata:
   namespace: cert-manager
 spec:
   secretName: example-private-smoke-tls
-  commonName: "smoke.devel.example.internal"
+  commonName: "smoke.east.example.internal"
   dnsNames:
-    - "smoke.devel.example.internal"
+    - "smoke.east.example.internal"
   duration: 720h
   renewBefore: 240h
   privateKey:
@@ -132,11 +132,11 @@ spec:
       group: cert-manager.io
   allowed:
     commonName:
-      value: "smoke.devel.example.internal"
+      value: "smoke.east.example.internal"
     dnsNames:
       required: true
       values:
-        - '*.devel.example.internal'
+        - '*.east.example.internal'
     isCA: false
   constraints:
     minDuration: 1h
@@ -248,13 +248,13 @@ metadata:
 spec:
   vault:
     server: "https://openbao.example.internal:8200"
-    namespace: devel
+    namespace: east
     path: pki/sign/private
     caBundle: "ZXhhbXBsZS1jYQ=="
     auth:
       kubernetes:
         role: example-private
-        mountPath: /v1/auth/jwt-devel
+        mountPath: /v1/auth/jwt-east
         serviceAccountRef:
           name: openbao-issuer
 
@@ -267,13 +267,13 @@ metadata:
 spec:
   vault:
     server: "https://openbao.example.internal:8200"
-    namespace: devel
+    namespace: east
     path: pki/sign/origin
     caBundle: "ZXhhbXBsZS1jYQ=="
     auth:
       kubernetes:
         role: example-private
-        mountPath: /v1/auth/jwt-devel
+        mountPath: /v1/auth/jwt-east
         serviceAccountRef:
           name: openbao-issuer
           audiences:
@@ -288,12 +288,12 @@ metadata:
 spec:
   vault:
     server: "https://openbao.example.internal:8200"
-    namespace: devel
+    namespace: east
     path: pki/sign/identity
     caBundle: "ZXhhbXBsZS1jYQ=="
     auth:
       kubernetes:
         role: example-identity
-        mountPath: /v1/auth/jwt-devel
+        mountPath: /v1/auth/jwt-east
         serviceAccountRef:
           name: openbao-issuer

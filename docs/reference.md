@@ -272,15 +272,22 @@ Stores and PKI are independent: an install may render either or both.
 | `pki.vaultNamespace` | `""` | Default for every issuer; empty: `vaultNamespace`. |
 | `pki.trustAnchors` | *required* | Each: `name` (the ConfigMap), `certificate` (base64 PEM), optional `labels`, `annotations`. Public certificates only. |
 | `pki.rootKey` | `ca.crt` | The key each anchor's ConfigMap holds its certificate under. |
-| `pki.issuers` | `[]` | Each: `name`, `signPath` (the role that bounds what it signs), `role` (the auth role), optional `kind` (`ClusterIssuer` or `Issuer`), `audiences`, `vaultNamespace`, `annotations`. A Vault issuer's path is fixed, so a second chain or role is a second issuer. |
+| `pki.issuers` | `[]` | Each: `name`, `signPath` (the role that bounds what it signs), `role` (the auth role), optional `kind` (`ClusterIssuer` or `Issuer`), `audiences`, `vaultNamespace`, `annotations`, `identity` (the SPIFFE identity issuer: rendered like any other, never given a policy). A Vault issuer's path is fixed, so a second chain or role is a second issuer. |
 | `pki.bundle.enabled` | `true` | Render the Bundle. |
 | `pki.bundle.name` | `openbao-private-ca` | |
 | `pki.bundle.annotations` | `{}` | |
 | `pki.bundle.extraSources` | `[]` | Sources placed BEFORE the anchors — during a migration, the old root or a Secret-held CA. |
 | `pki.bundle.target.key` | `ca-certificates.crt` | The key of the ConfigMap trust-manager writes in each namespace. |
 | `pki.bundle.target.namespaceSelector` | `{}` | Where it writes; `{}` is every namespace. |
+| `approverPolicy.enabled` | `false` | Render the [approver layer](approver.md): a `CertificateRequestPolicy` per non-identity issuer, the optional namespaced-issuers policy, and the `use` RBAC. Needs `pki.issuers`. |
+| `approverPolicy.issuers` | `{}` | Keyed by issuer name, one entry for every issuer without `identity: true`: `commonName`, `dnsNames`, `uris`, `ipAddresses`, `emailAddresses` (globs, at least one required), `usages`, `minDuration`, `maxDuration`, `privateKey`. A `spiffe:` URI is refused. |
+| `approverPolicy.defaults` | 1h to 2160h, ECDSA 256 to 384 | What an issuer's entry does not override. P-384 is the chart's key, P-256 is what the leaf roles still accept. |
+| `approverPolicy.namespacedIssuers.enabled`, `.name` | `false`, `namespaced-issuers` | ONE allow-all policy for every namespaced `Issuer`. Refused while a `kind: Issuer` sits in `pki.issuers`. |
+| `approverPolicy.requesters` | cert-manager's ServiceAccount | Who is bound `use`: subjects of the `ClusterRoleBinding`. |
+| `approverPolicy.roleName` | `<release>-approver-use` | Name of the `ClusterRole` and `ClusterRoleBinding`. |
+| `approverPolicy.annotations` | `{}` | On every object of the layer. |
 | `certificateDefaults.duration`, `.renewBefore` | `720h`, `240h` | Renewal at a third of the lifetime: two chances before anything expires. |
-| `certificateDefaults.privateKey` | ECDSA 256, rotation Always | Must match what the role signs. |
+| `certificateDefaults.privateKey` | ECDSA 384, rotation Always | Must match what the role signs; a P-384 leaf role also accepts 256. |
 | `certificates[].name` | *required* | |
 | `certificates[].namespace` | `pki.certManager.namespace` | |
 | `certificates[].commonName`, `.dnsNames` | one required | `dnsNames` defaults to `[commonName]`. |

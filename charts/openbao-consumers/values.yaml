@@ -206,7 +206,7 @@ approverPolicy:
   # commonName, dnsNames, uris, ipAddresses or emailAddresses.
   issuers: {}
   #  example-private:
-  #    dnsNames: ["*.devel.example.internal"]
+  #    dnsNames: ["*.east.example.internal"]
   #    uris: []
   #    commonName: ""          # allowed value; empty: none allowed
   #    ipAddresses: []

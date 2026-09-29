@@ -16,6 +16,7 @@ from.
 | `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region |
 | `pkg/pki` (Go) | The authored private-PKI contract above `pkg/ceremony`: root generations, trust domains, per-environment roles, and per-environment identity CAs |
 | `pkg/kmssigner` (Go) | A `crypto.Signer` over a KMS P-384 key |
+| `cmd/approvercheck`, `pkg/approvercheck` (Go) | Proves the cert-manager approver layer for OpenBAO-issued certificates: an offline port of approver-policy's evaluator that says whether a policy approves every certificate request, and that the blanket approver is off ([docs/approver.md](docs/approver.md)); `charts/openbao-consumers` renders the policies it checks, optionally |
 | `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release |
 | `cmd/openbao-hostcert` | A standalone EC2 host-certificate renewer: signs an STS `GetCallerIdentity` request with the instance's own AWS credentials, logs in to an `AWSAuthMount`, and renews the host's SSH certificate from a `SSHHostMount` role; runs unattended as root under a systemd timer |
 | access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl bao`/`accessctl pg` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` |
@@ -286,6 +287,9 @@ touches a key (see Status); it does not serve an estate on another cloud.
   charts assume
 - [docs/ceremony.md](docs/ceremony.md) — the KMS-rooted CA ceremony,
   step by step
+- [docs/approver.md](docs/approver.md) — the approver layer: why the
+  blanket approver must be off, the policies, `approvercheck`, the cutover
+  runbook and the refusal test
 - [docs/pki.md](docs/pki.md) — `pkg/pki`, the authored private-PKI
   contract above the ceremony: root generations, trust domains,
   per-environment roles, and per-environment identity CAs
