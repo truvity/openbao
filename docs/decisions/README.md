@@ -14,6 +14,11 @@ A record is never edited to reverse a decision. A changed mind gets a new
 record that supersedes the old one, so the index below stays a true
 timeline and nothing is silently rewritten under an old date.
 
+The trust and access model as a whole -- every certificate family and
+access path, with its own decision log -- is described in
+[../trust/](../trust/README.md); the records below are the long-form
+reasoning for the decisions they cover.
+
 ## Index
 
 | ADR | Decision |

@@ -274,6 +274,13 @@ touches a key (see Status); it does not serve an estate on another cloud.
 
 ## Documentation
 
+- [docs/trust/](docs/trust/README.md) — **trust and access**: every
+  certificate family and every access path (machines to each other, and
+  people), including the parts that are not OpenBAO: the rule for which
+  family a name gets, the PKI hierarchy and its ceremonies, issuance and
+  approval, the edge, workload identity, PostgreSQL, SSH and sign-in, the
+  decision log and a living status page. A pull request that changes a
+  trust path updates it
 - [docs/adoption.md](docs/adoption.md) — prerequisites, install order,
   adopting objects that already run, the zero-diff gate
 - [docs/safety.md](docs/safety.md) — the backup regime, the traps, and
