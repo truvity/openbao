@@ -438,7 +438,7 @@ func (a *applier) pkiRole(s *scope, mount *model.PKIMount, role *model.PKIRole) 
 
 	// Not protected: a leaf role holds no key, and changing what it signs
 	// is an ordinary, reviewed update.
-	if _, err := pkisecret.NewSecretBackendRole(a.c, a.name(role.Issuer+"-role-"+role.Name), args,
+	if _, err := pkisecret.NewSecretBackendRole(a.c, a.name(PKIRoleResourceName(role.Issuer, role.Name)), args,
 		options(s.inside, pulumi.DependsOn([]pulumi.Resource{issuer.resource}))...); err != nil {
 		return fmt.Errorf("%s PKI role %s/%s: %w", s.label, mount.Path, role.Name, err)
 	}
@@ -514,7 +514,7 @@ func (a *applier) credentialRoles(s *scope, mount *model.PKIMount, accessors map
 
 		// Protected: a credential role that disappears in a replace is a
 		// window in which nobody can sign.
-		if _, err := pkisecret.NewSecretBackendRole(a.c, a.name(role.Issuer+"-credential-role-"+role.Name), args,
+		if _, err := pkisecret.NewSecretBackendRole(a.c, a.name(PKICredentialRoleResourceName(role.Issuer, role.Name)), args,
 			authority(s.inside, issuer.resource)...); err != nil {
 			return fmt.Errorf("%s credential role %s: %w", s.label, role.Name, err)
 		}

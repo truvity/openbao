@@ -5,7 +5,57 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
-## Unreleased
+## v0.19.0
+
+### Added
+
+- **`openbaoctl pki`: a `pkg/pki` contract in place of a hierarchy file.**
+  `create-root`, `sign-intermediate`, `verify-intermediate` and
+  `sign-emergency-server` now also accept `--contract <file> --generation
+  <id>` (docs/pki.md) alongside the existing `--hierarchy <file>`, with no
+  new command: a `pkiSource` resolves either shape to the same
+  `ceremony.RootSpec`/`IntermediateSpec`/`EmergencyServerSpec`.
+  `--artifacts <dir>` overrides a contract's own artifact directory;
+  `--environment <env> --zone <value>` (`sign-intermediate`,
+  `verify-intermediate`) sign or verify one environment's own root-signed
+  CA under a workload-identity domain instead of the domain's shared
+  intermediate; `--dns-name <name>` (`sign-emergency-server`) gives the
+  break-glass name a hierarchy file instead bakes into
+  `emergencyServer.dnsName`. `--hierarchy` is unchanged.
+
+### Changed
+
+- **`pkg/ceremony`: `Hierarchy`'s intermediates may override
+  `maxPathLen`.** `HierarchyIntermediate.MaxPathLen` (optional) replaces
+  the default (the root's own minus one) so a leaf-issuing CA signed
+  directly by the root — nothing of its own below it, spending more of
+  the root's budget at once — can be declared in a hierarchy file the
+  same way an ordinary domain intermediate is. Every existing hierarchy
+  file, which leaves the field out, renders identically.
+
+- **`pkg/apply`: the two-phase bootstrap for a workload-identity
+  environment's root-signed CA, as library code.** `BootstrapEnvironmentCA`
+  registers phase A (docs/pki.md, "per-environment identity CAs"): the
+  unsigned key and its certificate signing request, on a mount it also
+  creates for an environment reaching its root-signed CA from a cold
+  start, or on an existing one for an environment moving there from a
+  shared domain intermediate's issuing CA. Both are protected: replacing
+  either is an explicit, reviewed migration.
+- **`pkg/apply`: `EnvironmentCARoleRename` and `ComposeRename`.** Moving
+  an environment's identity role to its new root-signed CA's issuer
+  changes the role's Pulumi logical name (`PKIRoleResourceName`, now
+  exported), which — without `Options.Rename` — makes Pulumi create the
+  new logical resource and DELETE the old one, and both write the SAME
+  OpenBAO path (`<mount>/roles/<role>`): the delete removes what the
+  create just wrote. `EnvironmentCARoleRename(oldIssuer, newIssuer,
+  roleNames...)` returns the `Rename` entries that keep the role in
+  place instead (an update, not a replace); `ComposeRename` merges them
+  with a caller's own `Rename`. Proved by
+  `TestEnvironmentCARoleMoveIsInPlace`: the same move, without the fix,
+  registers the role under a different name (what a real diff would
+  delete); with it, under the same one.
+
+## v0.18.2
 
 ### Fixed
 
@@ -62,34 +112,6 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   this repository (`internal/fakeissuer`, `conformance`) is updated.
   This is a test double with no production exposure, fixed anyway so the
   contract it proves stays honest.
-
-## v0.19.0
-
-### Added
-
-- **`openbaoctl pki`: a `pkg/pki` contract in place of a hierarchy file.**
-  `create-root`, `sign-intermediate`, `verify-intermediate` and
-  `sign-emergency-server` now also accept `--contract <file> --generation
-  <id>` (docs/pki.md) alongside the existing `--hierarchy <file>`, with no
-  new command: a `pkiSource` resolves either shape to the same
-  `ceremony.RootSpec`/`IntermediateSpec`/`EmergencyServerSpec`.
-  `--artifacts <dir>` overrides a contract's own artifact directory;
-  `--environment <env> --zone <value>` (`sign-intermediate`,
-  `verify-intermediate`) sign or verify one environment's own root-signed
-  CA under a workload-identity domain instead of the domain's shared
-  intermediate; `--dns-name <name>` (`sign-emergency-server`) gives the
-  break-glass name a hierarchy file instead bakes into
-  `emergencyServer.dnsName`. `--hierarchy` is unchanged.
-
-### Changed
-
-- **`pkg/ceremony`: `Hierarchy`'s intermediates may override
-  `maxPathLen`.** `HierarchyIntermediate.MaxPathLen` (optional) replaces
-  the default (the root's own minus one) so a leaf-issuing CA signed
-  directly by the root — nothing of its own below it, spending more of
-  the root's budget at once — can be declared in a hierarchy file the
-  same way an ordinary domain intermediate is. Every existing hierarchy
-  file, which leaves the field out, renders identically.
 
 ## v0.18.0
 

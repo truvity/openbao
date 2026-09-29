@@ -216,10 +216,13 @@ this package derives from the contract:
    issuer that has nothing to import yet -- `SignedChain` is called
    synchronously for every `External` issuer while the program builds its
    resources). A consumer therefore creates the mount and the CSR OUTSIDE
-   the generic `apply.Deploy` path the first time (a handful of lines with
-   the vault provider directly -- see `internal/privatepkiceremony`-shaped
-   code in a consuming estate, or `pkg/apply`'s own bootstrap examples),
-   exports the CSR as a Pulumi output, and stops there.
+   the generic `apply.Deploy` path the first time, with
+   `apply.BootstrapEnvironmentCA` (`MountExists: false` reaching a
+   root-signed CA from a cold start, with no prior issuing CA at all;
+   `true` for an environment moving from a shared domain intermediate's
+   issuing CA to its own root-signed one, where the mount already
+   exists), exports the CSR it returns as a Pulumi output, and stops
+   there.
 2. Someone runs `Contract.DNSIntermediateSpec` / `URIIntermediateSpec` /
    `EnvironmentCASpec` to build the `ceremony.IntermediateSpec`, then
    `ceremony.PrepareIntermediate` + `--print-template` to review the exact
@@ -244,6 +247,24 @@ signed, err := contract.LoadSignedIntermediate(spec)
 // this issuer; signed.Proof is one line per property re-derived and
 // checked, for an installer's log.
 ```
+
+**Moving a role in place, not replacing it.** When an environment moves
+from a shared intermediate's issuing CA to its own root-signed one, its
+identity role still signs the same shape of leaf -- the SAME OpenBAO
+object, `<mount>/roles/<role>` -- only under a different issuer.
+`pkg/apply`'s own resource-naming scheme derives a role's Pulumi logical
+name from the issuer it signs with
+(`apply.PKIRoleResourceName(issuer, role)`), so pointing the role at the
+new issuer, with nothing else, changes that name: Pulumi registers a NEW
+logical resource for it and, seeing the OLD one no longer declared,
+deletes it -- and the delete reaches the same OpenBAO path the create
+just wrote, since the role's own name (as OpenBAO sees it, not the
+Pulumi logical one) never changed. `apply.EnvironmentCARoleRename(oldIssuer,
+newIssuer, roleNames...)` returns the `Options.Rename` entries that
+prevent this -- merge them with `apply.ComposeRename` into whatever
+Rename a caller already builds. Pass `oldIssuer = ""` for an environment
+reaching its root-signed CA from a cold start: there is no prior role to
+move, and `EnvironmentCARoleRename` returns nil.
 
 The root itself is a one-time ceremony
 (`Contract.RootSpec` + `ceremony.CreateRoot`), never repeated for an
