@@ -253,7 +253,7 @@ _, err := custody.Deploy(ctx, custody.Args{
 | Consumer | Surface |
 |---|---|
 | truvity/gitops | Go `model`, `apply`, `ceremony`, `custody`; charts `openbao-ops`, `openbao-consumers` |
-| opwerm/nexus | Go `custody` |
+| A second, non-AWS estate | Go `custody` |
 
 ## Neighbours
 
