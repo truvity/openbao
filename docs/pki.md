@@ -199,16 +199,20 @@ already-signed artifact needs no rename to be read by `Contract` methods.
 ## Two curves
 
 Every CA in a hierarchy signs with `global.keyCurve` (P-384), without
-exception. A LEAF role may need a different curve when the one thing that
-requests it is fixed and cannot be told otherwise -- for example a CSI
-driver that always generates P-256 keys. OpenBAO 2.6.2 treats a PKI role's
-`key_bits` as a **minimum** for an EC role, not a target: a P-256 request
-against a role holding P-384 is refused outright ("role requires a minimum
-of a 384-bit key, but CSR's key is 256 bits"), never downgraded. Rather
-than let that surface as a silent, unexplained role setting,
-`global.additionalLeafKeyCurves` allow-lists the exception once, and
-`Validate` refuses any leaf curve that is neither `keyCurve` nor in that
-list.
+exception, and each CA's key is generated at exactly that size. A LEAF
+role is different: OpenBAO 2.6.2 treats a PKI role's `key_bits` as a
+**minimum** for an EC role, not a target (a P-256 request against a role
+holding 384 is refused outright, "role requires a minimum of a 384-bit
+key", never downgraded), so `pkg/apply` writes a P-384 leaf role with
+`key_bits` 256 (`apply.LeafKeyBits`): it signs a P-256 AND a P-384 leaf,
+which is what a first certificate from a default cert-manager
+`Certificate` (see `charts/openbao-consumers`, default P-384) or a
+fixed-curve client such as a CSI driver both need. A role declared P-256
+also carries 256, and a P-521 role keeps 521; the role never accepts an
+RSA key. A credential role (`db-client` and its kind, a person's own
+client certificate) is not a workload leaf and keeps its exact curve. `global.additionalLeafKeyCurves` still allow-lists a leaf role
+whose declared curve is not `keyCurve`, and `Validate` refuses any leaf
+curve that is neither `keyCurve` nor in that list.
 
 ## The two-phase ceremony
 

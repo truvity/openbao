@@ -9,6 +9,8 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ### Changed
 
+- **Behaviour change, `charts/openbao-consumers`**: `certificateDefaults.privateKey.size` now defaults to `384` (ECDSA P-384, was `256`), so a new adopter's first certificate is accepted by the P-384 leaf roles. An installation that relied on the P-256 default sets `certificateDefaults.privateKey.size: 256` itself (or per certificate); P-256 still signs, see the next item.
+- **Leaf PKI roles accept P-256 as well as P-384** (`apply.LeafKeyBits`, new): OpenBAO reads an EC role's `key_bits` as a minimum, so a P-384 leaf role is now written with `key_bits` 256 and signs both curves (checked against a real server in `conformance/leafkeys_test.go`). A P-256 role is unchanged, a P-521 role keeps 521, RSA is still refused, credential roles (`model.CredentialRole`) keep their exact curve, and CA keys are still generated at the contract curve's size. The next apply updates every P-384 leaf role's `key_bits` in place (no replace).
 - Documentation only: the namespace tree is `<environment>/<project>` everywhere (README, safety); the doctrine counts four silent-failure watches; `awsAuth[]` plugin registration is documented as declarative-in-server-config for an OCI-downloaded plugin (`Desired.Plugins` only for a binary already on disk); ADR 0002 is marked superseded for the CA shape by the per-environment identity CAs in docs/pki.md; the `openbaoctl pki --contract` flags are in docs/reference.md; the README states plainly that AWS KMS is used only for the auto-unseal and the offline root signer, and drops a stale consumer row.
 
 ## v0.20.0

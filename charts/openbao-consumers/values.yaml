@@ -132,7 +132,7 @@ certificateDefaults:
   renewBefore: 240h
   privateKey:
     algorithm: ECDSA
-    size: 256
+    size: 384
     rotationPolicy: Always
 
 # Certificates from an OpenBAO-backed issuer — typically one disposable

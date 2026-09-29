@@ -476,3 +476,54 @@ func TestIdentityRoleShape(t *testing.T) {
 	assert.Equal(t, false, role.Inputs["allowSubdomains"])
 	assert.Equal(t, false, role.Inputs["allowWildcardCertificates"])
 }
+
+func TestLeafKeyBits(t *testing.T) {
+	for curve, want := range map[string]int{
+		model.CurveP256: 256, // unchanged
+		model.CurveP384: 256, // relaxed: OpenBAO reads key_bits as a minimum
+		model.CurveP521: 521, // unchanged, never loosened
+	} {
+		assert.Equal(t, want, apply.LeafKeyBits(curve), curve)
+	}
+
+	// The role minimum admits a CSR of at least that many bits, so both
+	// P-256 and P-384 leaves pass a P-384 leaf role.
+	minimum := apply.LeafKeyBits(model.CurveP384)
+	assert.LessOrEqual(t, minimum, model.CurveBits[model.CurveP256])
+	assert.LessOrEqual(t, minimum, model.CurveBits[model.CurveP384])
+}
+
+// TestLeafRolesAcceptP256AndP384KeepCAKeys: every leaf role Deploy renders
+// carries a key_bits minimum both curves satisfy, while every CA key --
+// the request for a signed issuer -- is still generated at its own
+// contract curve's size.
+func TestLeafRolesAcceptP256AndP384KeepCAKeys(t *testing.T) {
+	m, _, err := deploy(t, example(t), options(), false)
+	require.NoError(t, err)
+
+	var roles, requests int
+
+	for _, r := range m.sorted() {
+		switch r.Type {
+		case "vault:pkiSecret/secretBackendRole:SecretBackendRole":
+			roles++
+
+			assert.EqualValues(t, "ec", r.Inputs["keyType"], r.Name)
+
+			if strings.Contains(r.Name, "-credential-role-") {
+				assert.EqualValues(t, 384, r.Inputs["keyBits"], "%s: a credential role keeps its exact curve", r.Name)
+
+				continue
+			}
+
+			assert.LessOrEqual(t, r.Inputs["keyBits"], float64(256), "%s must accept a P-256 CSR", r.Name)
+		case "vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest":
+			requests++
+
+			assert.EqualValues(t, 384, r.Inputs["keyBits"], "%s: a CA key keeps the contract curve", r.Name)
+		}
+	}
+
+	assert.NotZero(t, roles)
+	assert.NotZero(t, requests)
+}

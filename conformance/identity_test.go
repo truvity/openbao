@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/truvity/openbao/internal/replay"
+	"github.com/truvity/openbao/pkg/apply"
 	"github.com/truvity/openbao/pkg/ceremony"
 	"github.com/truvity/openbao/pkg/model"
 )
@@ -222,7 +223,7 @@ func TestIdentityIntermediateConformance(t *testing.T) {
 		"server_flag":                 role.Server,
 		"client_flag":                 role.Client,
 		"key_type":                    "ec",
-		"key_bits":                    model.CurveBits[role.KeyCurve],
+		"key_bits":                    apply.LeafKeyBits(role.KeyCurve),
 		"ttl":                         role.TTL,
 		"max_ttl":                     role.MaxTTL,
 		"no_store":                    false,
