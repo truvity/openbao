@@ -35,12 +35,12 @@ import (
 // output (`just golden` regenerates it): one source of truth, so a chart
 // change that stops approving what it should fails here, not in a cluster.
 // It holds exact policies for example-private (ClusterIssuer, dnsNames
-// *.devel.example.internal, one commonName) and example-origin
+// *.east.example.internal, one commonName) and example-origin
 // (*.example.com, 720h, P-384 only), the allow-all namespaced-issuers
 // policy, and NO policy for the example-identity issuer.
 const spiffeURI = "spiffe://example.internal/ns/a/sa/b"
 
-const apiHost = "api.devel.example.internal"
+const apiHost = "api.east.example.internal"
 
 const chartPolicies = "../../tests/golden/openbao-consumers/approver-policy.yaml"
 
@@ -137,14 +137,14 @@ func TestChartPoliciesDecideEveryShape(t *testing.T) {
 		{"private leaf, P-256 tolerated", "example-private", "ClusterIssuer", 720, csrSpec{dns: []string{apiHost}, curve: p256}, OutcomeApproved, ""},
 		{
 			name: "private leaf with the allowed commonName", issuer: "example-private", kind: "ClusterIssuer", hours: 720,
-			spec: csrSpec{cn: "smoke.devel.example.internal", dns: []string{"smoke.devel.example.internal"}},
+			spec: csrSpec{cn: "smoke.east.example.internal", dns: []string{"smoke.east.example.internal"}},
 			want: OutcomeApproved, mention: "",
 		},
 		{"no duration set on the request", "example-private", "ClusterIssuer", 0, csrSpec{dns: []string{apiHost}}, OutcomeDenied, "maxDuration"},
 		{"foreign host", "example-private", "ClusterIssuer", 720, csrSpec{dns: []string{"api.evil.example.com"}}, OutcomeDenied, "dnsNames"},
 		{
 			name: "the apex is not the wildcard", issuer: "example-private", kind: "ClusterIssuer", hours: 720,
-			spec: csrSpec{dns: []string{"devel.example.internal"}},
+			spec: csrSpec{dns: []string{"east.example.internal"}},
 			want: OutcomeDenied, mention: "dnsNames",
 		},
 		{
@@ -347,9 +347,9 @@ func TestWildcardMatches(t *testing.T) {
 		{"*", "anything", true},
 		{"", "", true},
 		{"", "x", false},
-		{"*.devel.example.internal", "gateway.devel.example.internal", true},
-		{"*.devel.example.internal", "devel.example.internal", false},
-		{"*.svc.cluster.local", "db-rw.app.svc.cluster.local", true},
+		{"*.east.example.internal", "gateway.east.example.internal", true},
+		{"*.east.example.internal", "east.example.internal", false},
+		{"*.svc.example", "db-rw.app.svc.example", true},
 		{"https://example.com/", "https://example.com/", true},
 		{"https://example.com/", "https://evil.example/", false},
 		{"a*b*c", "aXbYc", true},

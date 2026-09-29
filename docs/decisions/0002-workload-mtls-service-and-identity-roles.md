@@ -99,9 +99,11 @@ CA's own bootstrap needs, so this is one change, not two: disable the
 blanket approver, install the SPIFFE driver's own approver (which checks
 that a request's SPIFFE URI matches the requesting pod's own namespace
 and ServiceAccount), and an approver-policy that explicitly admits the CA
-bootstrap's own request. A CI check asserts the blanket-approver flag is
-off wherever the SPIFFE approver is meant to be the only one, and a
-refusal test proves the negative directly: a CertificateRequest naming a
+bootstrap's own request. That check exists: `approvercheck --live
+--require-blanket-approver-off` (`cmd/approvercheck`, described in
+[approver.md](../approver.md)) asserts the blanket-approver flag is off
+and that every live request is approved by a policy or skipped as the
+SPIFFE signer, and a refusal test proves the negative directly: a CertificateRequest naming a
 foreign SAN — a namespace or ServiceAccount that is not the requesting
 pod's own — gets no certificate.
 

@@ -40,6 +40,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// Version is stamped by the release.
+var Version = "dev"
+
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -63,11 +66,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	requireBlanketOff := fs.Bool("require-blanket-approver-off", false, "with --live, also fail unless cert-manager's controller runs with "+
 		"--controllers=*,-certificaterequests-approver")
 	certManagerNS := fs.String("cert-manager-namespace", "cert-manager", "namespace of cert-manager's controller, for --require-blanket-approver-off")
+	version := fs.Bool("version", false, "print the version and exit")
 	var identitySigners stringList
 	fs.Var(&identitySigners, "identity-signer", "signer name (e.g. clusterissuers.cert-manager.io/<name>) whose requests csi-driver-spiffe's own approver owns; "+
 		"reported skipped, never evaluated. Repeatable")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	if *version {
+		logf(stdout, "approvercheck %s", Version)
+		return 0
 	}
 
 	if *policiesPath == "" {
