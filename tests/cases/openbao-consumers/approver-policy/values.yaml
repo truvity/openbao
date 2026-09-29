@@ -1,0 +1,46 @@
+# The approver layer on: an exact policy per OpenBAO-backed issuer, the
+# allow-all policy for namespaced Issuers, and `use` for cert-manager. The
+# SPIFFE identity issuer renders as an issuer and gets NO policy.
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+vaultNamespace: devel
+auth:
+  mountPath: jwt-devel
+
+pki:
+  enabled: true
+  trustAnchors:
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  issuers:
+    - name: example-private
+      signPath: pki/sign/private
+      role: example-private
+    - name: example-origin
+      signPath: pki/sign/origin
+      role: example-private
+      audiences: [vault://example-private]
+    # csi-driver-spiffe requests from this one; its own approver owns it.
+    - name: example-identity
+      identity: true
+      signPath: pki/sign/identity
+      role: example-identity
+
+certificates:
+  - name: example-private-smoke
+    commonName: smoke.devel.example.internal
+    dnsNames: [smoke.devel.example.internal]
+
+approverPolicy:
+  enabled: true
+  issuers:
+    example-private:
+      commonName: "smoke.devel.example.internal"
+      dnsNames: ["*.devel.example.internal"]
+    example-origin:
+      dnsNames: ["*.example.com", "example.com"]
+      maxDuration: 720h
+      privateKey:
+        minSize: 384
+  namespacedIssuers:
+    enabled: true

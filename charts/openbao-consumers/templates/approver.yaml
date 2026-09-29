@@ -1,0 +1,244 @@
+{{- if .Values.approverPolicy.enabled }}
+{{- $ap := .Values.approverPolicy }}
+{{- $pki := .Values.pki }}
+{{- $ns := $pki.certManager.namespace }}
+{{- if not (and $pki.enabled $pki.issuers) }}
+{{- fail "approverPolicy.enabled needs pki.enabled and pki.issuers — there is no issuer to write a policy for" }}
+{{- end }}
+{{- $registry := dict }}
+{{- $names := list }}
+{{- $issuerNames := list }}
+{{- $identityNames := list }}
+{{- range $issuer := $pki.issuers }}
+{{- $issuerNames = append $issuerNames $issuer.name }}
+{{- if $issuer.identity }}{{- $identityNames = append $identityNames $issuer.name }}{{- end }}
+{{- if and $ap.namespacedIssuers.enabled (eq ($issuer.kind | default "ClusterIssuer") "Issuer") }}
+{{- fail (printf "approverPolicy.namespacedIssuers.enabled is an allow-all policy for every namespaced Issuer, and pki.issuers.%s is one backed by OpenBAO — it would ride that policy and its own shape would never be enforced; make it a ClusterIssuer or turn namespacedIssuers off" $issuer.name) }}
+{{- end }}
+{{- end }}
+{{- /* The SPIFFE identity issuer is never approved here. */}}
+{{- range $name, $c := $ap.issuers }}
+{{- if not (has $name $issuerNames) }}
+{{- fail (printf "approverPolicy.issuers.%s names no issuer of pki.issuers" $name) }}
+{{- end }}
+{{- if has $name $identityNames }}
+{{- fail (printf "approverPolicy.issuers.%s is the SPIFFE identity issuer: csi-driver-spiffe's own approver owns that signer, approver-policy must never approve it (see docs/approver.md)" $name) }}
+{{- end }}
+{{- end }}
+{{- $requesters := $ap.requesters | default (list (dict "kind" "ServiceAccount" "name" $pki.certManager.serviceAccountName "namespace" $ns)) }}
+{{- range $issuer := $pki.issuers }}
+{{- if not $issuer.identity }}
+{{- $c := get $ap.issuers $issuer.name | default dict }}
+{{- if not (or $c.commonName $c.dnsNames $c.uris $c.ipAddresses $c.emailAddresses) }}
+{{- fail (printf "approverPolicy.issuers.%s names no commonName, dnsNames, uris, ipAddresses or emailAddresses — a policy that names nothing refuses every request; say what %s may issue" $issuer.name $issuer.name) }}
+{{- end }}
+{{- range $u := ($c.uris | default list) }}
+{{- if hasPrefix "spiffe:" (lower $u) }}
+{{- fail (printf "approverPolicy.issuers.%s allows the URI %q: SPIFFE identities belong to csi-driver-spiffe's own approver, never to a CertificateRequestPolicy (see docs/approver.md)" $issuer.name $u) }}
+{{- end }}
+{{- end }}
+{{- $kind := $issuer.kind | default "ClusterIssuer" }}
+{{- $constraints := mergeOverwrite (deepCopy $ap.defaults) (deepCopy (pick $c "minDuration" "maxDuration" "privateKey")) }}
+{{- /* A certificate of this chart that asks for usages the policy does not
+       list would be denied at its first renewal, not at install. */}}
+{{- range $cert := $.Values.certificates }}
+{{- $ref := $cert.issuerRef | default (dict "name" (first $pki.issuers).name) }}
+{{- if eq $ref.name $issuer.name }}
+{{- range $u := ($cert.usages | default list) }}
+{{- if not (has $u ($c.usages | default list)) }}
+{{- fail (printf "certificates.%s asks for the usage %q but approverPolicy.issuers.%s.usages does not list it — the request would be denied" $cert.name $u $issuer.name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $names = append $names $issuer.name }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "CertificateRequestPolicy" "namespace" "" "name" $issuer.name "by" (printf "approverPolicy.issuers.%s" $issuer.name)) }}
+---
+{{- /* What this issuer's certificates may look like. approver-policy
+       denies any request field a policy does not name, so what is not
+       listed here is refused. The OpenBAO role behind the issuer bounds
+       the same thing from the other side; this is the half that runs
+       before a request is ever sent to it. */}}
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: {{ $issuer.name }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $ap.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    issuerRef:
+      name: {{ $issuer.name | quote }}
+      kind: {{ $kind }}
+      group: cert-manager.io
+    {{- if eq $kind "Issuer" }}
+    namespace:
+      matchNames: [{{ $ns | quote }}]
+    {{- end }}
+  allowed:
+    {{- with $c.commonName }}
+    commonName:
+      value: {{ . | quote }}
+    {{- end }}
+    {{- with $c.dnsNames }}
+    dnsNames:
+      {{- if not $c.uris }}
+      required: true
+      {{- end }}
+      values:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $c.uris }}
+    uris:
+      values:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $c.ipAddresses }}
+    ipAddresses:
+      values:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $c.emailAddresses }}
+    emailAddresses:
+      values:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    isCA: false
+    {{- with $c.usages }}
+    usages:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  constraints:
+    {{- with $constraints.minDuration }}
+    minDuration: {{ . }}
+    {{- end }}
+    {{- with $constraints.maxDuration }}
+    maxDuration: {{ . }}
+    {{- end }}
+    {{- with $constraints.privateKey }}
+    privateKey:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- if $ap.namespacedIssuers.enabled }}
+{{- $names = append $names $ap.namespacedIssuers.name }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "CertificateRequestPolicy" "namespace" "" "name" $ap.namespacedIssuers.name "by" "approverPolicy.namespacedIssuers") }}
+---
+{{- /* Every namespaced Issuer, in every namespace, allow-all. A namespaced
+       selfSigned or CA Issuer confers no trust outside its own namespace:
+       whoever can create it already holds its key, so approving its
+       requests grants nothing they did not have. approver-policy denies
+       any field a policy does not name, so "everything" is spelled out;
+       allowed.usages is enum-validated by the CRD, hence all 23 and no
+       "*". Two gaps it cannot close: SAN otherName entries and subject
+       attributes outside the named ones (keyed by OID, no wildcard). */}}
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: {{ $ap.namespacedIssuers.name }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $ap.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    issuerRef:
+      name: "*"
+      kind: Issuer
+      group: cert-manager.io
+  allowed:
+    commonName:
+      value: "*"
+    dnsNames:
+      values: ["*"]
+    ipAddresses:
+      values: ["*"]
+    uris:
+      values: ["*"]
+    emailAddresses:
+      values: ["*"]
+    isCA: true
+    usages:
+      - signing
+      - digital signature
+      - content commitment
+      - key encipherment
+      - key agreement
+      - data encipherment
+      - cert sign
+      - crl sign
+      - encipher only
+      - decipher only
+      - any
+      - server auth
+      - client auth
+      - code signing
+      - email protection
+      - s/mime
+      - ipsec end system
+      - ipsec tunnel
+      - ipsec user
+      - timestamping
+      - ocsp signing
+      - microsoft sgc
+      - netscape sgc
+    subject:
+      organizations:
+        values: ["*"]
+      countries:
+        values: ["*"]
+      organizationalUnits:
+        values: ["*"]
+      localities:
+        values: ["*"]
+      provinces:
+        values: ["*"]
+      streetAddresses:
+        values: ["*"]
+      postalCodes:
+        values: ["*"]
+      serialNumber:
+        value: "*"
+{{- end }}
+{{- $role := $ap.roleName | default (printf "%s-approver-use" .Release.Name) }}
+---
+{{- /* `use` on exactly the policies above, for whoever creates the
+       CertificateRequests: cert-manager's controller, for every
+       Certificate. Not csi-driver-spiffe's requests: those come from a
+       workload's own ServiceAccount and are approved by the driver's own
+       approver, never through a policy. */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $role }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $ap.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      {{- range $n := $names }}
+      - {{ $n | quote }}
+      {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $role }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $ap.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $role }}
+subjects:
+  {{- toYaml $requesters | nindent 2 }}
+{{- end }}

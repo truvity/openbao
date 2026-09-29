@@ -231,6 +231,10 @@
               },
               "annotations": {
                 "$ref": "#/definitions/stringMap"
+              },
+              "identity": {
+                "type": "boolean",
+                "description": "Marks the SPIFFE identity issuer (the one csi-driver-spiffe requests from). The issuer is rendered like any other, but approverPolicy never renders a policy for it and refuses to be pointed at it: csi-driver-spiffe's own approver owns that signer."
               }
             }
           }
@@ -347,6 +351,108 @@
           }
         }
       }
+    },
+    "approverPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional cert-manager approver-policy layer for the issuers this chart creates. Off by default: enabling it renders CertificateRequestPolicy objects and the RBAC that lets cert-manager use them, and is only safe once approver-policy is installed.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "roleName": {
+          "type": "string"
+        },
+        "requesters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ServiceAccount",
+                  "User",
+                  "Group"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "apiGroup": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "minDuration": {
+              "type": "string",
+              "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$"
+            },
+            "maxDuration": {
+              "type": "string",
+              "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$"
+            },
+            "privateKey": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "algorithm": {
+                  "type": "string",
+                  "enum": [
+                    "RSA",
+                    "ECDSA",
+                    "Ed25519"
+                  ]
+                },
+                "minSize": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "maxSize": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        },
+        "issuers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/approverConstraints"
+          }
+        },
+        "namespacedIssuers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {
@@ -354,6 +460,80 @@
       "type": "object",
       "additionalProperties": {
         "type": "string"
+      }
+    },
+    "approverConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commonName": {
+          "type": "string"
+        },
+        "dnsNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "uris": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ipAddresses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "emailAddresses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "usages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "minDuration": {
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$"
+        },
+        "maxDuration": {
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$"
+        },
+        "privateKey": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "enum": [
+                "RSA",
+                "ECDSA",
+                "Ed25519"
+              ]
+            },
+            "minSize": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxSize": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
       }
     }
   }
