@@ -18,8 +18,6 @@
     ]
   },
   "ignorePaths": [
-    "devbox.json",
-    "devbox.lock",
     "tests/**"
   ],
   "packageRules": [
