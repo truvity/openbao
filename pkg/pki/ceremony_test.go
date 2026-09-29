@@ -308,6 +308,36 @@ func TestEnvironmentCARoundTrip(t *testing.T) {
 	}
 }
 
+// TestEnvironmentCACustomArtifactPattern proves that an estate adopting a
+// ceremony whose per-environment artifacts predate this package's naming
+// convention can keep its existing file name exactly, with
+// EnvironmentCA.ArtifactPattern, and needs no rename.
+func TestEnvironmentCACustomArtifactPattern(t *testing.T) {
+	contract := ceremonyFixture(t)
+	client := newFakeKMS(t)
+
+	// A legacy name shape unrelated to IntermediateArtifactName's own
+	// convention: no "-intermediate-" infix, no domain name at all.
+	contract.TrustDomains.URI[0].EnvironmentCA.ArtifactPattern = "{generation}-legacy-identity-{environment}.yaml"
+
+	root := createTestRoot(t, contract, client)
+
+	spec, err := contract.EnvironmentCASpec("workload", "dev", "dev.internal.example.org", "example-root-2026-01")
+	if err != nil {
+		t.Fatalf("EnvironmentCASpec: %v", err)
+	}
+
+	if got, want := filepath.Base(spec.ArtifactPath), "example-root-2026-01-legacy-identity-dev.yaml"; got != want {
+		t.Fatalf("artifact path = %q, want basename %q", got, want)
+	}
+
+	signTestIntermediate(t, client, spec, root)
+
+	if _, err := contract.LoadSignedIntermediate(spec); err != nil {
+		t.Fatalf("LoadSignedIntermediate: %v", err)
+	}
+}
+
 func TestEnvironmentCARefusesEnvironmentNotRootSigned(t *testing.T) {
 	contract := ceremonyFixture(t)
 

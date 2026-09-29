@@ -316,6 +316,19 @@ type (
 		// [URIDomainIntermediate.Subject] is authored rather than
 		// derived.
 		CommonNameSuffix string `yaml:"commonNameSuffix"`
+		// ArtifactPattern overrides the file name of a per-environment
+		// root-signed CA's committed ceremony artifact, relative to
+		// ArtifactDir. It must contain "{environment}"; "{generation}" is
+		// optional. Empty means the library default,
+		// [IntermediateArtifactName](generationID, the domain's own
+		// name, environment).
+		//
+		// An estate adopting a ceremony whose per-environment artifacts
+		// predate this package sets this to whatever name its own code
+		// already used, so migrating to this package renames no file and
+		// needs no new .attempt reservation for an artifact that is
+		// already signed and committed.
+		ArtifactPattern string `yaml:"artifactPattern,omitempty"`
 	}
 
 	// URIRole is the one leaf role a URI trust domain's issuing CA offers:
@@ -496,6 +509,22 @@ func IntermediateArtifactName(generationID, trustDomain string, environment stri
 	}
 
 	return name + ".yaml"
+}
+
+// environmentCAArtifactName is the file name of one environment's
+// root-signed CA artifact under this domain: [EnvironmentCA.ArtifactPattern]
+// with its placeholders substituted, or the library default,
+// [IntermediateArtifactName], when the domain sets no pattern.
+func (d *URITrustDomain) environmentCAArtifactName(generationID, environment string) string {
+	if d.EnvironmentCA == nil || d.EnvironmentCA.ArtifactPattern == "" {
+		return IntermediateArtifactName(generationID, d.Name, environment)
+	}
+
+	name := d.EnvironmentCA.ArtifactPattern
+	name = strings.ReplaceAll(name, "{generation}", generationID)
+	name = strings.ReplaceAll(name, "{environment}", environment)
+
+	return name
 }
 
 // RootGeneration returns the authored generation with this ID, or nil.

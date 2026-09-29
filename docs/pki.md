@@ -182,6 +182,14 @@ intermediate's own birth is (below): nothing downstream may treat the new
 CA as live until its artifact is committed, and the OLD issuer keeps
 signing, unconditionally, until every leaf it ever issued has expired.
 
+`EnvironmentCA.ArtifactPattern` names the per-environment CA's committed
+artifact when the library default (`<generation>-intermediate-<domain
+name>-<environment>.yaml`) is not what an estate's ceremony already used
+before adopting this package: `{generation}` and `{environment}` are
+substituted (the pattern must contain `{environment}`, or two
+environments' CAs would collide onto the same file), so an existing,
+already-signed artifact needs no rename to be read by `Contract` methods.
+
 ## Two curves
 
 Every CA in a hierarchy signs with `global.keyCurve` (P-384), without

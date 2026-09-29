@@ -495,6 +495,13 @@ func (ca EnvironmentCA) validate(path string, global Global, domainIntermediateM
 		return fmt.Errorf("pki: %s.commonNameSuffix is required", path)
 	}
 
+	if ca.ArtifactPattern != "" && !strings.Contains(ca.ArtifactPattern, "{environment}") {
+		return fmt.Errorf(
+			"pki: %s.artifactPattern must contain \"{environment}\": without it, every environment's CA would share one file",
+			path,
+		)
+	}
+
 	return nil
 }
 
