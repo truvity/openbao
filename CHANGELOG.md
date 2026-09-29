@@ -7,6 +7,24 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Fixed
+
+- **`internal/fakeissuer`: `authorize` no longer even hands the
+  caller-supplied `redirect_uri` to `url.Parse`/`http.Redirect`.**
+  v0.18.1 (below) validated it with `slices.Contains` but still parsed
+  and redirected to that same tainted string, which is the shape CodeQL
+  keeps flagging as `go/unvalidated-url-redirection` (alert #1)
+  regardless of the check that ran first -- a taint tracker follows data
+  flow, not the conditionals guarding it. The redirect target is now the
+  matching entry read back out of the client's own registered
+  `RedirectURIs` (`client.RedirectURIs[index]`) -- a value with no data-flow
+  edge from the request at all, since it originates from this server's
+  own trusted client table, never from `r.URL.Query()`. Same behavior
+  (the two strings are identical whenever the check passes); different,
+  now-untainted, provenance.
+
+## v0.18.1
+
 ### Added
 
 - **Daily `govulncheck` scanning (`.github/workflows/security.yaml`)**,
