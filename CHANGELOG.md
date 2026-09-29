@@ -26,6 +26,14 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ### Fixed
 
+- **`golang.org/x/crypto` bumped v0.55.0 -> v0.56.0**, closing GO-2026-6355
+  and GO-2026-6354 (DoS on a deadlocked SSH channel, established and
+  undecided). `govulncheck` found both as package-level only -- this
+  repository's own code does not call the vulnerable symbols -- so
+  nothing else changes. A third finding, GO-2026-5932
+  (`golang.org/x/crypto/openpgp` is unmaintained and unsafe by design),
+  has no fix released (`Fixed in: N/A`) and is not reachable from this
+  repository's code either; nothing to bump.
 - **`internal/fakeissuer`: the authorize endpoint no longer redirects to
   an unregistered `redirect_uri`** (CodeQL alert #1,
   `go/unvalidated-url-redirection`). It now refuses, with 400, before a
