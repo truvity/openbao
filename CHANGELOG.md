@@ -5,6 +5,25 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **Daily `govulncheck` scanning (`.github/workflows/security.yaml`)**,
+  matching the shape already running in `truvity/cloudflare` and
+  `truvity/tailscale`: the shared `check.yaml` workflow's `vuln` recipe,
+  on push, on pull request, and on a 6am UTC daily schedule. Until now
+  this repository relied on CodeQL alone, which does not reach a
+  known-vulnerable dependency the way `govulncheck` does.
+
+### Changed
+
+- **`truvity/ci-workflows` pins bumped from v3.0.1 to v3.13.1** across
+  `ci.yaml`, `auto-release.yaml` and `release.yaml`. No caller-visible
+  input changed for this repository's usage across that range; the
+  composite actions the workflows call moved to `truvity/ci-actions`
+  at v3.9.0, transparently to every workflow-level caller.
+
 ## v0.18.0
 
 ### Added
