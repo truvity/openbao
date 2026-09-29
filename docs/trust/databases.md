@@ -56,14 +56,24 @@ own CA Secret carries the private roots (every trusted generation).
   `svc.<cluster-domain>` forms, by policy: the short `.svc` forms are absent and
   denied. A client configured with `<cluster>-rw` fails `verify-full`. Move the
   client's host and its `sslrootcert` first, then flip the mode.
-- **Rotation.** The Secret carries the CloudNativePG `cnpg.io/reload` label so the
-  operator reloads a renewed server certificate.
+- **Rotation.** The Secret carries the CloudNativePG `cnpg.io/reload: "true"` label
+  (a rule for every user-provided Secret, see
+  [issuance.md](issuance.md#reloading-what-actually-picks-up-a-renewed-file)) so the
+  operator reloads a renewed server certificate. Proven in a development
+  environment: a forced renewal was served within 10 seconds with no instance
+  restart.
 - `sslmode=require` (encrypt, verify nothing) is not acceptable as a steady state:
   it accepts any certificate. Rollback of a `verify-full` step is one connection
   string, with no database-side change.
 
-**Status: IN PROGRESS.** The server certificate from the private chain is live;
-`verify-full` is being adopted client by client (to be confirmed per consumer).
+**Status: IN PROGRESS.** The server certificate from the private chain is live,
+and the chart labels its server-TLS and server-CA Secrets for reload. `verify-full`
+is being adopted client by client: an identity server using the Java PostgreSQL
+driver is on it in development and production (its own ServiceAccount, the
+fully qualified host, the private root mounted as a directory); the url-shortener
+example chart in truvity/policy gains an off-by-default
+`database.tls.mode: require|verify-full` with the same shape. Others are to be
+confirmed per consumer.
 
 ## Why the database's own clients get their own CA
 
@@ -123,7 +133,31 @@ has the full comparison).
    both by copying the operator's CA key into the client-CA secret: the operator
    would then not own a CA secret it does not renew, and the rotation burden moves
    to us, in a form nobody designed. (This variant was considered and rejected.)
-5. **Reload:** label the client-CA and replication Secrets `cnpg.io/reload`.
+5. **Reload:** label the client-CA and replication Secrets `cnpg.io/reload: "true"`
+   (and the server TLS and server CA Secrets: every user-provided Secret).
+
+**Phase 0 spike results** (small local cluster: cert-manager 1.21, trust-manager
+0.25, CloudNativePG operator 1.30 with chart 0.29, PostgreSQL 18). All GO except
+the open point in the last item:
+
+- A `clientCASecret` **without `ca.key`** plus a user-supplied
+  `replicationTLSSecret` (CN `streaming_replica`) from a per-database
+  cert-manager CA is accepted, and replication is healthy.
+- Role certificates from the per-database CA are accepted; a certificate with the
+  same CN from another CA is refused (`unknown ca`).
+- The client-CA file must hold the **intermediate(s) as well as the root**,
+  because a client sends only its leaf.
+- CN-only leaves (an e-mail as CN, or a bare CN, and no SAN) verify under a
+  DNS-name-constrained intermediate; a DNS SAN outside the constraint fails, as
+  intended.
+- The people path works: a `pg_hba` people line before the catch-all plus
+  `pg_ident` e-mail-to-role rows; an unmapped e-mail is refused; a person's
+  certificate cannot take an application role.
+- **Open design point (phase 2).** trust-manager can target a Secret and set its
+  labels (so `cnpg.io/reload` can be set), but a `Bundle`'s sources must live in
+  the trust namespace. A per-database CA Secret in the database's namespace
+  therefore cannot be a source; how the client-CA file gets the private root
+  beside it is to be designed.
 
 Replacing a live cluster's client CA rolls its instances and rotates the
 replication certificate. Do it on a small cluster first, and only when the cluster
@@ -207,7 +241,9 @@ What the server needs (**PLANNED**; only the client half exists today):
    grants the person the `db-client` group in the first place. The mapping is
    **explicit**, never a pattern: a person is admitted to a database role because a
    row says so, and the ladder (the roles people may map to) is the existing one
-   minus superuser.
+   minus superuser. **Role names must not start with `pg_`**: that prefix is
+   reserved in PostgreSQL, so the ladder's final names are to be decided
+   ([T-25](decisions.md#t-25-people-ladder-roles-avoid-the-reserved-pg_-prefix)).
 4. **Roles that exist for people**, e.g. an administrative role (owner membership)
    and a read-only auditor role. Project viewers and deployers get no database
    access by default.
@@ -263,7 +299,7 @@ Client certificates rotate. What "rotate" costs depends on the driver.
 | **Go, pgx** | the config is parsed once; a connection pool reuses the parsed TLS config | set `BeforeConnect` (`ConnConfig.BeforeConnect`, or `OptionBeforeConnect` on the stdlib wrapper) to **re-parse** the config -- and so re-read the files -- for each new connection |
 | **Go, a shared library that caches a connector** | a connector built once holds the certificate it read at construction | rebuild it, or move to a config-callback per connection; a cached connector works until the first certificate expires and then fails all at once |
 | **a server whose DSN is read from a file** (the `DSN_FILE` pattern) | a rotating driver re-reads the file per new connection | no application code change |
-| **Java, pgjdbc** | `sslcert`, `sslkey`, `sslrootcert` in the URL; the SSL factory is built per new connection and reads the files then (source reading; **to be confirmed by test**) | a **PKCS#8** key (`privateKey.encoding: PKCS8`); a SEC1 EC key (`BEGIN EC PRIVATE KEY`) is not in pgjdbc's list; mounted Secret volume, never `subPath` |
+| **Java, pgjdbc** | `sslcert`, `sslkey`, `sslrootcert` in the URL; the SSL factory is built per new connection and reads the files then (source reading; **to be confirmed by test**) | the key must be **DER PKCS#8**. Tested with 42.7.7 and 42.7.11: the driver cannot read a PEM PKCS#8 EC key (cert-manager's PEM output); DER PKCS#8 works. Convert with `openssl pkcs8 -topk8 -nocrypt -outform DER` (`openssl pkey -outform DER` emits SEC1 and fails). Candidate without a conversion step: cert-manager `additionalOutputFormats: DER` (**to be verified**). Mounted Secret volume, never `subPath` |
 
 In all cases an **established** connection keeps its old session: PostgreSQL
 checks the certificate only at the handshake. Rotation therefore takes effect at
@@ -321,6 +357,7 @@ The database secrets engine's two real wins, and their answers:
 
 | Phase | What | Status |
 |---|---|---|
+| 0 | spikes on a small local cluster | done: GO, one open design point (above) |
 | 1 | server certificate from the private chain; clients `verify-full` | IN PROGRESS |
 | 2 | the chart renders `clientCASecret`, `replicationTLSSecret`, `pg_ident` and `pg_hba` with the people line, all off by default | PLANNED |
 | 3 | per-database CA, owner and runtime certificates (soft mode, then cert-only) | PLANNED |
