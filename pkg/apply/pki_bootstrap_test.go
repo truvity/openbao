@@ -170,7 +170,6 @@ func TestBootstrapEnvironmentCAColdStartCreatesMountAndCSR(t *testing.T) {
 			DefaultLeaseTTL: "1h", MaxLeaseTTL: "1h", MountDescription: "workload identity",
 			KeyName: "identity-dev", CommonName: "dev.example.internal Workload Identity CA",
 			Organization: "Example Org", KeyCurve: model.CurveP384,
-			ResourceName: "pki-identity-dev-ca",
 		})
 
 		return err
@@ -178,16 +177,16 @@ func TestBootstrapEnvironmentCAColdStartCreatesMountAndCSR(t *testing.T) {
 
 	require.NotZero(t, csr)
 
-	mount, ok := m.named("pki-identity-dev-ca-mount")
-	require.True(t, ok, "a cold start must create the mount")
+	mount, ok := m.named("pki-identity")
+	require.True(t, ok, "a cold start must create the mount, named as Deploy names it")
 	assert.True(t, mount.Protect)
 	assert.Equal(t, "pki-identity", mount.Inputs["path"])
 
-	request, ok := m.named("pki-identity-dev-ca")
-	require.True(t, ok)
+	request, ok := m.named("identity-dev-csr")
+	require.True(t, ok, "the request is named as Deploy names it: <issuer>-csr")
 	assert.True(t, request.Protect)
 	assert.Equal(t, "identity-dev", request.Inputs["keyName"])
-	assert.Contains(t, request.DependsOn, "pki-identity-dev-ca-mount")
+	assert.Contains(t, request.DependsOn, "pki-identity")
 }
 
 func TestBootstrapEnvironmentCAExistingMountCreatesOnlyTheRequest(t *testing.T) {
@@ -196,16 +195,15 @@ func TestBootstrapEnvironmentCAExistingMountCreatesOnlyTheRequest(t *testing.T) 
 			Mount: "pki-identity", MountExists: true,
 			KeyName: "identity-dev", CommonName: "dev.example.internal Workload Identity CA",
 			Organization: "Example Org", KeyCurve: model.CurveP384,
-			ResourceName: "pki-identity-dev-ca",
 		})
 
 		return err
 	})
 
-	_, hasMount := m.named("pki-identity-dev-ca-mount")
+	_, hasMount := m.named("pki-identity")
 	assert.False(t, hasMount, "an existing mount is never (re)created")
 
-	_, hasRequest := m.named("pki-identity-dev-ca")
+	_, hasRequest := m.named("identity-dev-csr")
 	assert.True(t, hasRequest)
 }
 
@@ -213,15 +211,13 @@ func TestBootstrapEnvironmentCARefusals(t *testing.T) {
 	base := apply.BootstrapEnvironmentCAOptions{
 		Mount: "pki-identity", MountExists: true, KeyName: "identity-dev",
 		CommonName: "dev.example.internal Workload Identity CA", KeyCurve: model.CurveP384,
-		ResourceName: "pki-identity-dev-ca",
 	}
 
 	for name, mutate := range map[string]func(*apply.BootstrapEnvironmentCAOptions){
-		"no mount":         func(o *apply.BootstrapEnvironmentCAOptions) { o.Mount = "" },
-		"no key name":      func(o *apply.BootstrapEnvironmentCAOptions) { o.KeyName = "" },
-		"no common name":   func(o *apply.BootstrapEnvironmentCAOptions) { o.CommonName = "" },
-		"no resource name": func(o *apply.BootstrapEnvironmentCAOptions) { o.ResourceName = "" },
-		"unknown curve":    func(o *apply.BootstrapEnvironmentCAOptions) { o.KeyCurve = "P-999" },
+		"no mount":       func(o *apply.BootstrapEnvironmentCAOptions) { o.Mount = "" },
+		"no key name":    func(o *apply.BootstrapEnvironmentCAOptions) { o.KeyName = "" },
+		"no common name": func(o *apply.BootstrapEnvironmentCAOptions) { o.CommonName = "" },
+		"unknown curve":  func(o *apply.BootstrapEnvironmentCAOptions) { o.KeyCurve = "P-999" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			options := base
@@ -264,4 +260,112 @@ func TestComposeRename(t *testing.T) {
 	assert.Equal(t, "old-role-identity", rename("new-role-identity"), "overrides win over the base")
 	assert.Equal(t, "kept-legacy", rename("legacy"))
 	assert.Equal(t, "unrelated", rename("unrelated"))
+}
+
+// bootstrapBilling is phase A for the fixture's "dev/billing" issuing CA:
+// the same mount, key and namespace [Deploy] registers for it.
+func bootstrapBilling(t *testing.T, mutate func(*apply.BootstrapEnvironmentCAOptions)) *mocks {
+	t.Helper()
+
+	options := apply.BootstrapEnvironmentCAOptions{
+		Namespace: "dev/billing", Mount: "pki",
+		DefaultLeaseTTL: "1h", MaxLeaseTTL: "1h",
+		KeyName: "example-dev-billing", CommonName: "billing.dev.example.internal Issuing CA",
+		Organization: "Example Org", KeyCurve: model.CurveP384,
+	}
+	mutate(&options)
+
+	return bootstrapMocks(t, func(c *pulumi.Context, provider *vault.Provider) error {
+		_, err := apply.BootstrapEnvironmentCA(c, provider, options)
+
+		return err
+	})
+}
+
+// TestBootstrapHandsOverToDeploy is the hand-over proof: the mount and the
+// certificate request phase A registers carry the SAME logical names as
+// the ones Deploy registers for the same objects, so a phase-B run over
+// the phase-A state creates and deletes neither. (The mock monitor does
+// not diff against prior state; the logical name is what a real diff
+// keys on, exactly as TestEnvironmentCARoleMoveIsInPlace argues.)
+func TestBootstrapHandsOverToDeploy(t *testing.T) {
+	deployed, _, err := deploy(t, example(t), options(), false)
+	require.NoError(t, err)
+
+	bootstrapped := bootstrapBilling(t, func(*apply.BootstrapEnvironmentCAOptions) {})
+
+	for _, name := range []string{"dev-billing-pki", "example-dev-billing-csr"} {
+		phaseA, ok := bootstrapped.named(name)
+		require.True(t, ok, "phase A must register %q", name)
+
+		phaseB, ok := deployed.named(name)
+		require.True(t, ok, "Deploy must register %q", name)
+
+		assert.Equal(t, phaseB.Type, phaseA.Type)
+		assert.Empty(t, phaseA.Aliases, "no legacy name given, so no alias")
+
+		for _, key := range []string{"path", "namespace", "backend", "keyName", "keyBits", "keyType", "commonName"} {
+			if want, has := phaseB.Inputs[key]; has {
+				assert.Equal(t, want, phaseA.Inputs[key], "%s: %s", name, key)
+			}
+		}
+	}
+
+	assert.Len(t, bootstrapped.sorted(), 3, "phase A registers the provider, the mount and the request, nothing else")
+}
+
+// TestBootstrapHandsOverToDeployWithRename covers Deploy's Options.Rename:
+// the same function given to phase A yields the same names.
+func TestBootstrapHandsOverToDeployWithRename(t *testing.T) {
+	rename := apply.ComposeRename(map[string]string{"example-dev-billing-csr": "legacy-billing-csr"}, nil)
+
+	opts := options()
+	opts.Rename = rename
+
+	deployed, _, err := deploy(t, example(t), opts, false)
+	require.NoError(t, err)
+
+	bootstrapped := bootstrapBilling(t, func(o *apply.BootstrapEnvironmentCAOptions) { o.Rename = rename })
+
+	_, ok := bootstrapped.named("legacy-billing-csr")
+	require.True(t, ok)
+
+	_, ok = deployed.named("legacy-billing-csr")
+	require.True(t, ok)
+
+	_, ok = bootstrapped.named("example-dev-billing-csr")
+	assert.False(t, ok)
+}
+
+// TestBootstrapLegacyResourceNameAliases is the old-name path: a stack
+// that phase A created under the previous scheme (the mount as
+// "<ResourceName>-mount", the request as "<ResourceName>") keeps its
+// state, because those names are aliases of the new ones.
+func TestBootstrapLegacyResourceNameAliases(t *testing.T) {
+	m := bootstrapBilling(t, func(o *apply.BootstrapEnvironmentCAOptions) { o.ResourceName = "billing-ca" })
+
+	mount, ok := m.named("dev-billing-pki")
+	require.True(t, ok)
+	assert.Equal(t, []string{"billing-ca-mount"}, mount.Aliases)
+
+	request, ok := m.named("example-dev-billing-csr")
+	require.True(t, ok)
+	assert.Equal(t, []string{"billing-ca"}, request.Aliases)
+
+	_, oldMount := m.named("billing-ca-mount")
+	_, oldRequest := m.named("billing-ca")
+	assert.False(t, oldMount || oldRequest, "the old names are aliases, never registered")
+
+	// An existing mount is not the bootstrap's to register or alias.
+	m = bootstrapBilling(t, func(o *apply.BootstrapEnvironmentCAOptions) {
+		o.ResourceName = "billing-ca"
+		o.MountExists = true
+	})
+
+	_, hasMount := m.named("dev-billing-pki")
+	assert.False(t, hasMount)
+
+	request, ok = m.named("example-dev-billing-csr")
+	require.True(t, ok)
+	assert.Equal(t, []string{"billing-ca"}, request.Aliases)
 }

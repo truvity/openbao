@@ -433,11 +433,18 @@ func (a *applier) group(
 // OpenBAO namespace path (`<environment>/<project>`), and a logical name
 // never carries the `/` a URN segment would parse.
 func mountName(s *scope, path string) string {
-	if s.namespace.Name == "" {
+	return mountLogicalName(s.namespace.Name, path)
+}
+
+// mountLogicalName is [mountName] for a namespace given by its OpenBAO
+// path ("" for root), so [BootstrapEnvironmentCA] registers the mount
+// under exactly the name [Deploy] will.
+func mountLogicalName(namespace, path string) string {
+	if namespace == "" {
 		return path
 	}
 
-	return strings.ReplaceAll(s.namespace.Name, "/", "-") + "-" + path
+	return strings.ReplaceAll(namespace, "/", "-") + "-" + path
 }
 
 // resourceName makes a group or policy name safe inside a Pulumi resource

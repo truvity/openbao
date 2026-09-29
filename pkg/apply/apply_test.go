@@ -35,6 +35,7 @@ type (
 		Name      string         `yaml:"name"`
 		Protect   bool           `yaml:"protect,omitempty"`
 		DependsOn []string       `yaml:"dependsOn,omitempty"`
+		Aliases   []string       `yaml:"aliases,omitempty"`
 		Inputs    map[string]any `yaml:"inputs"`
 	}
 
@@ -58,6 +59,20 @@ func (m *mocks) NewResource(args pulumi.MockResourceArgs) (string, resource.Prop
 		}
 
 		sort.Strings(record.DependsOn)
+
+		for _, urn := range rpc.GetAliasURNs() {
+			record.Aliases = append(record.Aliases, urn[strings.LastIndex(urn, "::")+2:])
+		}
+
+		for _, alias := range rpc.GetAliases() {
+			if urn := alias.GetUrn(); urn != "" {
+				record.Aliases = append(record.Aliases, urn[strings.LastIndex(urn, "::")+2:])
+			} else if spec := alias.GetSpec(); spec != nil {
+				record.Aliases = append(record.Aliases, spec.GetName())
+			}
+		}
+
+		sort.Strings(record.Aliases)
 	}
 
 	m.mu.Lock()

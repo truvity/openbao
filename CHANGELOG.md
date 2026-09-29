@@ -7,6 +7,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Fixed
+
+- fix(apply): BootstrapEnvironmentCA names match Deploy's (with aliases from the old names). The mount is now registered as `<namespace>-<mount>` (slashes become `-`; the bare mount path in root) and the certificate request as `<KeyName>-csr`, exactly what `Deploy` derives, so moving from phase A to phase B creates and deletes neither. `ResourceName` is now optional: a stack already created under the old scheme (mount `<ResourceName>-mount`, request `<ResourceName>`) keeps setting it, and those names become Pulumi aliases, so the state moves to the new names in place. New `Rename` option takes the same `Options.Rename` given to `Deploy`.
+
 ### Changed
 
 - Documentation only: the namespace tree is `<environment>/<project>` everywhere (README, safety); the doctrine counts four silent-failure watches; `awsAuth[]` plugin registration is documented as declarative-in-server-config for an OCI-downloaded plugin (`Desired.Plugins` only for a binary already on disk); ADR 0002 is marked superseded for the CA shape by the per-environment identity CAs in docs/pki.md; the `openbaoctl pki --contract` flags are in docs/reference.md; the README states plainly that AWS KMS is used only for the auto-unseal and the offline root signer, and drops a stale consumer row.

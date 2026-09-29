@@ -115,13 +115,22 @@ type (
 		// KeyCurve is one of [model.CurveP256], [model.CurveP384],
 		// [model.CurveP521].
 		KeyCurve string
-		// ResourceName is the Pulumi logical name for the certificate
-		// request (and for the mount, when this creates it: "-mount" is
-		// appended). There is no prior name to preserve for either --
-		// both are brand new -- so this is the caller's choice, made to
-		// compose with whatever naming scheme the rest of the program
-		// uses, not derived here.
+		// ResourceName is OPTIONAL and legacy. The mount and the
+		// certificate request are registered under exactly the names
+		// [Deploy] will later give the same objects -- the mount as
+		// "<namespace>-<mount>" ("<mount>" in root; slashes in the
+		// namespace become "-") and the request as "<KeyName>-csr" -- so
+		// phase B adopts them with no create and no delete. Set
+		// ResourceName only when an earlier release of this library
+		// registered them under the old scheme (the mount as
+		// ResourceName+"-mount", the request as ResourceName): those
+		// names become Pulumi aliases, so the existing state moves to the
+		// new names in place.
 		ResourceName string
+		// Rename is the same [Options.Rename] the later [Deploy] is
+		// given, if any; it is applied to both names exactly as Deploy
+		// applies it.
+		Rename func(string) string
 	}
 )
 
@@ -139,12 +148,16 @@ type (
 // desired state before it is signed would therefore fail every preview
 // and apply, not only this one CA's.
 //
+// Names: the mount and the request carry the logical names [Deploy]
+// derives for the same objects (see [BootstrapEnvironmentCAOptions]), so
+// moving from this phase to [Deploy] is a no-op for both.
+//
 // The key and its certificate request are protected: replacing them is
 // an explicit, reviewed migration, never an ordinary Pulumi update. When
 // !options.MountExists, the mount this registers is protected too.
 func BootstrapEnvironmentCA(c *pulumi.Context, provider *vault.Provider, options BootstrapEnvironmentCAOptions) (pulumi.StringOutput, error) {
-	if options.Mount == "" || options.KeyName == "" || options.CommonName == "" || options.ResourceName == "" {
-		return pulumi.StringOutput{}, fmt.Errorf("apply: bootstrap environment CA requires a mount, a key name, a common name and a resource name")
+	if options.Mount == "" || options.KeyName == "" || options.CommonName == "" {
+		return pulumi.StringOutput{}, fmt.Errorf("apply: bootstrap environment CA requires a mount, a key name and a common name")
 	}
 
 	bits, ok := model.CurveBits[options.KeyCurve]
@@ -157,6 +170,22 @@ func BootstrapEnvironmentCA(c *pulumi.Context, provider *vault.Provider, options
 	var namespace pulumi.StringPtrInput
 	if options.Namespace != "" {
 		namespace = pulumi.String(options.Namespace)
+	}
+
+	rename := options.Rename
+	if rename == nil {
+		rename = func(name string) string { return name }
+	}
+
+	mountResource := rename(mountLogicalName(options.Namespace, options.Mount))
+	csrResource := rename(options.KeyName + "-csr")
+
+	// What an earlier release named them, kept as aliases.
+	var mountAliases, csrAliases []pulumi.ResourceOption
+
+	if options.ResourceName != "" {
+		mountAliases = legacyAlias(mountResource, options.ResourceName+"-mount")
+		csrAliases = legacyAlias(csrResource, options.ResourceName)
 	}
 
 	dependsOn := []pulumi.Resource{}
@@ -172,14 +201,14 @@ func BootstrapEnvironmentCA(c *pulumi.Context, provider *vault.Provider, options
 			return pulumi.StringOutput{}, fmt.Errorf("apply: bootstrap environment CA mount: %w", err)
 		}
 
-		mount, err := vault.NewMount(c, options.ResourceName+"-mount", &vault.MountArgs{
+		mount, err := vault.NewMount(c, mountResource, &vault.MountArgs{
 			Namespace:              namespace,
 			Path:                   pulumi.String(options.Mount),
 			Type:                   pulumi.String("pki"),
 			Description:            pulumi.String(options.MountDescription),
 			DefaultLeaseTtlSeconds: pulumi.Int(defaultTTL),
 			MaxLeaseTtlSeconds:     pulumi.Int(maxTTL),
-		}, opts...)
+		}, append(opts, mountAliases...)...)
 		if err != nil {
 			return pulumi.StringOutput{}, fmt.Errorf("apply: bootstrap environment CA mount: %w", err)
 		}
@@ -192,7 +221,7 @@ func BootstrapEnvironmentCA(c *pulumi.Context, provider *vault.Provider, options
 	// subject and no alternative name -- the ceremony rebuilds the
 	// certificate entirely from the authored contract and takes only
 	// the public key from here.
-	csr, err := pkisecret.NewSecretBackendIntermediateCertRequest(c, options.ResourceName, &pkisecret.SecretBackendIntermediateCertRequestArgs{
+	csr, err := pkisecret.NewSecretBackendIntermediateCertRequest(c, csrResource, &pkisecret.SecretBackendIntermediateCertRequestArgs{
 		Namespace:         namespace,
 		Backend:           pulumi.String(options.Mount),
 		Type:              pulumi.String("internal"),
@@ -203,10 +232,20 @@ func BootstrapEnvironmentCA(c *pulumi.Context, provider *vault.Provider, options
 		Format:            pulumi.String("pem"),
 		ExcludeCnFromSans: pulumi.Bool(true),
 		Organization:      pulumi.String(options.Organization),
-	}, append(opts, pulumi.DependsOn(dependsOn))...)
+	}, append(append(opts, csrAliases...), pulumi.DependsOn(dependsOn))...)
 	if err != nil {
 		return pulumi.StringOutput{}, fmt.Errorf("apply: bootstrap environment CA certificate request: %w", err)
 	}
 
 	return csr.Csr, nil
+}
+
+// legacyAlias is the alias option carrying an object from its old logical
+// name to its new one, or nothing when they are the same.
+func legacyAlias(current, previous string) []pulumi.ResourceOption {
+	if current == previous {
+		return nil
+	}
+
+	return []pulumi.ResourceOption{pulumi.Aliases([]pulumi.Alias{{Name: pulumi.String(previous)}})}
 }
