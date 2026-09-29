@@ -1,0 +1,18 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "0 6 * * *" # daily 6am UTC
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    uses: truvity/ci-workflows/.github/workflows/check.yaml@83a33664e82b4df3764ed4b4544707320b51db92 # v3.13.1
+    with:
+      recipes: '["vuln"]'
