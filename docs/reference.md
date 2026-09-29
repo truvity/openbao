@@ -286,6 +286,21 @@ Stores and PKI are independent: an install may render either or both.
 | `approverPolicy.requesters` | cert-manager's ServiceAccount | Who is bound `use`: subjects of the `ClusterRoleBinding`. |
 | `approverPolicy.roleName` | `<release>-approver-use` | Name of the `ClusterRole` and `ClusterRoleBinding`. |
 | `approverPolicy.annotations` | `{}` | On every object of the layer. |
+| `admissionPolicy.enabled` | `false` | Render the [admission policy](trust/workload-identity.md#the-admission-policy) for namespaces at mTLS level `enforced`: a `ValidatingAdmissionPolicy` and binding (Kubernetes 1.30+). At least one of the three rules must be on. |
+| `admissionPolicy.name` | `<release>-mtls-enforced` | Name of both objects. |
+| `admissionPolicy.labels`, `.annotations` | `{}` | On both objects (annotations merge over `commonAnnotations`). |
+| `admissionPolicy.namespaceLabel.key`, `.value` | `mtls-level`, `enforced` | Only a namespace carrying this label is touched. |
+| `admissionPolicy.validationActions` | `[Deny]` | Any of `Deny`, `Warn`, `Audit`. `[Warn, Audit]` is the dry run: warnings and audit annotations, nothing refused. |
+| `admissionPolicy.failurePolicy` | `Fail` | `Fail` or `Ignore`; `Fail` refuses what the policy cannot evaluate. |
+| `admissionPolicy.workloads` | `true` | Also check the pod template of Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs and CronJobs, so a bad workload is refused at apply time. Pods are always checked. |
+| `admissionPolicy.exemptAnnotation` | `mtls-exempt` | An annotation with a non-empty value (the reason) on a Pod, a workload's pod template or a Service exempts that object. |
+| `admissionPolicy.csi.enabled`, `.driver` | `true`, `spiffe.csi.cert-manager.io` | Rule: every container mounts a volume of this CSI driver. |
+| `admissionPolicy.csi.ignoreContainers` | `[]` | Container names the rule skips, e.g. an injected sidecar. |
+| `admissionPolicy.serviceAccount.enabled` | `true` | Rule: no `default` or unset ServiceAccount. |
+| `admissionPolicy.services.enabled` | `true` | Rule: every Service port is TLS. |
+| `admissionPolicy.services.tlsAppProtocols` | `[https, tls, grpcs, kubernetes.io/wss]` | A port is TLS when its `appProtocol`, lower-cased, is listed. No `appProtocol` is plaintext. |
+| `admissionPolicy.services.allow` | `[]` | Service names, or `name/portName`, that may stay plaintext. |
+| `admissionPolicy.services.gatewayFrontedAnnotation` | `gateway-fronted` | A Service annotated with this key set to `"true"` is exempt from the port rule. |
 | `alerts.enabled` | `false` | Render the [issuance alerts](trust/issuance.md#alerts): the rules for a Certificate not Ready, a denied request, csi-driver-spiffe and approver-policy unavailable, a Certificate ending or not renewed, a CA ending, cert-manager's metrics gone. |
 | `alerts.format` | `vmrule` | `vmrule` (VMRule), `prometheusrule` (PrometheusRule) or `configmap` (the plain rules file under `issuance-alerts.rules.yaml`). |
 | `alerts.name`, `.namespace` | `<release>-issuance-alerts`, the release namespace | The object's name and namespace. |

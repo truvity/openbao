@@ -126,12 +126,105 @@ platform provides none of this.
 |---|---|
 | `off` (default; an environment not listed is `off`) | nothing: no namespace label, no request permission, no `tls` block |
 | `identity` | the namespace opts in to the identity bundle and the request permission; the app runs `permissive`. Cleartext callers still work |
-| `enforced` | `identity`, plus every component the catalogue marks `strict: true` runs strict, and the render-time checks below hold |
+| `enforced` | `identity`, plus every component the catalogue marks `strict: true` runs strict, the render-time checks below hold, and [the admission policy](#the-admission-policy) refuses a pod that skips its identity |
 
 A project moves `off` to `identity` to `enforced` **per environment**, and a state
 that has reached `enforced` must not regress. `strict` is inert below `enforced`,
 so a row can be prepared ahead of the flip; the flip to strict is a separate
 change from any catalogue change (data is not entangled with enforcement).
+
+## The admission policy
+
+Level `enforced` means nothing if a pod can simply not ask for its identity. The
+`openbao-consumers` chart therefore ships an **optional** `ValidatingAdmissionPolicy`
+and binding (`admissionregistration.k8s.io/v1`, Kubernetes 1.30 or later; values
+`admissionPolicy.*`, **off by default**, and the default render is unchanged).
+
+**Scope.** It applies only to namespaces carrying the opt-in label
+(`admissionPolicy.namespaceLabel`, default `mtls-level=enforced`; put the key
+under your own prefix). Every other namespace, system ones included, is out of
+scope, so there is nothing to exempt them from. The platform that renders a
+project's namespace at level `enforced` renders that label; the chart does not
+label namespaces.
+
+**Rules**, each independently switchable:
+
+| Rule | Refused | CEL, in short |
+|---|---|---|
+| identity volume (`csi`) | a container that does not mount a volume of the CSI driver (`csi.driver`, default `spiffe.csi.cert-manager.io`) | every entry of `containers` (init containers are not required to) has a `volumeMount` naming a `volumes[]` entry whose `csi.driver` is the driver; `csi.ignoreContainers` lists names that are exempt, for a sidecar a mutating webhook injects |
+| ServiceAccount (`serviceAccount`) | a pod on the `default` ServiceAccount, or naming none | `serviceAccountName` is set, not empty and not `default` (a pod is defaulted to `default` before validation, so it is caught) |
+| plaintext ports (`services`) | a Service with a port that is plaintext | see below |
+
+**Pods and workloads both.** The pod rules run on `Pod` create **and** on the
+pod template of `Deployment`, `StatefulSet`, `DaemonSet`, `ReplicaSet`, `Job` and
+`CronJob` (create and update; `workloads: false` turns the template half off).
+A rule on Pods alone surfaces as a ReplicaSet that never gets a pod, with the
+reason in an event nobody reads; on the template it surfaces at `kubectl apply`,
+naming the object. The Pod rule stays on either way as the backstop for pods made
+any other way.
+
+**What "plaintext" means for a Service.** A Service port is TLS when its
+`appProtocol`, lower-cased, is in `services.tlsAppProtocols` (default `https`,
+`tls`, `grpcs`, `kubernetes.io/wss`). Everything else is plaintext: a port with
+**no** `appProtocol` (the field is how a Service says what its port speaks, and
+the policy cannot see inside a port), `http`, `grpc`, `kubernetes.io/h2c` (h2c is
+HTTP/2 *without* TLS) and `kubernetes.io/ws`. That is deliberately mechanical: the
+policy reads a declaration, it does not probe the backend, so a Service that
+declares `https` and serves plaintext is a lie only a test can find. To satisfy
+it, serve TLS and say so in `appProtocol`. A Service that is fronted by a gateway
+or edge, which terminates TLS and forwards cleartext (see [modes](#modes-and-levels)),
+opts out in one of three ways:
+
+- the annotation `admissionPolicy.services.gatewayFrontedAnnotation` (default
+  `gateway-fronted`) set to exactly `"true"` on the Service;
+- its name in `services.allow`, or `name/portName` to allow one port only (a
+  metrics port, say);
+- the per-object exemption below.
+
+`ExternalName` Services have no ports and are not checked.
+
+**Exemption.** An annotation (`exemptAnnotation`, default `mtls-exempt`) with a
+**non-empty value, the reason**, exempts one object from every rule: on a Pod, on
+the **pod template** of a workload (so the Pod it makes carries it too), or on a
+Service. An empty value is not an exemption and the refusal says so. There is no
+namespace-level exemption: a namespace that should not be enforced is not
+labelled. Review the annotation like a grant: `kubectl get pods,svc -A -o json`
+filtered on it lists every one and its reason.
+
+**Updates and deletions.** A terminating object is never refused (a finalizer
+removal is an update, and refusing it would wedge the deletion). An update is
+judged only when it changes what the rules read (a workload's pod template, a
+Service's ports or annotations), so an unrelated edit to an object made before the
+flip does not fail.
+
+**Messages** name the object, the container or port and the fix, for example
+`Deployment/api in namespace shop: container "app" does not mount a volume of the
+CSI driver spiffe.csi.cert-manager.io ... Add a csi volume with that driver and
+mount it in the container.`
+
+**`failurePolicy` is `Fail`**: a policy that cannot be evaluated refuses the
+request. `validationActions` is `[Deny]`; `[Warn, Audit]` is the dry run.
+
+### Rolling it out: dry run first
+
+1. Install with `admissionPolicy.enabled=true` and
+   `admissionPolicy.validationActions={Warn,Audit}`. Nothing is refused. Label the
+   namespace.
+2. `kubectl apply` (or your GitOps dry run) now prints a `Warning:` for every object
+   that would be refused, and the API server's audit log carries the same
+   verdicts under the policy's name (the audit annotation
+   `validation.policy.admission.k8s.io/validation_failure`). Fix each: add the
+   volume and a ServiceAccount, set `appProtocol`, annotate the gateway-fronted
+   Services, or exempt the few that truly cannot, with a reason.
+3. When a full apply of the namespace is quiet, set `validationActions={Deny}`.
+   Objects already in the namespace keep running (a policy does not touch what
+   exists); they are judged when their template or ports next change.
+4. Enable it per namespace by labelling, never by widening the policy.
+
+What it does not do: it cannot prove the volume is *used* (the workload reading the
+certificate), that a port declared `https` really serves TLS, or that the driver's
+own approver is healthy; those are the transport libraries' and the alerts' job.
+It is defence in depth for the identity, not a replacement for the calls catalogue.
 
 ## The calls catalogue
 

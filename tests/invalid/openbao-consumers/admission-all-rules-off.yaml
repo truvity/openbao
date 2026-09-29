@@ -1,0 +1,5 @@
+admissionPolicy:
+  enabled: true
+  csi: {enabled: false}
+  serviceAccount: {enabled: false}
+  services: {enabled: false}

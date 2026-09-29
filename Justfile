@@ -92,3 +92,19 @@ package:
 
 # Everything CI runs on a pull request.
 check: build lint test leak-canary
+
+# The admission policy of openbao-consumers, proved on a real API server:
+# creates a throwaway kind cluster (its own temporary kubeconfig, never the
+# ambient one), installs the rendered ValidatingAdmissionPolicy, asserts what
+# is admitted and refused, and deletes the cluster. Needs docker, kind,
+# kubectl and helm on PATH; it is not part of `just test` because CI has no
+# container runtime for a cluster.
+admission-conformance:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(mktemp -d)"
+    cluster="openbao-admission-$$"
+    trap 'kind delete cluster --name "$cluster" --kubeconfig "$dir/kubeconfig" >/dev/null 2>&1 || true; rm -rf "$dir"' EXIT
+    kind create cluster --name "$cluster" --kubeconfig "$dir/kubeconfig" --wait 120s
+    OPENBAO_ADMISSION_CONFORMANCE=required OPENBAO_ADMISSION_KUBECONFIG="$dir/kubeconfig" \
+      go test ./conformance/ -run TestAdmissionPolicy -count=1 -v

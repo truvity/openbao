@@ -1,0 +1,132 @@
+---
+# Source: openbao-consumers/templates/admission.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openbao-consumers-mtls-enforced
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+        operations: ["CREATE", "UPDATE"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        resources: ["jobs", "cronjobs"]
+        operations: ["CREATE", "UPDATE"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["services"]
+        operations: ["CREATE", "UPDATE"]
+  matchConditions:
+    # An object on its way out is never refused: a finalizer removal is an
+    # UPDATE, and refusing it would wedge the deletion.
+    - name: not-terminating
+      expression: '!has(dyn(object).metadata.deletionTimestamp)'
+    # An update is judged only when it changes what the rules read (a
+    # workload's pod template, a Service's ports or annotations), so an
+    # unrelated edit to a not-yet-migrated object is not refused.
+    - name: relevant-change
+      expression: >-
+        request.operation == 'CREATE' || (
+        request.kind.kind == 'Service' ?
+        (dyn(object).spec.ports != dyn(oldObject).spec.ports ||
+        (has(dyn(object).metadata.annotations) ? dyn(object).metadata.annotations : {}) !=
+        (has(dyn(oldObject).metadata.annotations) ? dyn(oldObject).metadata.annotations : {})) :
+        request.kind.kind == 'CronJob' ?
+        dyn(object).spec.jobTemplate.spec.template != dyn(oldObject).spec.jobTemplate.spec.template :
+        dyn(object).spec.template != dyn(oldObject).spec.template)
+  variables:
+    # dyn(): the policy spans several kinds, and an expression type-checked
+    # against each of them would warn on the fields the others lack.
+    - name: obj
+      expression: 'dyn(object)'
+    - name: old
+      expression: 'dyn(oldObject)'
+    - name: kind
+      expression: 'request.kind.kind'
+    - name: isService
+      expression: "variables.kind == 'Service'"
+    # The pod spec, wherever this kind keeps it.
+    - name: podSpec
+      expression: >-
+        variables.kind == 'Pod' ? variables.obj.spec :
+        variables.kind == 'CronJob' ? variables.obj.spec.jobTemplate.spec.template.spec :
+        variables.obj.spec.template.spec
+    # The metadata that is (or becomes) the pod's, or the Service's own.
+    - name: meta
+      expression: >-
+        (variables.kind == 'Pod' || variables.kind == 'Service') ? variables.obj.metadata :
+        variables.kind == 'CronJob' ? variables.obj.spec.jobTemplate.spec.template.metadata :
+        variables.obj.spec.template.metadata
+    - name: annotations
+      expression: 'has(variables.meta.annotations) ? variables.meta.annotations : {}'
+    - name: exempt
+      expression: >-
+        "mtls-exempt" in variables.annotations && variables.annotations["mtls-exempt"] != ''
+    - name: subject
+      expression: >-
+        variables.kind + '/' + (has(variables.obj.metadata.name) ? variables.obj.metadata.name :
+        has(variables.obj.metadata.generateName) ? variables.obj.metadata.generateName + '*' : '') +
+        ' in namespace ' + request.namespace
+    - name: csiVolumes
+      expression: >-
+        has(variables.podSpec.volumes) ?
+        variables.podSpec.volumes.filter(v, has(v.csi) && v.csi.driver == "spiffe.csi.cert-manager.io").map(v, v.name) : []
+    - name: noIdentity
+      expression: >-
+        variables.podSpec.containers.filter(c, !(c.name in []) &&
+        !(has(c.volumeMounts) && c.volumeMounts.exists(m, m.name in variables.csiVolumes))).map(c, c.name)
+    - name: svcName
+      expression: "has(variables.obj.metadata.name) ? variables.obj.metadata.name : ''"
+    - name: plaintextPorts
+      expression: >-
+        has(variables.obj.spec.ports) ? variables.obj.spec.ports.filter(p,
+        !(["https","tls","grpcs","kubernetes.io/wss"].exists(t, has(p.appProtocol) && p.appProtocol.lowerAscii() == t)) &&
+        !(variables.svcName in []) &&
+        !(has(p.name) && (variables.svcName + '/' + p.name) in [])) : []
+  validations:
+    - expression: 'variables.isService || variables.exempt || size(variables.noIdentity) == 0'
+      reason: Forbidden
+      messageExpression: >-
+        variables.subject + ': container "' + variables.noIdentity[0] + '"' + " does not mount a volume of the CSI driver spiffe.csi.cert-manager.io (mtls-level=enforced requires workload identity for every container). Add a csi volume with that driver and mount it in the container. Exempt one object with the annotation mtls-exempt set to a non-empty reason."
+    - expression: >-
+        variables.isService || variables.exempt || (
+        has(variables.podSpec.serviceAccountName) &&
+        variables.podSpec.serviceAccountName != '' &&
+        variables.podSpec.serviceAccountName != 'default')
+      reason: Forbidden
+      messageExpression: >-
+        variables.subject + " runs as the default ServiceAccount (mtls-level=enforced needs one ServiceAccount per component, because a workload identity is its namespace plus its ServiceAccount). Create a ServiceAccount for this component and set serviceAccountName. Exempt one object with the annotation mtls-exempt set to a non-empty reason."
+    - expression: >-
+        variables.kind != 'Service' || variables.exempt ||
+        (has(variables.obj.spec.type) && variables.obj.spec.type == 'ExternalName') ||
+        ("gateway-fronted" in variables.annotations && variables.annotations["gateway-fronted"] == 'true') ||
+        size(variables.plaintextPorts) == 0
+      reason: Forbidden
+      messageExpression: >-
+        variables.subject + ': port ' + (has(variables.plaintextPorts[0].name) ? variables.plaintextPorts[0].name :
+        string(variables.plaintextPorts[0].port)) + ' is plaintext (' +
+        (has(variables.plaintextPorts[0].appProtocol) ? 'appProtocol ' + variables.plaintextPorts[0].appProtocol : 'no appProtocol') +
+        "; mtls-level=enforced allows only TLS ports). Serve TLS on it and set appProtocol to one of https, tls, grpcs, kubernetes.io/wss, or, if a gateway fronts this Service, annotate it gateway-fronted: \"true\" (or list it in admissionPolicy.services.allow). Exempt one object with the annotation mtls-exempt set to a non-empty reason."
+
+---
+# Source: openbao-consumers/templates/admission.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: openbao-consumers-mtls-enforced
+spec:
+  policyName: openbao-consumers-mtls-enforced
+  validationActions:
+    - Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        "mtls-level": "enforced"

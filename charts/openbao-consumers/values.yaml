@@ -356,3 +356,60 @@ alerts:
       severity: warning
       labels: {}
       annotations: {}
+
+# The admission policy for namespaces at mTLS level `enforced`. Level
+# `enforced` means nothing if a pod can simply not ask for its workload
+# identity, so this ValidatingAdmissionPolicy (admissionregistration.k8s.io/v1,
+# Kubernetes 1.30+) refuses, in namespaces that carry the opt-in label:
+# a pod (or workload template) that does not mount the identity CSI volume,
+# one that runs as the `default` ServiceAccount, and a Service that exposes
+# a plaintext port. Off by default; nothing renders until enabled. See
+# docs/trust/workload-identity.md#the-admission-policy.
+admissionPolicy:
+  enabled: false
+  # Names of the ValidatingAdmissionPolicy and its binding.
+  name: ""                        # default: <release>-mtls-enforced
+  labels: {}
+  annotations: {}
+  # The opt-in: only a namespace carrying key=value is touched. Every other
+  # namespace, system ones included, is out of scope, so there is nothing to
+  # exempt them from.
+  namespaceLabel:
+    key: mtls-level
+    value: enforced
+  # [Deny] refuses. [Warn, Audit] is the dry run: the API server answers
+  # with a warning and writes an audit annotation, and refuses nothing.
+  validationActions: [Deny]
+  # Fail: a policy that cannot be evaluated refuses, it does not wave the
+  # request through.
+  failurePolicy: Fail
+  # Check the workload kinds' pod templates too, so a bad Deployment is
+  # refused at `kubectl apply`, not left as a ReplicaSet that never gets a
+  # pod. The Pod rule stays on either way, as the backstop for pods made
+  # some other way.
+  workloads: true
+  # A per-object exemption: this annotation with a NON-EMPTY value (the
+  # reason) on a Pod, on a workload's pod template, or on a Service exempts
+  # that object from every rule. Empty is not an exemption.
+  exemptAnnotation: mtls-exempt
+  csi:
+    # Rule one: every container mounts a volume of this CSI driver.
+    enabled: true
+    driver: spiffe.csi.cert-manager.io
+    # Containers that legitimately have no identity of their own, by name,
+    # e.g. a sidecar a mutating webhook injects.
+    ignoreContainers: []
+  serviceAccount:
+    # Rule two: no `default` (or unset) ServiceAccount.
+    enabled: true
+  services:
+    # Rule three: every Service port is TLS.
+    enabled: true
+    # A port is TLS when its appProtocol, lower-cased, is in this list. A
+    # port with no appProtocol is plaintext.
+    tlsAppProtocols: [https, tls, grpcs, kubernetes.io/wss]
+    # Services (`name`) or single ports (`name/portName`) that may stay
+    # plaintext: the ones an edge or gateway fronts, or a metrics port.
+    allow: []
+    # The same, per Service: this annotation set to "true" on a Service.
+    gatewayFrontedAnnotation: gateway-fronted

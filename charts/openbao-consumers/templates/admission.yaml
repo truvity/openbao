@@ -1,0 +1,183 @@
+{{- if .Values.admissionPolicy.enabled }}
+{{- $a := .Values.admissionPolicy }}
+{{- $name := $a.name | default (printf "%s-mtls-enforced" .Release.Name) }}
+{{- if not (or $a.csi.enabled $a.serviceAccount.enabled $a.services.enabled) }}
+{{- fail "admissionPolicy is enabled with every rule off (csi, serviceAccount, services): there would be nothing to enforce; turn a rule on or the policy off" }}
+{{- end }}
+{{- $podRule := or $a.csi.enabled $a.serviceAccount.enabled }}
+{{- $ann := $a.exemptAnnotation }}
+{{- /* Every literal below reaches CEL through toJson: a JSON string and a
+       JSON list are valid CEL literals, so a quote or a backslash in a
+       value is the string the operator wrote, never a syntax error. */}}
+{{- $tls := $a.services.tlsAppProtocols | default list | toJson }}
+{{- $allow := $a.services.allow | default list | toJson }}
+{{- $ignore := $a.csi.ignoreContainers | default list | toJson }}
+{{- $driver := $a.csi.driver | toJson }}
+{{- $fronted := $a.services.gatewayFrontedAnnotation | toJson }}
+{{- $key := $ann | toJson }}
+{{- $level := printf "%s=%s" $a.namespaceLabel.key $a.namespaceLabel.value }}
+{{- $hint := printf " Exempt one object with the annotation %s set to a non-empty reason." $ann }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  {{- with $a.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- $an := include "consumers.annotations" (dict "root" $ "extra" $a.annotations) }}
+  {{- if ne $an "{}" }}
+  annotations:
+    {{- $an | nindent 4 }}
+  {{- end }}
+spec:
+  failurePolicy: {{ $a.failurePolicy }}
+  matchConstraints:
+    resourceRules:
+      {{- if $podRule }}
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+      {{- end }}
+      {{- if and $podRule $a.workloads }}
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+        operations: ["CREATE", "UPDATE"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        resources: ["jobs", "cronjobs"]
+        operations: ["CREATE", "UPDATE"]
+      {{- end }}
+      {{- if $a.services.enabled }}
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["services"]
+        operations: ["CREATE", "UPDATE"]
+      {{- end }}
+  matchConditions:
+    # An object on its way out is never refused: a finalizer removal is an
+    # UPDATE, and refusing it would wedge the deletion.
+    - name: not-terminating
+      expression: '!has(dyn(object).metadata.deletionTimestamp)'
+    # An update is judged only when it changes what the rules read (a
+    # workload's pod template, a Service's ports or annotations), so an
+    # unrelated edit to a not-yet-migrated object is not refused.
+    - name: relevant-change
+      expression: >-
+        request.operation == 'CREATE' || (
+        request.kind.kind == 'Service' ?
+        (dyn(object).spec.ports != dyn(oldObject).spec.ports ||
+        (has(dyn(object).metadata.annotations) ? dyn(object).metadata.annotations : {}) !=
+        (has(dyn(oldObject).metadata.annotations) ? dyn(oldObject).metadata.annotations : {})) :
+        request.kind.kind == 'CronJob' ?
+        dyn(object).spec.jobTemplate.spec.template != dyn(oldObject).spec.jobTemplate.spec.template :
+        dyn(object).spec.template != dyn(oldObject).spec.template)
+  variables:
+    # dyn(): the policy spans several kinds, and an expression type-checked
+    # against each of them would warn on the fields the others lack.
+    - name: obj
+      expression: 'dyn(object)'
+    - name: old
+      expression: 'dyn(oldObject)'
+    - name: kind
+      expression: 'request.kind.kind'
+    - name: isService
+      expression: "variables.kind == 'Service'"
+    # The pod spec, wherever this kind keeps it.
+    - name: podSpec
+      expression: >-
+        variables.kind == 'Pod' ? variables.obj.spec :
+        variables.kind == 'CronJob' ? variables.obj.spec.jobTemplate.spec.template.spec :
+        variables.obj.spec.template.spec
+    # The metadata that is (or becomes) the pod's, or the Service's own.
+    - name: meta
+      expression: >-
+        (variables.kind == 'Pod' || variables.kind == 'Service') ? variables.obj.metadata :
+        variables.kind == 'CronJob' ? variables.obj.spec.jobTemplate.spec.template.metadata :
+        variables.obj.spec.template.metadata
+    - name: annotations
+      expression: 'has(variables.meta.annotations) ? variables.meta.annotations : {}'
+    - name: exempt
+      expression: >-
+        {{ printf "%s in variables.annotations && variables.annotations[%s] != ''" $key $key }}
+    - name: subject
+      expression: >-
+        variables.kind + '/' + (has(variables.obj.metadata.name) ? variables.obj.metadata.name :
+        has(variables.obj.metadata.generateName) ? variables.obj.metadata.generateName + '*' : '') +
+        ' in namespace ' + request.namespace
+    {{- if $a.csi.enabled }}
+    - name: csiVolumes
+      expression: >-
+        has(variables.podSpec.volumes) ?
+        variables.podSpec.volumes.filter(v, has(v.csi) && v.csi.driver == {{ $driver }}).map(v, v.name) : []
+    - name: noIdentity
+      expression: >-
+        variables.podSpec.containers.filter(c, !(c.name in {{ $ignore }}) &&
+        !(has(c.volumeMounts) && c.volumeMounts.exists(m, m.name in variables.csiVolumes))).map(c, c.name)
+    {{- end }}
+    {{- if $a.services.enabled }}
+    - name: svcName
+      expression: "has(variables.obj.metadata.name) ? variables.obj.metadata.name : ''"
+    - name: plaintextPorts
+      expression: >-
+        has(variables.obj.spec.ports) ? variables.obj.spec.ports.filter(p,
+        !({{ $tls }}.exists(t, has(p.appProtocol) && p.appProtocol.lowerAscii() == t)) &&
+        !(variables.svcName in {{ $allow }}) &&
+        !(has(p.name) && (variables.svcName + '/' + p.name) in {{ $allow }})) : []
+    {{- end }}
+  validations:
+    {{- if $a.csi.enabled }}
+    - expression: 'variables.isService || variables.exempt || size(variables.noIdentity) == 0'
+      reason: Forbidden
+      messageExpression: >-
+        variables.subject + ': container "' + variables.noIdentity[0] + '"' + {{ printf " does not mount a volume of the CSI driver %s (%s requires workload identity for every container). Add a csi volume with that driver and mount it in the container.%s" $a.csi.driver $level $hint | toJson }}
+    {{- end }}
+    {{- if $a.serviceAccount.enabled }}
+    - expression: >-
+        variables.isService || variables.exempt || (
+        has(variables.podSpec.serviceAccountName) &&
+        variables.podSpec.serviceAccountName != '' &&
+        variables.podSpec.serviceAccountName != 'default')
+      reason: Forbidden
+      messageExpression: >-
+        variables.subject + {{ printf " runs as the default ServiceAccount (%s needs one ServiceAccount per component, because a workload identity is its namespace plus its ServiceAccount). Create a ServiceAccount for this component and set serviceAccountName.%s" $level $hint | toJson }}
+    {{- end }}
+    {{- if $a.services.enabled }}
+    - expression: >-
+        variables.kind != 'Service' || variables.exempt ||
+        (has(variables.obj.spec.type) && variables.obj.spec.type == 'ExternalName') ||
+        ({{ $fronted }} in variables.annotations && variables.annotations[{{ $fronted }}] == 'true') ||
+        size(variables.plaintextPorts) == 0
+      reason: Forbidden
+      messageExpression: >-
+        variables.subject + ': port ' + (has(variables.plaintextPorts[0].name) ? variables.plaintextPorts[0].name :
+        string(variables.plaintextPorts[0].port)) + ' is plaintext (' +
+        (has(variables.plaintextPorts[0].appProtocol) ? 'appProtocol ' + variables.plaintextPorts[0].appProtocol : 'no appProtocol') +
+        {{ printf "; %s allows only TLS ports). Serve TLS on it and set appProtocol to one of %s, or, if a gateway fronts this Service, annotate it %s: \"true\" (or list it in admissionPolicy.services.allow).%s" $level (join ", " $a.services.tlsAppProtocols) $a.services.gatewayFrontedAnnotation $hint | toJson }}
+    {{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  {{- with $a.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if ne $an "{}" }}
+  annotations:
+    {{- $an | nindent 4 }}
+  {{- end }}
+spec:
+  policyName: {{ $name }}
+  validationActions:
+    {{- range $a.validationActions }}
+    - {{ . }}
+    {{- end }}
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        {{ $a.namespaceLabel.key | quote }}: {{ $a.namespaceLabel.value | quote }}
+{{- end }}

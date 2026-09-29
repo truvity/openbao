@@ -454,6 +454,60 @@
         }
       }
     },
+    "admissionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The ValidatingAdmissionPolicy for namespaces at mTLS level enforced. Off by default.",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "name": {"type": "string"},
+        "labels": {"$ref": "#/definitions/stringMap"},
+        "annotations": {"$ref": "#/definitions/stringMap"},
+        "namespaceLabel": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "key": {"type": "string", "minLength": 1},
+            "value": {"type": "string", "minLength": 1}
+          }
+        },
+        "validationActions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "enum": ["Deny", "Warn", "Audit"]}
+        },
+        "failurePolicy": {"type": "string", "enum": ["Fail", "Ignore"]},
+        "workloads": {"type": "boolean"},
+        "exemptAnnotation": {"type": "string", "minLength": 1},
+        "csi": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "driver": {"type": "string", "minLength": 1},
+            "ignoreContainers": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "serviceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"}
+          }
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "tlsAppProtocols": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "allow": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "gatewayFrontedAnnotation": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
     "alerts": {
       "type": "object",
       "additionalProperties": false,
