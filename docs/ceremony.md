@@ -16,7 +16,7 @@ The custody the key needs (key policy, roles, the Sign alarm) is
 [custody.md](custody.md). A program that holds its own contract (a
 consuming estate's configuration) builds `ceremony.RootSpec`,
 `IntermediateSpec` and `EmergencyServerSpec` directly and calls the same
-functions; `openbaoctl` reads them from a hierarchy file. [pkg/pki](pki.md)
+functions; `openbaoctl` reads them from a hierarchy file or, with `--contract`, from a `pkg/pki` contract ([reference.md](reference.md#openbaoctl)). [pkg/pki](pki.md)
 is that contract layer, written once so most estates do not have to: root
 generations and their custody, the trust domains and per-environment
 leaf roles below them, and the invariants that keep the hierarchy

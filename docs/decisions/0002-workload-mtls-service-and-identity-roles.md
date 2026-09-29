@@ -1,6 +1,14 @@
 # 0002 — Workload mTLS: a `service` role and an `identity` role, on per-project issuing CAs
 
-**Status:** Accepted
+**Status:** Accepted; the per-project issuing CA shape below is superseded
+by per-environment identity CAs signed directly by the root
+([pki.md](../pki.md#per-environment-identity-cas-and-why)). OpenBAO
+drops URI name constraints when it signs an intermediate
+([openbao/openbao#4104](https://github.com/openbao/openbao/issues/4104)),
+so a CA signed by the shared domain intermediate carries no URI
+constraint; each environment's identity CA is therefore signed by the
+root, with the exact URI constraint written by the ceremony. The two
+role shapes (`service`, `identity`) and the rest of this decision stand.
 **Date:** 2026-09-27
 
 ## Context

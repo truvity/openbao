@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Changed
+
+- Documentation only: the namespace tree is `<environment>/<project>` everywhere (README, safety); the doctrine counts four silent-failure watches; `awsAuth[]` plugin registration is documented as declarative-in-server-config for an OCI-downloaded plugin (`Desired.Plugins` only for a binary already on disk); ADR 0002 is marked superseded for the CA shape by the per-environment identity CAs in docs/pki.md; the `openbaoctl pki --contract` flags are in docs/reference.md; the README states plainly that AWS KMS is used only for the auto-unseal and the offline root signer, and drops a stale consumer row.
+
 ## v0.20.0
 
 ### Added
