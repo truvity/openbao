@@ -63,6 +63,34 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   This is a test double with no production exposure, fixed anyway so the
   contract it proves stays honest.
 
+## v0.19.0
+
+### Added
+
+- **`openbaoctl pki`: a `pkg/pki` contract in place of a hierarchy file.**
+  `create-root`, `sign-intermediate`, `verify-intermediate` and
+  `sign-emergency-server` now also accept `--contract <file> --generation
+  <id>` (docs/pki.md) alongside the existing `--hierarchy <file>`, with no
+  new command: a `pkiSource` resolves either shape to the same
+  `ceremony.RootSpec`/`IntermediateSpec`/`EmergencyServerSpec`.
+  `--artifacts <dir>` overrides a contract's own artifact directory;
+  `--environment <env> --zone <value>` (`sign-intermediate`,
+  `verify-intermediate`) sign or verify one environment's own root-signed
+  CA under a workload-identity domain instead of the domain's shared
+  intermediate; `--dns-name <name>` (`sign-emergency-server`) gives the
+  break-glass name a hierarchy file instead bakes into
+  `emergencyServer.dnsName`. `--hierarchy` is unchanged.
+
+### Changed
+
+- **`pkg/ceremony`: `Hierarchy`'s intermediates may override
+  `maxPathLen`.** `HierarchyIntermediate.MaxPathLen` (optional) replaces
+  the default (the root's own minus one) so a leaf-issuing CA signed
+  directly by the root — nothing of its own below it, spending more of
+  the root's budget at once — can be declared in a hierarchy file the
+  same way an ordinary domain intermediate is. Every existing hierarchy
+  file, which leaves the field out, renders identically.
+
 ## v0.18.0
 
 ### Added

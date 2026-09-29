@@ -15,11 +15,17 @@ import (
 
 	"github.com/truvity/openbao/pkg/ceremony"
 	"github.com/truvity/openbao/pkg/kmssigner"
+	"github.com/truvity/openbao/pkg/pki"
 )
 
 const (
 	flagHierarchy         = "hierarchy"
+	flagContract          = "contract"
+	flagArtifacts         = "artifacts"
+	flagGeneration        = "generation"
 	flagTrustDomain       = "trust-domain"
+	flagEnvironment       = "environment"
+	flagZone              = "zone"
 	flagCSR               = "csr"
 	flagKeyARN            = "key-arn"
 	flagImportCertificate = "import-certificate"
@@ -30,6 +36,7 @@ const (
 	flagNotBefore         = "not-before"
 	flagOut               = "out"
 	flagChainOut          = "chain-out"
+	flagDNSName           = "dns-name"
 )
 
 var errChooseMode = errors.New("choose one: --print-template to review the exact template, or --confirm-template <sha256> to sign it")
@@ -46,15 +53,31 @@ type (
 		kms        kmsFactory
 	}
 
+	// sourceOptions names either a hierarchy file or a pki.Contract file
+	// (docs/pki.md); loadSource refuses anything but exactly one of the
+	// two. generation is required with contract (a Contract may declare
+	// several root generations; a hierarchy file names exactly one).
+	// artifacts overrides the contract's own artifact directory; it has
+	// no meaning with hierarchy, whose artifact paths are already
+	// resolved against the hierarchy file's own directory.
+	sourceOptions struct {
+		hierarchy  string
+		contract   string
+		artifacts  string
+		generation string
+	}
+
 	createRootOptions struct {
-		hierarchy         string
+		source            sourceOptions
 		importCertificate string
 		signing           signingOptions
 	}
 
 	signIntermediateOptions struct {
-		hierarchy       string
+		source          sourceOptions
 		trustDomain     string
+		environment     string
+		zone            string
 		csrPath         string
 		printTemplate   bool
 		confirmTemplate string
@@ -62,7 +85,8 @@ type (
 	}
 
 	signEmergencyServerOptions struct {
-		hierarchy       string
+		source          sourceOptions
+		dnsName         string
 		csrPath         string
 		notBefore       string
 		printTemplate   bool
@@ -73,14 +97,151 @@ type (
 	}
 
 	verifyIntermediateOptions struct {
-		hierarchy   string
+		source      sourceOptions
 		trustDomain string
+		environment string
+		zone        string
 		chainOut    string
+	}
+
+	// pkiSource is a hierarchy file or a pki.Contract, behind the one
+	// shape every pki command needs: a root spec, an intermediate spec
+	// (by trust domain, and optionally by environment for a
+	// root-signed CA), and an emergency-server spec. Every openbaoctl pki
+	// command is written once, against this, rather than twice.
+	pkiSource struct {
+		hierarchy  *ceremony.Hierarchy
+		contract   *pki.Contract
+		generation string
 	}
 )
 
+// loadSource reads exactly one of a hierarchy file or a contract file.
+func loadSource(options sourceOptions) (*pkiSource, error) {
+	if (options.hierarchy == "") == (options.contract == "") {
+		return nil, fmt.Errorf("choose exactly one of --%s or --%s", flagHierarchy, flagContract)
+	}
+
+	if options.hierarchy != "" {
+		if options.artifacts != "" {
+			return nil, fmt.Errorf(
+				"--%s has no meaning with --%s: a hierarchy file's artifact paths are already resolved against its own directory",
+				flagArtifacts, flagHierarchy)
+		}
+
+		if options.generation != "" {
+			return nil, fmt.Errorf("--%s has no meaning with --%s: a hierarchy file names exactly one root generation", flagGeneration, flagHierarchy)
+		}
+
+		hierarchy, err := ceremony.LoadHierarchy(options.hierarchy)
+		if err != nil {
+			return nil, err
+		}
+
+		return &pkiSource{hierarchy: hierarchy}, nil
+	}
+
+	contract, err := pki.Load(options.contract)
+	if err != nil {
+		return nil, err
+	}
+
+	if options.artifacts != "" {
+		contract.ArtifactDir = options.artifacts
+	}
+
+	if options.generation == "" {
+		return nil, fmt.Errorf("--%s is required with --%s", flagGeneration, flagContract)
+	}
+
+	return &pkiSource{contract: contract, generation: options.generation}, nil
+}
+
+func (s *pkiSource) rootSpec() (ceremony.RootSpec, error) {
+	if s.hierarchy != nil {
+		return s.hierarchy.RootSpec()
+	}
+
+	return s.contract.RootSpec(s.generation)
+}
+
+func (s *pkiSource) rootArtifactPath() string {
+	if s.hierarchy != nil {
+		return s.hierarchy.Root.Artifact
+	}
+
+	return s.contract.RootArtifactPath(s.generation)
+}
+
+// intermediateSpec resolves a domain intermediate (environment == "") or,
+// with --contract only, one environment's own root-signed CA under a
+// workload-identity domain (environment != "", zone its value for
+// [pki.ZonePlaceholder]).
+func (s *pkiSource) intermediateSpec(domain, environment, zone string) (ceremony.IntermediateSpec, error) {
+	if s.hierarchy != nil {
+		if environment != "" {
+			return ceremony.IntermediateSpec{}, fmt.Errorf("--%s is only for --%s, not --%s", flagEnvironment, flagContract, flagHierarchy)
+		}
+
+		return s.hierarchy.Intermediate(domain)
+	}
+
+	if environment != "" {
+		if zone == "" {
+			return ceremony.IntermediateSpec{}, fmt.Errorf("--%s is required with --%s", flagZone, flagEnvironment)
+		}
+
+		return s.contract.EnvironmentCASpec(domain, environment, zone, s.generation)
+	}
+
+	if zone != "" {
+		return ceremony.IntermediateSpec{}, fmt.Errorf("--%s is only for a root-signed environment CA (with --%s)", flagZone, flagEnvironment)
+	}
+
+	if s.contract.DNSTrustDomain(domain) != nil {
+		return s.contract.DNSIntermediateSpec(domain, s.generation)
+	}
+
+	if s.contract.URITrustDomain(domain) != nil {
+		return s.contract.URIIntermediateSpec(domain, s.generation)
+	}
+
+	return ceremony.IntermediateSpec{}, fmt.Errorf("--%s %q names no trust domain in %s", flagTrustDomain, domain, s.generation)
+}
+
+func (s *pkiSource) emergencyServerSpec(dnsName string, notBefore time.Time) (ceremony.EmergencyServerSpec, error) {
+	if s.hierarchy != nil {
+		if dnsName != "" {
+			return ceremony.EmergencyServerSpec{}, fmt.Errorf(
+				"--%s is only for --%s: a hierarchy file's own emergencyServer.dnsName is used with --%s",
+				flagDNSName, flagContract, flagHierarchy)
+		}
+
+		return s.hierarchy.EmergencyServerSpec(notBefore)
+	}
+
+	if dnsName == "" {
+		return ceremony.EmergencyServerSpec{}, fmt.Errorf("--%s is required with --%s", flagDNSName, flagContract)
+	}
+
+	return s.contract.EmergencyServerSpec(s.generation, dnsName, notBefore)
+}
+
 func pkiCommand() *cli.Command {
-	hierarchyFlag := &cli.StringFlag{Name: flagHierarchy, Usage: "the PKI hierarchy file (docs/ceremony.md); artifact paths are relative to it", Required: true}
+	sourceFlags := []cli.Flag{
+		&cli.StringFlag{Name: flagHierarchy, Usage: "the PKI hierarchy file (docs/ceremony.md); mutually exclusive with --" + flagContract},
+		&cli.StringFlag{Name: flagContract, Usage: "the private-PKI contract file (docs/pki.md); mutually exclusive with --" + flagHierarchy},
+		&cli.StringFlag{Name: flagArtifacts, Usage: "override --" + flagContract + "'s own artifact directory"},
+		&cli.StringFlag{Name: flagGeneration, Usage: "root generation ID; required with --" + flagContract},
+	}
+	source := func(cmd *cli.Command) sourceOptions {
+		return sourceOptions{
+			hierarchy:  cmd.String(flagHierarchy),
+			contract:   cmd.String(flagContract),
+			artifacts:  cmd.String(flagArtifacts),
+			generation: cmd.String(flagGeneration),
+		}
+	}
 	signingFlags := []cli.Flag{
 		&cli.StringFlag{Name: flagAWSProfile, Usage: "AWS shared-config profile to start from (default: the SDK's default chain)"},
 		&cli.StringFlag{Name: flagRoleARN, Usage: "ceremony role to assume on top of the profile before signing"},
@@ -100,17 +261,17 @@ func pkiCommand() *cli.Command {
 			{
 				Name:  "create-root",
 				Usage: "create (or verify, or import) the root certificate with the KMS root key",
-				Description: "Builds the root template from the hierarchy file and the KMS key's public key, reserves\n" +
-					"<artifact>.attempt, and asks KMS for the one self-signature. An existing artifact is\n" +
-					"verified instead and nothing is signed; --import-certificate records an existing root.",
-				Flags: append([]cli.Flag{
-					hierarchyFlag,
+				Description: "Builds the root template from --hierarchy or --contract/--generation and the KMS key's\n" +
+					"public key, reserves <artifact>.attempt, and asks KMS for the one self-signature. An\n" +
+					"existing artifact is verified instead and nothing is signed; --import-certificate records\n" +
+					"an existing root.",
+				Flags: append(append([]cli.Flag{
 					&cli.StringFlag{Name: flagKeyARN, Usage: "the root generation's KMS primary key ARN", Required: true},
 					&cli.StringFlag{Name: flagImportCertificate, Usage: "verify and record this existing root certificate (PEM) instead of signing"},
-				}, signingFlags...),
+				}, sourceFlags...), signingFlags...),
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					return runCreateRoot(ctx, os.Stdout, createRootOptions{
-						hierarchy:         cmd.String(flagHierarchy),
+						source:            source(cmd),
 						importCertificate: cmd.String(flagImportCertificate),
 						signing:           signing(cmd),
 					})
@@ -120,22 +281,30 @@ func pkiCommand() *cli.Command {
 				Name:  "sign-intermediate",
 				Usage: "sign a domain intermediate's CSR (exported from OpenBAO) with the KMS root",
 				Description: "Reads the CSR, checks it (P-384, self-signature, the authored subject, no SAN), builds the\n" +
-					"intermediate template from the hierarchy file and the committed root artifact, and either\n" +
-					"prints that template (--print-template, no credential) or signs it once with the KMS root\n" +
-					"(--confirm-template <sha256 from --print-template>). The signed certificate is written next\n" +
-					"to the root with a .attempt reservation that makes any rerun fail closed.",
-				Flags: append([]cli.Flag{
-					hierarchyFlag,
-					&cli.StringFlag{Name: flagTrustDomain, Usage: "which intermediate of the hierarchy", Required: true},
+					"intermediate template from --hierarchy or --contract/--generation and the committed root\n" +
+					"artifact, and either prints that template (--print-template, no credential) or signs it\n" +
+					"once with the KMS root (--confirm-template <sha256 from --print-template>). The signed\n" +
+					"certificate is written next to the root with a .attempt reservation that makes any rerun\n" +
+					"fail closed.\n\n" +
+					"--environment <env> (--contract only) signs that environment's OWN root-signed CA under a\n" +
+					"workload-identity trust domain instead of the domain's shared intermediate -- see\n" +
+					"docs/pki.md, \"per-environment identity CAs\". --zone gives that environment's own value\n" +
+					"for {zone} (its SPIFFE trust domain, typically); required with --environment.",
+				Flags: append(append([]cli.Flag{
+					&cli.StringFlag{Name: flagTrustDomain, Usage: "which trust domain", Required: true},
+					&cli.StringFlag{Name: flagEnvironment, Usage: "sign this environment's own CA instead of the shared intermediate (--" + flagContract + " only)"},
+					&cli.StringFlag{Name: flagZone, Usage: "the environment's own value for {zone}; required with --" + flagEnvironment},
 					&cli.StringFlag{Name: flagCSR, Usage: "PEM certificate request exported from the OpenBAO mount", Required: true},
 					&cli.BoolFlag{Name: flagPrintTemplate, Usage: "print the exact template and its sha256, sign nothing, need no credential"},
 					&cli.StringFlag{Name: flagConfirmTemplate, Usage: "sha256 printed by --print-template; required to sign"},
 					&cli.StringFlag{Name: flagKeyARN, Usage: "KMS key to sign with (default: the root artifact's keyArn)"},
-				}, signingFlags...),
+				}, sourceFlags...), signingFlags...),
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					return runSignIntermediate(ctx, os.Stdout, signIntermediateOptions{
-						hierarchy:       cmd.String(flagHierarchy),
+						source:          source(cmd),
 						trustDomain:     cmd.String(flagTrustDomain),
+						environment:     cmd.String(flagEnvironment),
+						zone:            cmd.String(flagZone),
 						csrPath:         cmd.String(flagCSR),
 						printTemplate:   cmd.Bool(flagPrintTemplate),
 						confirmTemplate: cmd.String(flagConfirmTemplate),
@@ -145,19 +314,23 @@ func pkiCommand() *cli.Command {
 			},
 			{
 				Name:  "verify-intermediate",
-				Usage: "prove a committed intermediate against the hierarchy and the root; print the chain to install",
+				Usage: "prove a committed intermediate against the hierarchy or contract and the root; print the chain to install",
 				Description: "Offline and without a credential: re-derives the template, checks the committed artifact\n" +
 					"against it and against the root, and prints what was proven. The chain (the intermediate,\n" +
-					"then the root) is what OpenBAO's <mount>/intermediate/set-signed takes; --chain-out writes it.",
-				Flags: []cli.Flag{
-					hierarchyFlag,
-					&cli.StringFlag{Name: flagTrustDomain, Usage: "which intermediate of the hierarchy", Required: true},
+					"then the root) is what OpenBAO's <mount>/intermediate/set-signed takes; --chain-out writes\n" +
+					"it. --environment/--zone select a root-signed environment CA, the same as sign-intermediate.",
+				Flags: append([]cli.Flag{
+					&cli.StringFlag{Name: flagTrustDomain, Usage: "which trust domain", Required: true},
+					&cli.StringFlag{Name: flagEnvironment, Usage: "verify this environment's own CA instead of the shared intermediate (--" + flagContract + " only)"},
+					&cli.StringFlag{Name: flagZone, Usage: "the environment's own value for {zone}; required with --" + flagEnvironment},
 					&cli.StringFlag{Name: flagChainOut, Usage: "write the chain (PEM) here; must not exist"},
-				},
+				}, sourceFlags...),
 				Action: func(_ context.Context, cmd *cli.Command) error {
 					return runVerifyIntermediate(os.Stdout, verifyIntermediateOptions{
-						hierarchy:   cmd.String(flagHierarchy),
+						source:      source(cmd),
 						trustDomain: cmd.String(flagTrustDomain),
+						environment: cmd.String(flagEnvironment),
+						zone:        cmd.String(flagZone),
 						chainOut:    cmd.String(flagChainOut),
 					})
 				},
@@ -167,23 +340,25 @@ func pkiCommand() *cli.Command {
 				Name:  "sign-emergency-server",
 				Usage: "BREAK-GLASS: sign a short-lived certificate for OpenBAO's endpoint directly with the KMS root",
 				Description: "For the two moments OpenBAO cannot issue its own certificate: its serving certificate has\n" +
-					"expired, or no OpenBAO exists yet. Reads a locally generated P-384 CSR for the hierarchy's\n" +
-					"emergencyServer.dnsName, builds a leaf template (server auth, that one name, issued by the\n" +
-					"root itself) and either prints it (--print-template, no credential, with the --not-before\n" +
-					"to pin) or signs it once with the KMS root (--confirm-template <sha256>). The root key's\n" +
-					"Sign alarm fires: tell whoever receives it first. Nothing is committed.",
-				Flags: append([]cli.Flag{
-					hierarchyFlag,
+					"expired, or no OpenBAO exists yet. Reads a locally generated P-384 CSR for the emergency\n" +
+					"name (--hierarchy's own emergencyServer.dnsName, or --contract's --dns-name), builds a leaf\n" +
+					"template (server auth, that one name, issued by the root itself) and either prints it\n" +
+					"(--print-template, no credential, with the --not-before to pin) or signs it once with the\n" +
+					"KMS root (--confirm-template <sha256>). The root key's Sign alarm fires: tell whoever\n" +
+					"receives it first. Nothing is committed.",
+				Flags: append(append([]cli.Flag{
+					&cli.StringFlag{Name: flagDNSName, Usage: "the emergency name to sign for; required with --" + flagContract},
 					&cli.StringFlag{Name: flagCSR, Usage: "PEM certificate request made locally for the emergency name", Required: true},
 					&cli.StringFlag{Name: flagNotBefore, Usage: "RFC 3339 start of validity; --print-template chooses one and prints it, signing needs it"},
 					&cli.BoolFlag{Name: flagPrintTemplate, Usage: "print the exact template and its sha256, sign nothing, need no credential"},
 					&cli.StringFlag{Name: flagConfirmTemplate, Usage: "sha256 printed by --print-template; required to sign"},
 					&cli.StringFlag{Name: flagOut, Usage: "where to write the signed leaf (PEM); must not exist", Value: "openbao-emergency.crt"},
 					&cli.StringFlag{Name: flagKeyARN, Usage: "KMS key to sign with (default: the root artifact's keyArn)"},
-				}, signingFlags...),
+				}, sourceFlags...), signingFlags...),
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					return runSignEmergencyServer(ctx, os.Stdout, signEmergencyServerOptions{
-						hierarchy:       cmd.String(flagHierarchy),
+						source:          source(cmd),
+						dnsName:         cmd.String(flagDNSName),
 						csrPath:         cmd.String(flagCSR),
 						notBefore:       cmd.String(flagNotBefore),
 						printTemplate:   cmd.Bool(flagPrintTemplate),
@@ -199,12 +374,12 @@ func pkiCommand() *cli.Command {
 }
 
 func runCreateRoot(ctx context.Context, out io.Writer, options createRootOptions) error {
-	hierarchy, err := ceremony.LoadHierarchy(options.hierarchy)
+	pkiSource, err := loadSource(options.source)
 	if err != nil {
 		return err
 	}
 
-	spec, err := hierarchy.RootSpec()
+	spec, err := pkiSource.rootSpec()
 	if err != nil {
 		return err
 	}
@@ -214,9 +389,11 @@ func runCreateRoot(ctx context.Context, out io.Writer, options createRootOptions
 		return err
 	}
 
+	artifactPath := pkiSource.rootArtifactPath()
+
 	result, err := ceremony.CreateRoot(ctx, client, spec, ceremony.RootOptions{
 		KeyARN:                options.signing.keyARN,
-		ArtifactPath:          hierarchy.Root.Artifact,
+		ArtifactPath:          artifactPath,
 		ImportCertificatePath: options.importCertificate,
 	})
 	if err != nil {
@@ -225,9 +402,9 @@ func runCreateRoot(ctx context.Context, out io.Writer, options createRootOptions
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if result.Signed {
-		logger.InfoContext(ctx, "created root certificate and public ceremony state", slog.String("state", hierarchy.Root.Artifact))
+		logger.InfoContext(ctx, "created root certificate and public ceremony state", slog.String("state", artifactPath))
 	} else {
-		logger.InfoContext(ctx, "verified root certificate ceremony state without signing", slog.String("state", hierarchy.Root.Artifact))
+		logger.InfoContext(ctx, "verified root certificate ceremony state without signing", slog.String("state", artifactPath))
 	}
 
 	raw, err := yaml.Marshal(result.Artifact)
@@ -245,12 +422,12 @@ func runSignIntermediate(ctx context.Context, out io.Writer, options signInterme
 		return errChooseMode
 	}
 
-	hierarchy, err := ceremony.LoadHierarchy(options.hierarchy)
+	pkiSource, err := loadSource(options.source)
 	if err != nil {
 		return err
 	}
 
-	spec, err := hierarchy.Intermediate(options.trustDomain)
+	spec, err := pkiSource.intermediateSpec(options.trustDomain, options.environment, options.zone)
 	if err != nil {
 		return err
 	}
@@ -298,10 +475,10 @@ func runSignIntermediate(ctx context.Context, out io.Writer, options signInterme
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if result.Signed {
 		logger.InfoContext(ctx, "signed intermediate certificate and wrote its public artifact",
-			slog.String("trust_domain", options.trustDomain), slog.String("artifact", spec.ArtifactPath))
+			slog.String("trust_domain", spec.TrustDomain), slog.String("artifact", spec.ArtifactPath))
 	} else {
 		logger.InfoContext(ctx, "verified existing intermediate artifact without signing",
-			slog.String("trust_domain", options.trustDomain), slog.String("artifact", spec.ArtifactPath))
+			slog.String("trust_domain", spec.TrustDomain), slog.String("artifact", spec.ArtifactPath))
 	}
 
 	raw, err := yaml.Marshal(result.Artifact)
@@ -315,12 +492,12 @@ func runSignIntermediate(ctx context.Context, out io.Writer, options signInterme
 }
 
 func runVerifyIntermediate(out io.Writer, options verifyIntermediateOptions) error {
-	hierarchy, err := ceremony.LoadHierarchy(options.hierarchy)
+	pkiSource, err := loadSource(options.source)
 	if err != nil {
 		return err
 	}
 
-	spec, err := hierarchy.Intermediate(options.trustDomain)
+	spec, err := pkiSource.intermediateSpec(options.trustDomain, options.environment, options.zone)
 	if err != nil {
 		return err
 	}
@@ -365,12 +542,12 @@ func runSignEmergencyServer(ctx context.Context, out io.Writer, options signEmer
 		return fmt.Errorf("--%s is required to sign: pass the value --print-template printed, so the signed template is the reviewed one", flagNotBefore)
 	}
 
-	hierarchy, err := ceremony.LoadHierarchy(options.hierarchy)
+	pkiSource, err := loadSource(options.source)
 	if err != nil {
 		return err
 	}
 
-	spec, err := hierarchy.EmergencyServerSpec(notBefore)
+	spec, err := pkiSource.emergencyServerSpec(options.dnsName, notBefore)
 	if err != nil {
 		return err
 	}
