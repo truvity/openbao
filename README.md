@@ -229,7 +229,7 @@ For the ceremony, a hierarchy file and one command per step
 ([docs/ceremony.md](docs/ceremony.md) walks through all of them):
 
 ```sh
-go install github.com/truvity/openbao/cmd/openbaoctl@latest   # or the release archive
+go install github.com/truvity/openbao/cmd/openbaoctl@v0.20.0  # or the release archive
 openbaoctl pki sign-intermediate --hierarchy pki.yaml --trust-domain private \
   --csr private.csr --print-template                         # no credential; prints the hash
 openbaoctl pki sign-intermediate --hierarchy pki.yaml --trust-domain private \
