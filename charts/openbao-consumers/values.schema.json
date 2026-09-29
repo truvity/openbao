@@ -453,6 +453,299 @@
           }
         }
       }
+    },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Issuance-chain alerts. Off by default; the format is a value.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "vmrule",
+            "prometheusrule",
+            "configmap"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "labels": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "annotations": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "ruleLabels": {
+          "$ref": "#/definitions/stringMap"
+        },
+        "groupName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "interval": {
+          "type": "string",
+          "pattern": "^([0-9]+(ms|s|m|h|d|w|y))*$"
+        },
+        "selector": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespaceRegex": {
+              "type": "string"
+            },
+            "nameRegex": {
+              "type": "string"
+            }
+          }
+        },
+        "workloadNamespace": {
+          "type": "string"
+        },
+        "rules": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "certificateNotReady": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "A Certificate that is not Ready for `for`.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                }
+              }
+            },
+            "certificateRequestDenied": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Opt-in: a denied CertificateRequest, from a kube-state-metrics custom resource state metric.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "metric": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "typeLabel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "csiDriverSpiffeUnavailable": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "csi-driver-spiffe driver or approver pods unavailable.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "daemonSetRegex": {
+                  "type": "string"
+                },
+                "deploymentRegex": {
+                  "type": "string"
+                }
+              }
+            },
+            "approverPolicyUnavailable": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "approver-policy pods unavailable. `enabled: null` follows approverPolicy.enabled.",
+              "properties": {
+                "enabled": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "deploymentRegex": {
+                  "type": "string"
+                }
+              }
+            },
+            "certificateExpiringSoon": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "A Certificate ends in fewer than thresholdSeconds.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "thresholdSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "certificateRenewalOverdue": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "A Certificate's renewal time passed graceSeconds ago.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "graceSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "caExpiring": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Opt-in: an issuing or identity CA ends in fewer than thresholdSeconds, from an exported not-after timestamp.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "metric": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "matchers": {
+                  "type": "string"
+                },
+                "thresholdSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "metricsAbsent": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "cert-manager's metrics are absent.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ms|s|m|h|d|w|y)([0-9]+(ms|s|m|h|d|w|y))*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "labels": {
+                  "$ref": "#/definitions/stringMap"
+                },
+                "annotations": {
+                  "$ref": "#/definitions/stringMap"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {

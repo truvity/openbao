@@ -470,6 +470,68 @@
           "store_path": "/nix/store/5kzg9pm55932xmnbpsmirxsd6xy0wv3a-openbao-2.6.2"
         }
       }
+    },
+    "prometheus@3.14.0": {
+      "last_modified": "2026-09-28T13:04:38Z",
+      "resolved": "github:NixOS/nixpkgs/f45c6f04c2f013f004bf94e284e95d72898d9393#prometheus",
+      "source": "devbox-search",
+      "version": "3.14.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/iv24ydlxxlwrr8jiy9j9xndgdvn0ghk0-prometheus-3.14.0",
+              "default": true
+            },
+            {
+              "name": "cli",
+              "path": "/nix/store/z916x2ad8haygqsqhzii5h36jfqgvz98-prometheus-3.14.0-cli"
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/rfd9hbi75h21w3zq4jilr119vvslvhwd-prometheus-3.14.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/iv24ydlxxlwrr8jiy9j9xndgdvn0ghk0-prometheus-3.14.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/6fc6kabnhildrr514qy7vfk0jxviw0ya-prometheus-3.14.0",
+              "default": true
+            },
+            {
+              "name": "cli",
+              "path": "/nix/store/mdz8hl27wx03a9y6d0nzgv8zgldmdks9-prometheus-3.14.0-cli"
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/fbgdwq4jghvsvhijgjqavzcwc5avwri0-prometheus-3.14.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/6fc6kabnhildrr514qy7vfk0jxviw0ya-prometheus-3.14.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/aznggbxbf0ld6jq03zj422fdrhqxqfvb-prometheus-3.14.0",
+              "default": true
+            },
+            {
+              "name": "cli",
+              "path": "/nix/store/qznvrrl8ka48ffwy0fj0m4c3ad9xadgm-prometheus-3.14.0-cli"
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/dxdjv9mnhivg6h7ydr52iq72a25m1s54-prometheus-3.14.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/aznggbxbf0ld6jq03zj422fdrhqxqfvb-prometheus-3.14.0"
+        }
+      }
     }
   }
 }

@@ -176,6 +176,77 @@ driver's namespace. A volume created before the driver had it does not gain
 | `additionalOutputFormats` | `DER` for a Java PostgreSQL client (candidate, **to be verified**) | the driver cannot read a PEM PKCS#8 EC key but reads DER PKCS#8; cert-manager can write the DER form beside the PEM, which would avoid an init-container conversion that breaks native rotation |
 | `duration` / `renewBefore` | 720h / 240h for hosts; the driver re-requests hourly identities | a renewal window many times the outage you want to survive |
 
+## Alerts
+
+When issuance breaks nothing fails loudly: a workload loses its certificate, or
+keeps an old one until it ends. `charts/openbao-consumers` ships the rules that
+notice, so each consumer does not write its own. They are **off by default**
+(`alerts.enabled: false`) and the output is a value: `alerts.format` is
+`vmrule` (VMRule), `prometheusrule` (PrometheusRule) or `configmap` (the plain
+Prometheus rules file under one key, for a ruler that loads files). Object
+labels for an operator's `ruleSelector` go in `alerts.labels`, labels for
+routing on every rule in `alerts.ruleLabels`, and `alerts.selector` narrows the
+certificate rules to some namespaces or names.
+
+| Alert | Fires when | Default | Severity | Reads |
+|---|---|---|---|---|
+| `IssuanceCertificateNotReady` | a Certificate is not Ready | 30m | warning | cert-manager `certmanager_certificate_ready_status` |
+| `IssuanceCertificateRequestDenied` (opt-in) | a CertificateRequest has the Denied condition | 5m | critical | kube-state-metrics custom resource state, see below |
+| `IssuanceCsiDriverSpiffeUnavailable` | the csi-driver-spiffe DaemonSet or approver Deployment has unavailable pods | 10m | critical | kube-state-metrics `kube_daemonset_status_number_unavailable`, `kube_deployment_status_replicas_unavailable` |
+| `IssuanceApproverPolicyUnavailable` | approver-policy has unavailable pods (on with `approverPolicy.enabled`) | 10m | critical | kube-state-metrics `kube_deployment_status_replicas_unavailable` |
+| `IssuanceCertificateExpiringSoon` | fewer than 7 days (`thresholdSeconds`) left on a Certificate | 15m | warning | cert-manager `certmanager_certificate_expiration_timestamp_seconds` |
+| `IssuanceCertificateRenewalOverdue` | the renewal time passed more than 2 hours (`graceSeconds`) ago | 15m | warning | cert-manager `certmanager_certificate_renewal_timestamp_seconds` |
+| `IssuanceCaExpiring` (opt-in) | fewer than 30 days left on an issuing or identity CA | 1h | critical | a not-after timestamp you export, see below |
+| `IssuanceMetricsAbsent` | no cert-manager metric is being scraped | 15m | warning | `absent(certmanager_clock_time_seconds)` |
+
+Every rule takes `enabled`, `for`, `severity`, `labels` and `annotations`
+(merged over the rule's own; `runbook_url` goes here), and the ones with a
+threshold take it by name. `alerts.rules.<rule>` in
+[reference.md](../reference.md#openbao-consumers) lists them.
+
+### What the metrics cover, and the gaps
+
+- **cert-manager exports Certificate metrics, not CertificateRequest
+  metrics.** A request stuck Pending (the issuer is not Ready, approver-policy
+  never answers) and a request an approver Denied both leave the Certificate
+  not Ready, so `IssuanceCertificateNotReady` is the native signal for both. It
+  cannot tell them apart, and it only fires for a first issuance or an expired
+  Certificate: a renewal that is denied leaves the old certificate Ready until
+  it ends, which is what `IssuanceCertificateRenewalOverdue` (first) and
+  `IssuanceCertificateExpiringSoon` (last) are for.
+- **approver-policy exports no denial metric.** Its metrics are
+  controller-runtime's, and a denial is a condition on the CertificateRequest,
+  not a counter. `IssuanceCertificateRequestDenied` reads that condition
+  through kube-state-metrics' custom resource state, which the cluster must
+  configure and which is why the rule is opt-in. The rule's contract, which
+  the metric name and the `type` label values adapt: a gauge per
+  CertificateRequest condition, labelled `namespace`, `name` and `type`
+  (`Approved`, `Denied`, `Ready`), whose value is 1 while that condition's
+  status is `True`. A condition's status is a string, so the custom resource
+  state configuration has to map it to a number; how depends on the
+  kube-state-metrics version, and this chart does not ship that configuration.
+- **csi-driver-spiffe exports no health metric the rules rely on.** They read
+  the workload status of its DaemonSet and approver Deployment; the defaults
+  are the names of its Helm chart, and `daemonSetRegex` and `deploymentRegex`
+  follow a renamed release. The pods being available says the driver is there,
+  not that it issues: the refusal test in [the approver section](#the-approver-off-by-default-then-per-issuer)
+  is what proves that.
+- **The CAs live in OpenBAO, and cert-manager holds no Certificate for
+  them,** so no cert-manager metric can tell that one is near its end.
+  `IssuanceCaExpiring` reads the not-after timestamp of the CA certificates
+  from an exporter you run; the default metric is `x509_cert_not_after` of
+  [x509-certificate-exporter](https://github.com/enix/x509-certificate-exporter)
+  pointed at the trust-anchor ConfigMaps and the bundle in cert-manager's
+  namespace, with `matchers` selecting them. Until you run one it stays off, and
+  the gap is real: the offline root's expiry is a calendar entry, not an alert
+  (see [hierarchy.md](hierarchy.md#lifetimes-and-algorithms)). A Certificate the
+  chart manages is covered by the native expiry rule.
+- **Nothing here proves the rules load.** A ruler refuses an expression it
+  cannot parse, and a refused rule blocks whatever syncs it. The chart's tests
+  render every format and run `promtool check rules` over each result
+  (`conformance/alert_rules_test.go`, part of `just test`), so an unparseable
+  render fails CI first.
+
 ## Reloading: what actually picks up a renewed file
 
 A renewed certificate that nothing loads is an outage on a timer. The rules:

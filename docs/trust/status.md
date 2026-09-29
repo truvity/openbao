@@ -27,7 +27,7 @@ Last reviewed: 2026-09-30.
 | approver layer: blanket approver off, per-issuer policies, driver approver | LIVE | blanket approver off on every environment, each proven by a refusal test |
 | `approvercheck` (shape, live RBAC, flag) | LIVE | |
 | approval covers every request shape (CI tenants, subject fields) | LIVE | fixed after the first cutover missed them |
-| expiry alerts on CA certificates | PLANNED | authored thresholds exist; alerting is off until a consumer does |
+| expiry alerts on CA certificates | PARTIAL | `openbao-consumers` ships the issuance alerts (off by default, [issuance.md](issuance.md#alerts)); Certificates cert-manager holds are covered natively, the CAs held in OpenBAO need an exporter and stay opt-in |
 | break-glass leaf | LIVE | yearly drill by hand |
 | promotion verification gate | LIVE | waits until every pod of the promoted release is at the new version and Ready (up to 25 minutes), then bakes on a sample count (at least 10 prober journeys, at most 5% failures, end-to-end green, no restarts or alerts); a separate check that the environment's applications render the promoted chart version |
 

@@ -222,3 +222,137 @@ approverPolicy:
   namespacedIssuers:
     enabled: false
     name: namespaced-issuers
+
+# Alerts for the issuance chain, OFF by default. When certificate issuance
+# breaks nothing fails loudly: a workload just stops getting a certificate,
+# or keeps an old one until it expires. This section ships the rules that
+# notice, so each consumer does not write its own. See docs/trust/issuance.md
+# ("Alerts") for what each rule reads, which metrics it needs and the gaps.
+#
+# Every rule reads metrics the cluster's monitoring already has:
+# cert-manager's own (`certmanager_certificate_*`), kube-state-metrics'
+# workload status (`kube_daemonset_*`, `kube_deployment_*`), and, for the
+# two opt-in rules, a metric you export yourself.
+alerts:
+  enabled: false
+  # vmrule         VMRule (operator.victoriametrics.com/v1beta1)
+  # prometheusrule PrometheusRule (monitoring.coreos.com/v1)
+  # configmap      the plain Prometheus rules file, under one key, for a
+  #                ruler that loads files
+  format: vmrule
+  # Object name. Default: <release>-issuance-alerts.
+  name: ""
+  # Where the object lives. Default: the release namespace.
+  namespace: ""
+  # Labels on the OBJECT (an operator's ruleSelector matches these) and
+  # annotations on it (merged over commonAnnotations).
+  labels: {}
+  annotations: {}
+  # Labels added to EVERY rule, for routing (a `team`, a `release`). A rule's
+  # own `labels` are merged over these; `severity` is set per rule.
+  ruleLabels: {}
+  # The rule group's name, and its evaluation interval (empty: the ruler's).
+  groupName: openbao-issuance
+  interval: ""
+  # Which cert-manager Certificates the certificate rules look at, as
+  # regular expressions over the `namespace` and `name` labels of
+  # cert-manager's metrics. Empty: every Certificate the cluster has.
+  selector:
+    namespaceRegex: ""
+    nameRegex: ""
+  # The namespace cert-manager, csi-driver-spiffe and approver-policy run
+  # in, for the workload rules. Default: pki.certManager.namespace.
+  workloadNamespace: ""
+
+  # Per rule: `enabled`, `for` (how long the condition must hold), `severity`,
+  # `labels` and `annotations` (merged over the rule's), and the threshold
+  # the rule has.
+  rules:
+    # A Certificate that is not Ready: a first issuance that never
+    # finishes, or an expired one. A request stuck Pending (issuer not
+    # ready, approval never given) and a request the approver DENIED both
+    # end here, because cert-manager exports no CertificateRequest metric.
+    certificateNotReady:
+      enabled: true
+      for: 30m
+      severity: warning
+      labels: {}
+      annotations: {}
+    # A CertificateRequest denied by an approver. cert-manager and
+    # approver-policy export no metric for it; this rule reads one that
+    # kube-state-metrics' custom resource state produces from the
+    # CertificateRequest condition (docs/trust/issuance.md has the
+    # configuration), so it is opt-in.
+    certificateRequestDenied:
+      enabled: false
+      for: 5m
+      severity: critical
+      # The metric, and the label it puts the condition type under. It must
+      # be 1 while the condition's status is True.
+      metric: kube_customresource_certificaterequest_condition
+      typeLabel: type
+      labels: {}
+      annotations: {}
+    # csi-driver-spiffe's driver DaemonSet or its approver Deployment has
+    # unavailable replicas: workloads on those nodes get no identity.
+    csiDriverSpiffeUnavailable:
+      enabled: true
+      for: 10m
+      severity: critical
+      daemonSetRegex: cert-manager-csi-driver-spiffe
+      deploymentRegex: cert-manager-csi-driver-spiffe-approver
+      labels: {}
+      annotations: {}
+    # approver-policy's Deployment has unavailable replicas: every request
+    # for an issuer it owns stays Pending. Default: on with
+    # approverPolicy.enabled, off otherwise (empty).
+    approverPolicyUnavailable:
+      enabled: null
+      for: 10m
+      severity: critical
+      deploymentRegex: cert-manager-approver-policy
+      labels: {}
+      annotations: {}
+    # A Certificate ends soon: it should have been renewed long ago (this
+    # chart's certificateDefaults renew ten days before the end), so fewer
+    # than `thresholdSeconds` left means renewal has been failing.
+    certificateExpiringSoon:
+      enabled: true
+      for: 15m
+      severity: warning
+      thresholdSeconds: 604800   # 7 days
+      labels: {}
+      annotations: {}
+    # A Certificate's renewal time passed `graceSeconds` ago and it has not
+    # been renewed. Fires days before ExpiringSoon: it is the first sign.
+    certificateRenewalOverdue:
+      enabled: true
+      for: 15m
+      severity: warning
+      graceSeconds: 7200         # 2 hours: cert-manager's own retry backoff tops out well below
+      labels: {}
+      annotations: {}
+    # An issuing or identity CA ends soon. The CAs live in OpenBAO, and
+    # cert-manager holds no Certificate for them, so nothing of cert-manager's
+    # can tell. This rule reads the not-after timestamp of the CA
+    # certificates from whatever exports it (default: x509-certificate-
+    # exporter over the trust-anchor ConfigMaps and the bundle), so it is
+    # opt-in. `matchers` is a PromQL label matcher list that selects the CA
+    # series, e.g. `secret_namespace="cert-manager"`.
+    caExpiring:
+      enabled: false
+      for: 1h
+      severity: critical
+      metric: x509_cert_not_after
+      matchers: ""
+      thresholdSeconds: 2592000  # 30 days
+      labels: {}
+      annotations: {}
+    # cert-manager's metrics are gone. Every other certificate rule would
+    # then stay silent, which reads as healthy.
+    metricsAbsent:
+      enabled: true
+      for: 15m
+      severity: warning
+      labels: {}
+      annotations: {}

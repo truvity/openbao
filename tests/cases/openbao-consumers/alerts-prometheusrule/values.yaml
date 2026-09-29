@@ -1,0 +1,25 @@
+# The same rules as a PrometheusRule, with what an operator's ruleSelector
+# and an Alertmanager route need: object labels, rule labels, an override
+# of one threshold and one severity, and a selector that narrows the
+# certificate rules.
+alerts:
+  enabled: true
+  format: prometheusrule
+  namespace: monitoring
+  labels:
+    release: example-monitoring
+  ruleLabels:
+    team: platform
+  interval: 1m
+  selector:
+    namespaceRegex: "cert-manager|example-.*"
+    nameRegex: ".*-tls"
+  workloadNamespace: cert-manager
+  rules:
+    certificateExpiringSoon:
+      thresholdSeconds: 1209600
+      severity: critical
+      annotations:
+        runbook_url: https://runbooks.example.internal/certificate-expiring
+    certificateNotReady:
+      for: 1h

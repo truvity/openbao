@@ -1,0 +1,9 @@
+# An empty rule group: refused at render, not left for the ruler to reject.
+alerts:
+  enabled: true
+  rules:
+    certificateNotReady: {enabled: false}
+    csiDriverSpiffeUnavailable: {enabled: false}
+    certificateExpiringSoon: {enabled: false}
+    certificateRenewalOverdue: {enabled: false}
+    metricsAbsent: {enabled: false}
