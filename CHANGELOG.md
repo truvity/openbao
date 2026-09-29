@@ -5,6 +5,10 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.19.1
+
+- README rewritten in the component contract's heading order with `Consumers` and `Neighbours`; the doctrine link points at the policy component contract; `Status` states the AWS KMS coupling of `serverpreset`, `ceremony` and `custody` as of 2026-09-29.
+
 ## v0.19.0
 
 ### Added

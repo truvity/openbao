@@ -5,16 +5,20 @@ upstream server chart leaves out, the desired state of OpenBAO's own
 configuration and its apply, and the KMS-rooted CA ceremony its PKI hangs
 from.
 
-| Artifact | What | Status |
-|---|---|---|
-| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, watches for the failures that are otherwise silent, network policies, a serving certificate, and the sidecar that reloads it | unreleased |
-| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates | unreleased |
-| `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format | unreleased |
-| `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region | unreleased |
-| `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader | unreleased |
-| `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged | unreleased |
-| `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release | unreleased |
-| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl bao`/`accessctl pg` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` | unreleased |
+| Artifact | What |
+|---|---|
+| `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, watches for the failures that are otherwise silent, network policies, a serving certificate, and the sidecar that reloads it |
+| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates |
+| `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader |
+| `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged |
+| `pkg/serverpreset` (Go) | A reusable OpenBAO server preset for the plugin catalog, the `awskms` seal, the listener and Raft |
+| `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format |
+| `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region |
+| `pkg/pki` (Go) | The authored private-PKI contract above `pkg/ceremony`: root generations, trust domains, per-environment roles, and per-environment identity CAs |
+| `pkg/kmssigner` (Go) | A `crypto.Signer` over a KMS P-384 key |
+| `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release |
+| `cmd/openbao-hostcert` | A standalone EC2 host-certificate renewer: signs an STS `GetCallerIdentity` request with the instance's own AWS credentials, logs in to an `AWSAuthMount`, and renews the host's SSH certificate from a `SSHHostMount` role; runs unattended as root under a systemd timer |
+| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl bao`/`accessctl pg` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from v0.1.0 on; from v0.2.0 on the same tag is also the Go module
@@ -244,6 +248,25 @@ _, err := custody.Deploy(ctx, custody.Args{
 })
 ```
 
+## Consumers
+
+| Consumer | Surface |
+|---|---|
+| truvity/gitops | Go `model`, `apply`, `ceremony`, `custody`; charts `openbao-ops`, `openbao-consumers` |
+| opwerm/nexus | Go `custody` |
+
+## Neighbours
+
+- **access-roster** is the issuer this server trusts; OpenBAO is a relying
+  party of it, never the other way round. The contract is
+  [docs/integrations/access-roster.md](docs/integrations/access-roster.md).
+- **audit** is where a record of what happened here ends up: every server
+  preset declares a `file` audit device (see
+  [docs/server.md](docs/server.md)), and that stream, not this
+  repository, is what a completed action is proven from --
+  [docs/doctrine.md](docs/doctrine.md) explains why `rootGeneration`
+  watches an open attempt rather than trying to replace it.
+
 ## Documentation
 
 - [docs/adoption.md](docs/adoption.md) — prerequisites, install order,
@@ -284,13 +307,20 @@ neutral default, and the consuming estate supplies it from its own
 history cannot be unpublished — so the rule is mechanical, not remembered.
 
 This repository follows the shared
-[component contract](https://github.com/truvity/ci-workflows/blob/master/docs/component-contract.md).
+[component contract](https://github.com/truvity/policy/blob/master/docs/contracts/component.md).
 
 ## Status
 
 Used in production by its maintainers. The charts are released from
 v0.1.0; the Go module and `openbaoctl` from v0.2.0; `pkg/model` and
 `pkg/apply` arrive in v0.3.0.
+
+As of 2026-09-29, the AWS coupling is real, not incidental: `pkg/serverpreset`
+renders an `awskms` seal stanza and refuses any other seal type outright,
+and `pkg/ceremony` and `pkg/custody` are written against AWS KMS
+specifically (a multi-region P-384 key, its policy and roles, `aws sts`
+for the ceremony's caller identity) -- there is no GCP, Azure or other KMS
+provider behind any of the three today.
 
 ## Development
 
