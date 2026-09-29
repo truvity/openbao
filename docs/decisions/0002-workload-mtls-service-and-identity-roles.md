@@ -234,3 +234,19 @@ approver, not to OpenBAO. Nothing about this amendment changes that
 assignment; it only confirms, with a real server, that OpenBAO could not
 have enforced the narrower promise here even if the approver did not
 exist.
+
+## Amendment, 2026-09-29: an environment's identity bundle holds only that environment's CA
+
+The section "Trust domain per cluster; peers check it" above describes a
+trust bundle that trusts every environment's domain intermediate at once,
+so that the certificate chain alone does not prove which environment a peer
+runs in. That followed from the shared identity intermediate, which the
+status line above records as superseded. With one root-signed identity CA
+per environment, each carrying an exact URI constraint for its own trust
+domain, the bundle a verifier uses holds **only its own environment's
+identity CA**, so the chain *is* evidence of the environment. A peer still
+checks the trust domain in the SPIFFE URI and then the namespace and
+ServiceAccount against its allow-list, as defence in depth rather than as the
+only wall. A verifier must never be given another environment's identity CA
+except as an explicit, reviewed federation grant (planned; see
+[trust/workload-identity.md](../trust/workload-identity.md#federation-planned)).
