@@ -428,3 +428,55 @@ for another program that writes into OpenBAO as the same operator.
 | `SkipEnv` | none | an environment variable that, set to a reason, applies without a snapshot |
 | `Wait`, `Poll` | `16m`, `5s` | how long to wait for the Job, and how often to look |
 | `Logger`, `Now` | `slog.Default()`, `time.Now` | |
+
+## pkg/serverpreset
+
+The server-side HCL and values fragment (docs/server.md): what a plugin
+catalog, an awskms seal, the listener, and Raft need on the upstream
+`openbao/openbao-helm` chart's server. [`examples/server`](../examples/server)
+is a complete, neutral example; [`values.yaml`](../examples/server/values.yaml)
+beside it is its golden.
+
+| Type | Field | Required | What |
+|---|---|---|---|
+| `Config` | `Arch` | yes | the ONE resolved architecture (see `ResolveArch`) every plugin's checksum is read for |
+| | `PluginDirectory` | no | default `/openbao/plugins` (`DefaultPluginDirectory`) |
+| | `DownloadBehavior` | no | `"fail"` or `"continue"`; default `"continue"` (`DefaultDownloadBehavior`) — refused otherwise, where the server itself silently ignores anything but those two |
+| | `Plugins` | no | the declarative catalog; empty renders no `plugin_*` settings at all |
+| | `Seal` | no | zero value renders no seal stanza |
+| | `Listener`, `Raft` | no | the `listener "tcp"` and `storage "raft"` stanzas |
+| | `UI`, `DisableStandbyReads`, `ServiceRegistration`, `AuditDevice` | no | the top-level settings docs/server.md's reference HCL sets |
+| `Plugin` | `Kind`, `Name`, `Image`, `Version`, `BinaryName` | yes | the four `plugin "<Kind>" "<Name>" {}` fields; every value must be one HCL-safe token (no quotes, no line breaks) |
+| | `SHA256ByArch` | yes | one checksum per architecture the image is published for — never a bare string |
+| | `EgressHosts` | no | every host the OCI pull needs (the registry AND its blob host, when they differ) |
+| | `RequiresSTS` | no | true for a plugin that verifies a caller against AWS STS itself |
+| `Seal` | `Type` | no | `"awskms"` only; any other value is refused, with OpenBAO 2.7's move to an external seal plugin named as why |
+| | `Region`, `KMSKeyID` | with `Type` | the `seal "awskms"` block's own fields |
+| `Listener` | `Address`, `ClusterAddress`, `TLSCertFile`, `TLSKeyFile` | with a listener | the `listener "tcp"` block |
+| `Raft` | `Path`, `Peers` | with Raft | one `retry_join` per `RaftPeer` (`LeaderAPIAddr`, `LeaderCACertFile`, `LeaderTLSServername`) |
+
+Methods: `Plugin.Command()` (`<Kind>-<Name>-<Version>`, the on-disk name
+the declarative download links — NOT `BinaryName`); `Plugin.Validate()`;
+`Config.Validate()`; `Config.PluginHCL()`, `Config.SealHCL()`,
+`Config.ListenerHCL()`, `Config.RaftHCL()` (each stanza alone) and
+`Config.HCL()` (the whole configuration, in docs/server.md's reference
+order); `Config.PluginVolume(name)` / `Config.PluginVolumeMount(name)`
+(the plugin directory's emptyDir, as plain maps); `Config.Values(volumeName)`
+(the upstream chart's `server.ha.raft.config` plus, when `Plugins` is
+non-empty, `server.volumes`/`server.volumeMounts`);
+`Config.EgressDomains()` (sorted, deduplicated: every plugin's
+`EgressHosts`, AWS STS for any `RequiresSTS` plugin, and the seal's KMS
+host); `Config.RetrySidecarContainer(RetrySidecarOptions)` (below);
+`ResolveArch(archs)` (the general form of the mixed-architecture refusal:
+narrow a node selection to one architecture before pinning a checksum, or
+get back why it cannot be narrowed).
+
+`RetrySidecarOptions`: `Image`, `VolumeName` required; `APIPort` (8200),
+`HealthTimeoutSeconds` (300), `Attempts` (20), `IntervalSeconds` (30),
+`PluginDirectory` (Config's) all default. `RetrySidecarContainer` refuses
+when `Plugins` is empty — a server with nothing declarative to download
+has nothing for a retry sidecar to retry. It requires
+`shareProcessNamespace: true` on the pod, the same setting `tlsReload`
+(charts/openbao-ops) already needs for the same reason (it signals `bao
+server` across containers); a pod running both sets it once and lists
+both under `server.extraContainers`.

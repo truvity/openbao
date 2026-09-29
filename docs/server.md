@@ -3,9 +3,21 @@
 This repository does not install the server: upstream's `openbao/openbao`
 chart does. What follows is the shape these charts assume of it — an HA
 Raft cluster that auto-unseals, serves a certificate cert-manager renews,
-and is reached by clients that verify one name — as values for that chart.
-Every particular (the endpoint, the key, the region, the image registry) is
-a placeholder.
+is reached by clients that verify one name, and runs whatever external
+plugin its auth or secrets methods need — as values for that chart. Every
+particular (the endpoint, the key, the region, the image registry) is a
+placeholder.
+
+The plugin catalog's HCL and the values fragment around it (the emptyDir
+it needs, the sidecar that finishes a download a fresh pod's own egress
+raced) are rendered, not hand-typed: [`pkg/serverpreset`](../pkg/serverpreset)
+is a **values preset**, not a wrapper chart — see
+["Why a values preset, not a wrapper chart"](#why-a-values-preset-not-a-wrapper-chart)
+below. [`examples/server`](../examples/server) is a complete, neutral
+example, [`values.yaml`](../examples/server/values.yaml) beside it its
+golden, and [`conformance/server_preset_test.go`](../conformance/server_preset_test.go)
+boots a real `bao server` from exactly that rendered HCL to prove the
+three faults below stay fixed.
 
 ```yaml
 global:
@@ -162,11 +174,188 @@ runbook.
 
 The upstream StatefulSet uses `OnDelete`: a change to the server's
 configuration reaches a pod only when that pod is deleted. Roll by hand,
-one pod at a time, standbys first and the active node last, waiting for
-Raft to report every voter healthy between pods.
+one pod at a time, **standbys first and the active node last**, waiting
+for Raft to report every voter healthy between pods — deleting the active
+node forces an election, and the goal is one election at the end, not one
+per pod.
+
+Find the leader from any pod: `bao status` reads `HA Mode` (`active` or
+`standby`) and, on a standby, `Active Node Address` names the one to
+delete last. Address it explicitly (`-address=https://<pod>.<internal
+service>:8200`, `BAO_TLS_SERVER_NAME` still set to the endpoint) rather
+than the address every client dials, which always resolves to the active
+node and so always answers `active` regardless of which pod is actually
+asked.
+
+Raft's own endpoints (`sys/storage/raft/configuration`,
+`sys/storage/raft/snapshot`, …) are ROOT-only: they refuse a namespaced
+request even as `-ns=root` or `-ns=/` — omit the flag, or unset
+`BAO_NAMESPACE` first if a shell already carries one from an environment
+namespace.
+
+## The plugin catalog: three faults, fixed once
+
+OpenBAO, unlike Vault, ships no cloud auth or secrets method built in:
+every one is an external plugin, downloaded from an OCI image and
+verified against a checksum before the server ever runs it. Getting a
+plugin declared safely on a real, multi-pod server ran into three faults
+that do not show up reading the documentation, each fixed by
+[`pkg/serverpreset`](../pkg/serverpreset) rather than left for the next
+install to rediscover:
+
+1. **`plugin_directory` must exist before `bao server` starts**, whether
+   or not the download that follows succeeds. A failed download never
+   creates it, and a missing directory makes the server EXIT —
+   `Error creating KMS plugin catalog: expand plugin directory: lstat
+   ...: no such file or directory` — never warn and continue.
+   `Config.PluginVolume`/`Config.PluginVolumeMount` are the emptyDir that
+   makes this true on every pod, on every restart, unconditionally.
+2. **`plugin_download_behavior` accepts exactly `"fail"` or
+   `"continue"`.** Any other value, including the word `"warn"`, is
+   accepted by the server's config parser and silently ignored — read
+   back with `bao read` (or a rendered diff) it looks set, but it behaves
+   as whichever of the two real values the server happens to default to.
+   `Config.Validate` refuses anything else at RENDER time, before it ever
+   reaches a server that would not complain either.
+3. **A fresh pod's first download races whatever admits its egress.**
+   The very first attempt on a new pod times out because the network
+   policy (or whatever else gates that pod's egress) has not yet caught
+   up with its address, and nothing retries it on its own —
+   `plugin_download_behavior = "continue"` (the default) starts the
+   server anyway, with that plugin simply missing until something tries
+   again. `Config.RetrySidecarContainer` is that something: it waits for
+   the server's OWN listener to answer (SIGHUP's default disposition
+   terminates a process that has not installed a handler for it yet, so
+   signalling too early restarts the container instead of retrying
+   anything) and then SIGHUPs `bao server` on a timer — which re-runs the
+   SAME declarative download and registration from the server's current
+   config, and succeeds once egress has caught up.
+
+`Config.HCL()` renders the whole configuration in one deterministic pass,
+and [`conformance/server_preset_test.go`](../conformance/server_preset_test.go)
+boots a real, non-dev `bao server` from it — with a local plugin directory
+and no route to the plugin's registry — to prove faults 1 and 3 stay
+fixed: a missing directory still exits, and a `"continue"` failure still
+leaves the server serving.
+
+Two things this package does NOT try to derive, because the repository's
+own guessing would be the next particular to leak: `Plugin.EgressHosts` is
+data (a registry's blob layers can live on a second host — ghcr.io's do,
+at `pkg-containers.githubusercontent.com` — and that split is the
+registry's own property, not a pattern this package could infer from the
+image reference alone), and `Config.Arch` is never derived from a node
+selector — `ResolveArch` exists to refuse a selection that could resolve
+to more than one architecture explicitly, before a checksum is ever
+picked for it.
+
+### Egress
+
+`Config.EgressDomains()` returns every hostname a rendered `Config`
+needs, derived from what is actually enabled: each plugin's
+`EgressHosts`, AWS STS (global and regional) for a plugin whose
+`RequiresSTS` is true, and the seal's KMS host. It is not a
+`NetworkPolicy` — whether an egress allowlist is CIDR-based, an
+`ApplicationNetworkPolicy`'s domain names, or a service mesh's egress
+rule is the platform's shape, not this package's — but it is exactly the
+list either one is built from, so it feeds `openbao-ops`'s own
+`networkPolicy.egress.rules` (a list of whole policies, in whatever shape
+the platform needs) or a consumer's own policy, without re-deriving what
+"plugins on" actually requires reaching.
+
+### Plugin rollout runbook
+
+Rolling a NEW or changed plugin block is a configuration change (`OnDelete`
+above), with one more thing to verify before trusting it: the download
+happened on the node it was supposed to, and the catalog holds the exact
+version a mount will ask for.
+
+1. **Canary one standby first.** Delete the pod, wait for it to become a
+   healthy standby again (`bao status` on it directly, not through the
+   endpoint every client dials — see "Rolling a configuration change"),
+   then check its own logs for
+   `plugins: OCI plugin downloading completed` with no
+   `failed to download plugin` beside it, and the retry sidecar's log
+   line (`plugin-retry: <path> present`) if the first attempt raced
+   egress the way fault 3 above describes.
+2. **Confirm the catalog entry, on that same pod's namespace:**
+   `bao read sys/plugins/catalog/<Kind>/<Name>` shows `version` equal to
+   `Plugin.Version`, `oci = true` and `deregistration_params.plugin_version`
+   (or the equivalent field this OpenBAO release reports) — the
+   declarative path is the ONLY one that can register a catalog entry
+   pointing into the OCI cache; an API registration of the same entry is
+   refused (`cannot execute files outside of configured plugin
+   directory`), so a catalog entry that exists at all here is proof the
+   declarative path ran, not proof a human ran it correctly.
+3. **Only then roll the rest**, standby by standby, **leader last** — the
+   same order as any other configuration change, so a plugin that turns
+   out to be wrong strands the fewest voters on it.
+4. **A mount that uses the plugin must pin `plugin_version` to the same
+   string** (`Plugin.Version`) as the catalog entry, or it resolves the
+   unversioned key and then a builtin — never this entry — which reads as
+   "the plugin isn't there" from the mount's side even once the catalog
+   itself is correct.
 
 ## Image
 
 Keep the server's image, `snapshot.image`, `restoreCheck.image` and
 `tlsReload.image` on the same tag: a restore check that restores with an
-older `bao` than took the snapshot is proving the wrong pairing.
+older `bao` than took the snapshot is proving the wrong pairing. The
+plugin-retry sidecar (`Config.RetrySidecarContainer`) follows the same
+rule — its `RetrySidecarOptions.Image` should be the server's own image,
+for the same reason `tlsReload` is.
+
+## Why a values preset, not a wrapper chart
+
+Two shapes were on the table for `pkg/serverpreset`: a Helm chart that
+depends on upstream's `openbao/openbao-helm` and installs the server
+itself, or a values preset a caller merges into that chart's own
+`valuesObject`. This repository's own opening line settled it: **"This
+repository does not install the server: upstream's chart does."** A
+wrapper chart that itself gets installed would be exactly the thing that
+sentence says this repository is not — a SECOND chart between an
+estate's GitOps tool and the server, owning a release upstream's chart
+already owns, for no reason the plugin catalog itself needs.
+
+A values preset also matches how every other part of this shape already
+ships: `tlsReload` (`charts/openbao-ops`) has been "a fragment for the
+upstream chart, not an object of its own" since before this package
+existed, spliced into `server.extraContainers` by hand or by a subchart
+`include`; `Config.Values` and `Config.RetrySidecarContainer` are the
+same kind of fragment, rendered in Go instead of Helm because the
+validation they need — the mixed-architecture refusal, the HCL-safety
+check on every plugin field, the download-behavior refusal — is
+render-time logic a values file has no way to express, and a Go type is
+exactly what an estate that wants that validation reused rather than
+copied is already set up to `go get`.
+
+## Migration note: adopting the preset with an empty diff
+
+An install that already hand-authors this HCL — the shape this very
+document's reference example has shown since before the plugin catalog
+existed — adopts `pkg/serverpreset` by construction, not by rewrite: give
+`Config` the same values the hand-written HCL already has (the same
+`Arch` resolved from the same node selector, the same `Seal.Region` and
+`KMSKeyID`, the same `Raft.Peers`, the same `Plugin` entries with the
+same checksums) and `Config.HCL()` renders the identical text, because it
+renders the reference shape in the reference order (see
+`TestHCLOrderMatchesReferenceShape`,
+[`pkg/serverpreset`](../pkg/serverpreset)) — the same `ui`,
+`disable_standby_reads`, listener, Raft, seal, `service_registration`,
+plugin block, audit device sequence this document's own example has
+always used. Diffing the two is the adoption check: a real difference
+means an input was carried over wrong, not that the preset renders
+something new.
+
+What moves out of the hand-authored values at the same time:
+`server.volumes`/`server.volumeMounts` for the plugin directory become
+`Config.Values(volumeName)`'s output, merged in the same place; and the
+plugin-retry loop, wherever it was hand-copied into an existing sidecar
+script, becomes its own container from `Config.RetrySidecarContainer` —
+which needs nothing from an existing `tlsReload` container it replaces
+beyond the `shareProcessNamespace: true` both already required.
+
+Nothing about `bao operator init`, the recovery-key ceremony, or an
+already-running cluster's data changes: this is a values-file migration
+on the NEXT config roll (`OnDelete`, above), not a data migration, and
+the plugin rollout runbook's canary-one-standby-first order applies to it
+exactly as it would to a hand-edited HCL change.
