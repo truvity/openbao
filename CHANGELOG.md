@@ -31,6 +31,52 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   `IntermediateSigned` read the committed artifacts back, offline, with no
   KMS credential. See [docs/pki.md](docs/pki.md).
 
+- **A server preset (`pkg/serverpreset`) for the plugin catalog, the
+  seal, the listener and Raft** on the upstream `openbao/openbao-helm`
+  chart's server — a values fragment, not a wrapper chart (see
+  docs/server.md, "Why a values preset, not a wrapper chart"), carrying
+  the operational lessons of running an external plugin (OpenBAO, unlike
+  Vault, ships no cloud auth or secrets method built in) safely on a
+  real, multi-pod server:
+  - `plugin_directory` must exist before `bao server` starts, whether or
+    not the download that follows succeeds — a failed download never
+    creates it, and a missing directory makes the server EXIT, not warn
+    and continue. `Config.PluginVolume`/`Config.PluginVolumeMount` render
+    the emptyDir that keeps this true on every pod.
+  - `plugin_download_behavior` accepts exactly `"fail"` or `"continue"` —
+    any other value, `"warn"` included, is accepted by the server's
+    config parser and silently ignored. `Config.Validate` refuses
+    anything else at render time.
+  - A fresh pod's first plugin download races whatever admits its
+    egress. `Config.RetrySidecarContainer` waits for the server's own
+    listener (never signalling it before it is serving — SIGHUP's
+    default disposition would restart the container instead) and then
+    SIGHUPs `bao server` on a timer, which re-runs the same declarative
+    download and registration until it succeeds.
+  - `Config.Arch` is an explicit, never-derived architecture selector:
+    `ResolveArch` is the general form of refusing a node selection that
+    could resolve to more than one architecture, before a checksum is
+    ever picked for it — a single sha256sum can only ever verify one
+    architecture's binary.
+  - `Config.EgressDomains()` derives the egress allowlist a rendered
+    `Config` needs from what is actually enabled (each plugin's OCI
+    registry and blob hosts, AWS STS for a plugin that verifies a caller
+    against it, the seal's KMS host), for `openbao-ops`'s own
+    `networkPolicy.egress.rules` or a consumer's own policy to build
+    from.
+
+  [`examples/server`](examples/server) is a complete, neutral example
+  proven two ways: `values.yaml` beside it is its golden (`pkg/model`'s
+  and `pkg/apply`'s desired-state examples already work the same way),
+  and [`conformance/server_preset_test.go`](conformance/server_preset_test.go)
+  boots a real, non-dev `bao server` from exactly its rendered HCL — with
+  a local plugin directory and no route to the plugin's registry — to
+  prove a `"continue"` failure never stops the server and a missing
+  plugin directory always does. docs/server.md's rewritten around the
+  preset, with a plugin rollout runbook (canary one standby, verify the
+  catalog entry, then the rest, leader last) and a migration note for an
+  install that already hand-authors this HCL.
+
 ## v0.17.0
 
 ### Changed
