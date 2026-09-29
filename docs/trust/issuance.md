@@ -172,7 +172,8 @@ driver's namespace. A volume created before the driver had it does not gain
 |---|---|---|
 | algorithm and size | ECDSA P-384 (P-256 where the client cannot be told otherwise) | fleet-wide default; see [hierarchy.md](hierarchy.md#lifetimes-and-algorithms) |
 | `privateKey.rotationPolicy` | `Always` | a new key on every renewal; a leaked key ages out |
-| `privateKey.encoding` | **PKCS#8** when a Java client reads the file | pgjdbc reads PKCS#8 PEM/DER or PKCS#12 only; cert-manager's default EC encoding is SEC1 (`BEGIN EC PRIVATE KEY`), which a Java client refuses; converting in an init container breaks native rotation |
+| `privateKey.encoding` | **PKCS#8** for every client | cert-manager's default EC encoding is SEC1 (`BEGIN EC PRIVATE KEY`), which a Java client refuses. PKCS#8 PEM is still not enough for the Java PostgreSQL driver: it needs **DER** PKCS#8 (see below and [databases.md](databases.md#per-driver-rotation-notes)) |
+| `additionalOutputFormats` | `DER` for a Java PostgreSQL client (candidate, **to be verified**) | the driver cannot read a PEM PKCS#8 EC key but reads DER PKCS#8; cert-manager can write the DER form beside the PEM, which would avoid an init-container conversion that breaks native rotation |
 | `duration` / `renewBefore` | 720h / 240h for hosts; the driver re-requests hourly identities | a renewal window many times the outage you want to survive |
 
 ## Reloading: what actually picks up a renewed file
@@ -185,9 +186,15 @@ A renewed certificate that nothing loads is an outage on a timer. The rules:
 - **A rotation is not atomic across two files.** A reader that catches it
   half-done must keep serving the previous, still-valid certificate rather than
   refusing every connection for the moment it takes.
-- **Label the Secrets a database operator reads.** CloudNativePG reloads a Secret
-  it consumes only when it carries `cnpg.io/reload`; without it, a renewed server
-  certificate or client CA waits for a manual reload.
+- **Label every Secret a database operator reads. This is a rule.** CloudNativePG
+  reloads a user-provided TLS Secret only when it carries `cnpg.io/reload: "true"`.
+  Measured on a small cluster: without the label a renewed server certificate was
+  not served after more than eight minutes; with it, in under five seconds. The
+  rule covers every user-provided Secret: server TLS, server CA, client CA and
+  replication. A cert-manager `Certificate` sets it with
+  `secretTemplate.labels`; a Secret written by trust-manager sets it with
+  `target.secret.metadata.labels`. Absent the label, nothing fails: the old
+  certificate is served until it expires.
 - **Know which side re-reads.** A client that builds its TLS configuration per
   new connection (libpq; pgjdbc, per new connection, see
   [databases.md](databases.md#per-driver-rotation-notes)) picks up a rotated

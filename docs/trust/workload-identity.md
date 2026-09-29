@@ -179,6 +179,8 @@ carries an identity and usually no host name at all).
    - It carries **exactly one URI name**, of any scheme. With two, which one is the
      identity would be a guess, and a guess is a grant.
    - A leaf that fails either is refused **whole, before its account is considered.**
+   - Delivered in truvity/policy's transport libraries (Go, Python) and its Kotlin
+     example as of v1.32.0.
 3. **Check the trust domain**, then the `ns`/`sa` pair, against the allow-list. The
    trust domain is checked *in addition to* the chain, as defence in depth: the
    chain is evidence of the environment, and the check makes it not the only
@@ -214,6 +216,9 @@ A message broker is the clearest case where identity pays. NATS's
 **URI SANs**, then the subject. So a broker user is named by the certificate's
 SPIFFE URI, verbatim; no field is bent to fit.
 
+- **Status.** LIVE as a pilot in a development environment: the publisher connects
+  with its SPIFFE identity and no token, and is mapped to its NATS user over
+  TLS 1.3. Its transitional shared-account entry has been removed.
 - The broker's `ca_file` is **that environment's identity bundle and nothing
   else**; its own server certificate is a private-chain leaf.
 - Mapped users get the exact subjects the catalogue lists for publishing and

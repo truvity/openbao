@@ -37,6 +37,8 @@ decision was taken.
 | [T-21](#t-21-the-gateway-signs-people-in) | The gateway signs people in | accepted |
 | [T-22](#t-22-storage-credentials-come-from-a-broker) | Storage credentials come from a broker | accepted |
 | [T-23](#t-23-passwords-are-an-explicit-fallback) | Passwords are an explicit fallback | accepted |
+| [T-24](#t-24-cnpg-secrets-always-carry-cnpgioreload) | CNPG Secrets always carry `cnpg.io/reload` | accepted |
+| [T-25](#t-25-people-ladder-roles-avoid-the-reserved-pg_-prefix) | People ladder roles avoid the reserved `pg_` prefix | accepted, names to be decided |
 
 ---
 
@@ -305,7 +307,7 @@ invariant. The old text is kept so the timeline is true.
 
 **Choice.** The OpenBAO `db-client` credential role signs a person's CSR (CN = e-mail, 1 hour);
 `pg_hba` has a people line before the catch-all with a map; `pg_ident` has explicit
-e-mail-to-role rows; roles are the existing ladder minus superuser; the private root is in
+e-mail-to-role rows; roles are a ladder minus superuser (names to be decided, see [T-25](#t-25-people-ladder-roles-avoid-the-reserved-pg_-prefix)); the private root is in
 the client-CA file, guarded by the tested CN invariant.
 
 | Alternative | Pros | Cons |
@@ -460,3 +462,33 @@ cannot present a client certificate. It is not the design.
 
 **Consequences.** Terminal state for applications is certificates; a soft step
 (`scram-sha-256 clientcert=verify-full`) eases migration.
+
+---
+
+### T-24: CNPG Secrets always carry `cnpg.io/reload`
+
+**Date:** 2026-09-29. **Status:** accepted.
+
+**Choice.** Every user-provided CloudNativePG Secret (server TLS, server CA, client CA,
+replication) carries `cnpg.io/reload: "true"`. cert-manager Certificates set it through
+`secretTemplate.labels`; trust-manager targets through `target.secret.metadata.labels`.
+
+| Alternative | Pros | Cons |
+|---|---|---|
+| no label, reload by hand | nothing to remember | measured: a renewed server certificate was not served after more than 8 minutes; the failure is silent until expiry |
+| restart instances on renewal | works | a restart per renewal, per instance |
+
+**Consequences.** [issuance.md](issuance.md#reloading-what-actually-picks-up-a-renewed-file).
+With the label a renewal was served in under 10 seconds, with no restart.
+
+---
+
+### T-25: People ladder roles avoid the reserved `pg_` prefix
+
+**Date:** 2026-09-29. **Status:** accepted; the final names are to be decided.
+
+**Choice.** The database roles people map to (the ladder) must not start with `pg_`.
+
+**Why.** PostgreSQL reserves the prefix for its predefined roles and refuses to create
+one, so a ladder named with it cannot exist. **Consequences.**
+[databases.md](databases.md#people).
