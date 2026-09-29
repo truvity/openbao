@@ -403,7 +403,7 @@ func (a *applier) pkiRole(s *scope, mount *model.PKIMount, role *model.PKIRole) 
 		ServerFlag:          pulumi.Bool(role.Server),
 		ClientFlag:          pulumi.Bool(role.Client),
 		KeyType:             pulumi.String("ec"),
-		KeyBits:             pulumi.Int(model.CurveBits[role.KeyCurve]),
+		KeyBits:             pulumi.Int(LeafKeyBits(role.KeyCurve)),
 		Ttl:                 pulumi.String(strconv.Itoa(ttl)),
 		MaxTtl:              pulumi.String(strconv.Itoa(maxTTL)),
 		NoStore:             pulumi.Bool(false),
@@ -521,6 +521,25 @@ func (a *applier) credentialRoles(s *scope, mount *model.PKIMount, accessors map
 	}
 
 	return nil
+}
+
+// LeafKeyBits is the `key_bits` a leaf PKI role carries for a leaf key
+// curve. OpenBAO treats an EC role's `key_bits` as a MINIMUM, never an
+// exact size (checked against a real server by
+// conformance/leafkeys_test.go): a role holding 384 refuses a P-256
+// request outright, while a role holding 256 signs P-256 and P-384 alike.
+// A P-384 leaf role therefore carries 256, so it accepts both curves a
+// workload commonly generates; a P-256 role carries 256 and a P-521 role
+// keeps 521, unchanged. (A [model.CredentialRole] -- a person's own
+// client credential -- is not a leaf a workload requests and keeps its
+// exact curve.) A CA's key is a different matter: it is generated
+// at its own curve's size ([model.CurveBits]) and never goes through this.
+func LeafKeyBits(curve string) int {
+	if curve == model.CurveP384 {
+		return model.CurveBits[model.CurveP256]
+	}
+
+	return model.CurveBits[curve]
 }
 
 // optionalStrings is a list input, or nil for an empty list: an empty

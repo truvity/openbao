@@ -1567,7 +1567,7 @@
     emailProtectionFlag: false
     enforceHostnames: true
     issuerRef: example-dev-billing
-    keyBits: 384
+    keyBits: 256
     keyType: ec
     maxTtl: "2592000"
     name: service
@@ -1648,7 +1648,7 @@
     emailProtectionFlag: false
     enforceHostnames: true
     issuerRef: example-dev
-    keyBits: 384
+    keyBits: 256
     keyType: ec
     maxTtl: "7776000"
     name: service
@@ -1685,7 +1685,7 @@
     emailProtectionFlag: false
     enforceHostnames: true
     issuerRef: example-dev
-    keyBits: 384
+    keyBits: 256
     keyType: ec
     maxTtl: "2592000"
     name: workload
@@ -1723,7 +1723,7 @@
     emailProtectionFlag: false
     enforceHostnames: true
     issuerRef: example-edge-dev
-    keyBits: 384
+    keyBits: 256
     keyType: ec
     maxTtl: "7776000"
     name: origin
