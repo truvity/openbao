@@ -39,6 +39,39 @@ func TestLoadHierarchyResolvesSpecsAgainstTheFile(t *testing.T) {
 	assert.Equal(t, hierarchy.Root.Artifact, emergency.RootArtifactPath)
 }
 
+// TestHierarchyIntermediateMaxPathLenOverride proves that an intermediate
+// may spend more of the root's maxPathLen budget than one level -- a
+// leaf-issuing CA signed directly by the root, with nothing of its own
+// below it, such as a per-environment issuing CA under a workload-identity
+// domain -- when it authors maxPathLen explicitly, and that the default
+// (root's own minus one) is unchanged for every intermediate that leaves
+// it out.
+func TestHierarchyIntermediateMaxPathLenOverride(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "hierarchy.yaml"))
+	require.NoError(t, err)
+
+	withOverride := strings.Replace(string(raw),
+		"    permittedUriDomains: [example.internal]\n",
+		"    permittedUriDomains: [example.internal]\n    maxPathLen: 0\n",
+		1)
+	require.NotEqual(t, string(raw), withOverride, "the identity intermediate's block must have been found and edited")
+
+	path := filepath.Join(t.TempDir(), "hierarchy.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(withOverride), 0o644))
+
+	hierarchy, err := LoadHierarchy(path)
+	require.NoError(t, err)
+
+	identity, err := hierarchy.Intermediate(fixtureIdentity)
+	require.NoError(t, err)
+	assert.Equal(t, 0, identity.MaxPathLen, "the authored override must replace the default root.MaxPathLen-1")
+
+	// Every intermediate that leaves maxPathLen out keeps the default.
+	private, err := hierarchy.Intermediate(fixturePrivate)
+	require.NoError(t, err)
+	assert.Equal(t, hierarchy.Root.MaxPathLen-1, private.MaxPathLen)
+}
+
 func TestLoadHierarchyRefusals(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "hierarchy.yaml"))
 	require.NoError(t, err)

@@ -42,7 +42,9 @@ type (
 	}
 
 	// HierarchyIntermediate is one domain intermediate below the root. Its
-	// validity starts with the root's and its path length is one less. An
+	// validity starts with the root's, and its path length defaults to one
+	// less than the root's -- an ordinary domain intermediate, with an
+	// environment issuing CA (or a project CA) still expected below it. An
 	// intermediate carries DNS constraints, URI constraints, both or
 	// neither -- a DNS-shaped domain (the existing "private"/"origin"
 	// kind) permits none, and a URI-only identity domain permits none.
@@ -57,7 +59,18 @@ type (
 		// It carries no DNS constraint of its own, and a DNS-shaped
 		// intermediate carries none of these.
 		PermittedURIDomains []string `yaml:"permittedUriDomains,omitempty"`
-		Artifact            string   `yaml:"artifact"`
+		// MaxPathLen overrides the default (the root's own minus one).
+		// Set it for a leaf-issuing CA signed directly by the root with
+		// nothing of its own below it -- for example a per-environment
+		// issuing CA under a workload-identity domain -- which may spend
+		// more of the root's budget at once than an ordinary domain
+		// intermediate does: RFC 5280's pathLenConstraint only bounds how
+		// many CA certificates may follow, it does not require each level
+		// to consume exactly one unit of it. [IntermediateSpec.validate]
+		// still requires it to be non-negative and strictly less than the
+		// root's own maxPathLen.
+		MaxPathLen *int   `yaml:"maxPathLen,omitempty"`
+		Artifact   string `yaml:"artifact"`
 	}
 
 	// HierarchyEmergency is the one name a break-glass leaf may serve.
@@ -151,6 +164,10 @@ func (h *Hierarchy) Intermediate(trustDomain string) (IntermediateSpec, error) {
 		if err != nil {
 			return IntermediateSpec{}, fmt.Errorf("%s intermediate: %w", trustDomain, err)
 		}
+		maxPathLen := h.Root.MaxPathLen - 1
+		if intermediate.MaxPathLen != nil {
+			maxPathLen = *intermediate.MaxPathLen
+		}
 		spec := IntermediateSpec{
 			TrustDomain:         trustDomain,
 			GenerationID:        h.Root.GenerationID,
@@ -158,7 +175,7 @@ func (h *Hierarchy) Intermediate(trustDomain string) (IntermediateSpec, error) {
 			Organization:        intermediate.Subject.Organization,
 			NotBefore:           notBefore,
 			Lifetime:            lifetime,
-			MaxPathLen:          h.Root.MaxPathLen - 1,
+			MaxPathLen:          maxPathLen,
 			PermittedDNSDomains: intermediate.PermittedDNSDomains,
 			PermittedURIDomains: intermediate.PermittedURIDomains,
 			RootArtifactPath:    h.Root.Artifact,
