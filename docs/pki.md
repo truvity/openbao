@@ -228,7 +228,10 @@ this package derives from the contract:
    `true` for an environment moving from a shared domain intermediate's
    issuing CA to its own root-signed one, where the mount already
    exists), exports the CSR it returns as a Pulumi output, and stops
-   there.
+   there. It registers the mount and the request under the names
+   `Deploy` will give them (`<namespace>-<mount>` and `<issuer>-csr`), so
+   phase B adopts both with no create and no delete; pass the same
+   `Options.Rename` to both.
 2. Someone runs `Contract.DNSIntermediateSpec` / `URIIntermediateSpec` /
    `EnvironmentCASpec` to build the `ceremony.IntermediateSpec`, then
    `ceremony.PrepareIntermediate` + `--print-template` to review the exact
