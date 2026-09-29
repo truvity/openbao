@@ -1,0 +1,177 @@
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-issuer
+  namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example-root-2026
+  namespace: cert-manager
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    ZXhhbXBsZS1yb290
+    -----END CERTIFICATE-----
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: example-approver-use
+  annotations:
+    example.com/sync-wave: "32"
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - "example-team"
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: example-approver-use
+  annotations:
+    example.com/sync-wave: "32"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: example-approver-use
+subjects:
+  - kind: ServiceAccount
+    name: certs
+    namespace: platform
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["openbao-issuer"]
+    verbs: ["create"]
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-issuer-token
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: openbao-private-ca
+spec:
+  sources:
+    - configMap:
+        name: example-root-2026
+        key: ca.crt
+  target:
+    configMap:
+      key: ca-certificates.crt
+    namespaceSelector:
+      {}
+
+---
+# Source: openbao-consumers/templates/certificates.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: example-team-leaf
+  namespace: cert-manager
+spec:
+  secretName: example-team-leaf-tls
+  dnsNames:
+    - "leaf.team.example.internal"
+  usages:
+    - server auth
+    - client auth
+  duration: 720h
+  renewBefore: 240h
+  privateKey:
+    algorithm: ECDSA
+    rotationPolicy: Always
+    size: 384
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: example-team
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: example-team
+  annotations:
+    example.com/sync-wave: "32"
+spec:
+  selector:
+    issuerRef:
+      name: "example-team"
+      kind: Issuer
+      group: cert-manager.io
+    namespace:
+      matchNames: ["cert-manager"]
+  allowed:
+    dnsNames:
+      values:
+        - '*.team.example.internal'
+    uris:
+      values:
+        - https://team.example.internal/
+    isCA: false
+    usages:
+      - server auth
+      - client auth
+  constraints:
+    minDuration: 1h
+    maxDuration: 2160h
+    privateKey:
+      algorithm: ECDSA
+      maxSize: 384
+      minSize: 256
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: example-team
+  namespace: cert-manager
+spec:
+  vault:
+    server: "https://openbao.example.internal:8200"
+    path: pki-team/sign/team
+    caBundle: "ZXhhbXBsZS1jYQ=="
+    auth:
+      kubernetes:
+        role: example-team
+        mountPath: /v1/auth/jwt
+        serviceAccountRef:
+          name: openbao-issuer

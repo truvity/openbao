@@ -148,3 +148,77 @@ certificates: []
 #    duration / renewBefore / privateKey: default certificateDefaults
 #    annotations: {}
 #    labels: {}
+
+# The approver layer, OPTIONAL and OFF. cert-manager ships a built-in
+# "blanket" approver that approves every CertificateRequest for an issuer it
+# knows, which turns a certificate's identity into decoration: any account
+# that may create a CertificateRequest gets whatever names it asks for.
+# Switching it off (cert-manager's `--controllers=*,-certificaterequests-approver`)
+# needs something else to approve: approver-policy, driven by the
+# CertificateRequestPolicy objects this section renders, one per issuer the
+# chart creates, and the RBAC that lets cert-manager `use` them. See
+# docs/approver.md for the order to do it in and the proof.
+#
+# Enabling this requires approver-policy to be installed, with each
+# rendered issuer's signer name in its `app.approveSignerNames`:
+#   clusterissuers.cert-manager.io/<name>   for kind ClusterIssuer
+#   issuers.cert-manager.io/<name>          for kind Issuer
+# (or `issuers.cert-manager.io/*` when namespacedIssuers.enabled).
+#
+# The SPIFFE identity issuer (pki.issuers[].identity: true) is NEVER given a
+# policy and its signer name must NOT be in approveSignerNames:
+# csi-driver-spiffe's own approver owns it, and it is the only thing that
+# checks a workload asks for its OWN identity. Handing that signer to
+# approver-policy would either leave it unapproved or approve any URI the
+# policy allows, and the policy has no notion of "the requester's own
+# ServiceAccount".
+approverPolicy:
+  enabled: false
+  annotations: {}
+  # The ClusterRole and ClusterRoleBinding that grant `use`. Default:
+  # <release>-approver-use.
+  roleName: ""
+  # Who creates the CertificateRequests: cert-manager's controller, for
+  # every Certificate. Empty means the ServiceAccount named by
+  # pki.certManager. csi-driver-spiffe's requests come from a workload's own
+  # ServiceAccount and need no entry here, by design.
+  requesters: []
+  #  - kind: ServiceAccount
+  #    name: cert-manager
+  #    namespace: cert-manager
+  # Constraints every policy gets unless its issuer overrides them. The key
+  # is ECDSA, 256 to 384 bits: P-384 is the chart's own default
+  # (certificateDefaults.privateKey.size), and OpenBAO's leaf roles accept
+  # P-256 as well, so a certificate that still asks for P-256 is not
+  # stranded mid-migration. Tighten to minSize: 384 once none does.
+  defaults:
+    minDuration: 1h
+    maxDuration: 2160h
+    privateKey:
+      algorithm: ECDSA
+      minSize: 256
+      maxSize: 384
+  # One entry per non-identity issuer in pki.issuers, keyed by its name: the
+  # shapes its certificates may take. Every value is a glob (`*` only).
+  # approver-policy DENIES a request field the policy does not name, so an
+  # issuer with no entry is a render error (a policy that names nothing
+  # would refuse every request), and so is an entry that names no
+  # commonName, dnsNames, uris, ipAddresses or emailAddresses.
+  issuers: {}
+  #  example-private:
+  #    dnsNames: ["*.devel.example.internal"]
+  #    uris: []
+  #    commonName: ""          # allowed value; empty: none allowed
+  #    ipAddresses: []
+  #    emailAddresses: []
+  #    usages: []              # omit: a request that sets usages is denied
+  #    minDuration / maxDuration / privateKey: override `defaults`
+  # ONE allow-all policy for every namespaced Issuer (kind Issuer, any
+  # namespace). A namespaced selfSigned or CA Issuer confers no trust
+  # outside its own namespace: whoever can create it already holds its key,
+  # so approving its requests grants nothing they did not have. Needed for
+  # tenants that mint their own Issuers under a fresh name, which no exact
+  # policy can name in advance. NOT for issuers backed by OpenBAO.
+  namespacedIssuers:
+    enabled: false
+    name: namespaced-issuers

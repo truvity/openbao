@@ -1,0 +1,3 @@
+# approverPolicy on with no pki issuers: nothing to write a policy for.
+approverPolicy:
+  enabled: true
