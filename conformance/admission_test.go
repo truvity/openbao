@@ -83,7 +83,7 @@ containers:
   - name: app
     image: registry.example/app:1
     volumeMounts:
-      - {name: identity, mountPath: /var/run/secrets/identity}
+      - {name: identity, mountPath: /var/run/identity}
 volumes:
   - name: identity
     csi: {driver: ` + csiDriver + `, readOnly: true}
