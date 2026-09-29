@@ -286,6 +286,20 @@ Stores and PKI are independent: an install may render either or both.
 | `approverPolicy.requesters` | cert-manager's ServiceAccount | Who is bound `use`: subjects of the `ClusterRoleBinding`. |
 | `approverPolicy.roleName` | `<release>-approver-use` | Name of the `ClusterRole` and `ClusterRoleBinding`. |
 | `approverPolicy.annotations` | `{}` | On every object of the layer. |
+| `alerts.enabled` | `false` | Render the [issuance alerts](trust/issuance.md#alerts): the rules for a Certificate not Ready, a denied request, csi-driver-spiffe and approver-policy unavailable, a Certificate ending or not renewed, a CA ending, cert-manager's metrics gone. |
+| `alerts.format` | `vmrule` | `vmrule` (VMRule), `prometheusrule` (PrometheusRule) or `configmap` (the plain rules file under `issuance-alerts.rules.yaml`). |
+| `alerts.name`, `.namespace` | `<release>-issuance-alerts`, the release namespace | The object's name and namespace. |
+| `alerts.labels`, `.annotations` | `{}` | On the object (`ruleSelector` labels; annotations merge over `commonAnnotations`). |
+| `alerts.ruleLabels` | `{}` | Added to every rule, for routing; a rule's own `labels` merge over them. |
+| `alerts.groupName`, `.interval` | `openbao-issuance`, empty | The rule group's name and evaluation interval. |
+| `alerts.selector.namespaceRegex`, `.nameRegex` | empty (every Certificate) | Regexes over the `namespace` and `name` labels of cert-manager's metrics, for the certificate rules. |
+| `alerts.workloadNamespace` | `pki.certManager.namespace` | Where csi-driver-spiffe and approver-policy run, for the workload rules. |
+| `alerts.rules.<rule>.enabled`, `.for`, `.severity`, `.labels`, `.annotations` | per rule | `certificateNotReady` (30m, warning), `certificateRequestDenied` (off, 5m, critical), `csiDriverSpiffeUnavailable` (10m, critical), `approverPolicyUnavailable` (follows `approverPolicy.enabled`, 10m, critical), `certificateExpiringSoon` (15m, warning), `certificateRenewalOverdue` (15m, warning), `caExpiring` (off, 1h, critical), `metricsAbsent` (15m, warning). |
+| `alerts.rules.certificateExpiringSoon.thresholdSeconds` | `604800` | Seven days. |
+| `alerts.rules.certificateRenewalOverdue.graceSeconds` | `7200` | Two hours past the renewal time. |
+| `alerts.rules.caExpiring.metric`, `.matchers`, `.thresholdSeconds` | `x509_cert_not_after`, empty, `2592000` | The exported not-after timestamp of the CAs, the label matchers selecting them, thirty days. |
+| `alerts.rules.certificateRequestDenied.metric`, `.typeLabel` | `kube_customresource_certificaterequest_condition`, `type` | The kube-state-metrics custom resource state metric for CertificateRequest conditions. |
+| `alerts.rules.csiDriverSpiffeUnavailable.daemonSetRegex`, `.deploymentRegex` | `cert-manager-csi-driver-spiffe`, `...-approver` | The driver DaemonSet and its approver Deployment. `approverPolicyUnavailable.deploymentRegex` is `cert-manager-approver-policy`. |
 | `certificateDefaults.duration`, `.renewBefore` | `720h`, `240h` | Renewal at a third of the lifetime: two chances before anything expires. |
 | `certificateDefaults.privateKey` | ECDSA 384, rotation Always | Must match what the role signs; a P-384 leaf role also accepts 256. |
 | `certificates[].name` | *required* | |

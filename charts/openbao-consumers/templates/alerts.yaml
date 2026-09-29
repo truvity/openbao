@@ -1,0 +1,116 @@
+{{- if .Values.alerts.enabled }}
+{{- $a := .Values.alerts }}
+{{- $r := $a.rules }}
+{{- $wns := $a.workloadNamespace | default .Values.pki.certManager.namespace }}
+{{- $name := $a.name | default (printf "%s-issuance-alerts" .Release.Name) }}
+{{- $ns := $a.namespace | default .Release.Namespace }}
+{{- /* The label matchers that scope the certificate rules. Values go
+       through toJson so a quote or a backslash in a regex reaches PromQL
+       as the string the operator wrote; promtool then proves it parses. */}}
+{{- $sel := list }}
+{{- with $a.selector.namespaceRegex }}{{- $sel = append $sel (printf "namespace=~%s" (toJson .)) }}{{- end }}
+{{- with $a.selector.nameRegex }}{{- $sel = append $sel (printf "name=~%s" (toJson .)) }}{{- end }}
+{{- $certSel := join "," $sel }}
+{{- $certSelPlus := ternary (printf ",%s" $certSel) "" (ne $certSel "") }}
+{{- $rules := list }}
+{{- /* Each rule: enabled -> a dict of alert, expr, for, labels, annotations. */}}
+{{- if $r.certificateNotReady.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.certificateNotReady "alert" "IssuanceCertificateNotReady"
+  "expr" (printf `certmanager_certificate_ready_status{condition="False"%s} == 1` $certSelPlus)
+  "summary" `Certificate {{ $labels.namespace }}/{{ $labels.name }} is not Ready`
+  "description" `Certificate {{ $labels.namespace }}/{{ $labels.name }} has not been Ready for longer than this alert's window. Its request may be Pending (issuer or approver not answering) or Denied by an approver: kubectl -n {{ $labels.namespace }} describe certificaterequest.`) }}
+{{- end }}
+{{- if $r.certificateRequestDenied.enabled }}
+{{- $c := $r.certificateRequestDenied }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "IssuanceCertificateRequestDenied"
+  "expr" (printf `max by (namespace, name) (%s{%s="Denied"}) == 1` $c.metric $c.typeLabel)
+  "summary" `CertificateRequest {{ $labels.namespace }}/{{ $labels.name }} was denied`
+  "description" `An approver denied CertificateRequest {{ $labels.namespace }}/{{ $labels.name }}; the workload gets no certificate until the request or the policy changes. Read the Denied condition's message: kubectl -n {{ $labels.namespace }} describe certificaterequest {{ $labels.name }}.`) }}
+{{- end }}
+{{- if $r.csiDriverSpiffeUnavailable.enabled }}
+{{- $c := $r.csiDriverSpiffeUnavailable }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "IssuanceCsiDriverSpiffeUnavailable"
+  "expr" (printf `kube_daemonset_status_number_unavailable{namespace=%s,daemonset=~%s} > 0 or kube_deployment_status_replicas_unavailable{namespace=%s,deployment=~%s} > 0` (toJson $wns) (toJson $c.daemonSetRegex) (toJson $wns) (toJson $c.deploymentRegex))
+  "summary" `csi-driver-spiffe has unavailable pods`
+  "description" `csi-driver-spiffe (driver or approver) has pods that are not available in {{ $labels.namespace }}. Workloads scheduled on the affected nodes cannot get their SPIFFE identity.`) }}
+{{- end }}
+{{- $apEnabled := $r.approverPolicyUnavailable.enabled }}
+{{- if kindIs "invalid" $apEnabled }}{{- $apEnabled = .Values.approverPolicy.enabled }}{{- end }}
+{{- if $apEnabled }}
+{{- $c := $r.approverPolicyUnavailable }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "IssuanceApproverPolicyUnavailable"
+  "expr" (printf `kube_deployment_status_replicas_unavailable{namespace=%s,deployment=~%s} > 0` (toJson $wns) (toJson $c.deploymentRegex))
+  "summary" `approver-policy has unavailable pods`
+  "description" `approver-policy has pods that are not available in {{ $labels.namespace }}. With the built-in approver off, requests for the issuers it owns stay Pending until it is back.`) }}
+{{- end }}
+{{- if $r.certificateExpiringSoon.enabled }}
+{{- $c := $r.certificateExpiringSoon }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "IssuanceCertificateExpiringSoon"
+  "expr" (printf `certmanager_certificate_expiration_timestamp_seconds{%s} - time() < %d` $certSel (int $c.thresholdSeconds))
+  "summary" `Certificate {{ $labels.namespace }}/{{ $labels.name }} ends in less than {{ $value | humanizeDuration }}`
+  "description" `Certificate {{ $labels.namespace }}/{{ $labels.name }} ends in {{ $value | humanizeDuration }} and has not been renewed, which means renewal has been failing for days.`) }}
+{{- end }}
+{{- if $r.certificateRenewalOverdue.enabled }}
+{{- $c := $r.certificateRenewalOverdue }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "IssuanceCertificateRenewalOverdue"
+  "expr" (printf `time() - certmanager_certificate_renewal_timestamp_seconds{%s} > %d and certmanager_certificate_renewal_timestamp_seconds{%s} > 0` $certSel (int $c.graceSeconds) $certSel)
+  "summary" `Certificate {{ $labels.namespace }}/{{ $labels.name }} was not renewed on time`
+  "description" `Certificate {{ $labels.namespace }}/{{ $labels.name }} passed its renewal time {{ $value | humanizeDuration }} ago and is still the old one. Look at its CertificateRequests and the issuer.`) }}
+{{- end }}
+{{- if $r.caExpiring.enabled }}
+{{- $c := $r.caExpiring }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "IssuanceCaExpiring"
+  "expr" (printf `%s%s - time() < %d` $c.metric (ternary (printf "{%s}" $c.matchers) "" (ne $c.matchers "")) (int $c.thresholdSeconds))
+  "summary" `An issuing or identity CA ends in less than {{ $value | humanizeDuration }}`
+  "description" `A CA certificate ends in {{ $value | humanizeDuration }}. Every leaf it signed stops verifying then: rotate it before, with the trust bundle carrying both.`) }}
+{{- end }}
+{{- if $r.metricsAbsent.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.metricsAbsent "alert" "IssuanceMetricsAbsent"
+  "expr" `absent(certmanager_clock_time_seconds)`
+  "summary" `cert-manager's metrics are absent`
+  "description" `No certmanager_* series is being scraped, so the certificate alerts cannot fire. cert-manager is down or is no longer scraped.`) }}
+{{- end }}
+{{- if not $rules }}
+{{- fail "alerts.enabled renders no rule: every alerts.rules.*.enabled is off, and an empty rule group is refused by the rulers this chart renders for" }}
+{{- end }}
+{{- $out := list }}
+{{- range $x := $rules }}
+{{- $cfg := $x.cfg }}
+{{- $labels := mergeOverwrite (deepCopy ($a.ruleLabels | default dict)) (dict "severity" $cfg.severity) (deepCopy ($cfg.labels | default dict)) }}
+{{- $ann := mergeOverwrite (dict "summary" $x.summary "description" $x.description) (deepCopy ($cfg.annotations | default dict)) }}
+{{- $out = append $out (dict "alert" $x.alert "expr" $x.expr "for" $cfg.for "labels" $labels "annotations" $ann) }}
+{{- end }}
+{{- $group := dict "name" $a.groupName "rules" $out }}
+{{- with $a.interval }}{{- $_ := set $group "interval" . }}{{- end }}
+{{- $groups := dict "groups" (list $group) }}
+---
+{{- if eq $a.format "configmap" }}
+apiVersion: v1
+kind: ConfigMap
+{{- else if eq $a.format "prometheusrule" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+{{- else }}
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+{{- end }}
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  {{- with $a.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if eq $a.format "configmap" }}
+data:
+  issuance-alerts.rules.yaml: |
+    {{- toYaml $groups | nindent 4 }}
+{{- else }}
+spec:
+  {{- toYaml $groups | nindent 2 }}
+{{- end }}
+{{- end }}

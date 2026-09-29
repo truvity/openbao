@@ -1,0 +1,5 @@
+alerts:
+  enabled: true
+  rules:
+    certificateExpiringSoon:
+      thresholdSeconds: "7d"

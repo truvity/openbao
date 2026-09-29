@@ -1,0 +1,5 @@
+alerts:
+  enabled: true
+  rules:
+    certificateExpiring:
+      enabled: true

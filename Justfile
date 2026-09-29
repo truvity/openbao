@@ -37,7 +37,8 @@ lint:
 # under Pulumi's mocks -- and the conformance tests against a real `bao
 # server` the dev shell pins: access-roster (`bao server -dev`) and the
 # break-glass TLS bootstrap rehearsal (`bao server`, TLS terminated by a
-# stand-in-signed leaf; see rehearse-bootstrap-tls). Required here, so a
+# stand-in-signed leaf; see rehearse-bootstrap-tls) -- and `promtool check
+# rules` over every format of every alerts case of openbao-consumers. Required here, so a
 # shell without `bao` fails rather than skipping the proof.
 test:
     hack/golden.sh

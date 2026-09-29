@@ -1,0 +1,242 @@
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-issuer
+  namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example-root-2026
+  namespace: cert-manager
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    ZXhhbXBsZS1yb290
+    -----END CERTIFICATE-----
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-consumers-approver-use
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - "example-private"
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-consumers-approver-use
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-consumers-approver-use
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["openbao-issuer"]
+    verbs: ["create"]
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-issuer-token
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: openbao-private-ca
+spec:
+  sources:
+    - configMap:
+        name: example-root-2026
+        key: ca.crt
+  target:
+    configMap:
+      key: ca-certificates.crt
+    namespaceSelector:
+      {}
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: example-private
+spec:
+  selector:
+    issuerRef:
+      name: "example-private"
+      kind: ClusterIssuer
+      group: cert-manager.io
+  allowed:
+    dnsNames:
+      required: true
+      values:
+        - '*.example.internal'
+    isCA: false
+  constraints:
+    minDuration: 1h
+    maxDuration: 2160h
+    privateKey:
+      algorithm: ECDSA
+      maxSize: 384
+      minSize: 256
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: example-private
+spec:
+  vault:
+    server: "https://openbao.example.internal:8200"
+    path: pki/sign/private
+    caBundle: "ZXhhbXBsZS1jYQ=="
+    auth:
+      kubernetes:
+        role: example-private
+        mountPath: /v1/auth/jwt
+        serviceAccountRef:
+          name: openbao-issuer
+
+---
+# Source: openbao-consumers/templates/alerts.yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: openbao-consumers-issuance-alerts
+  namespace: default
+spec:
+  groups:
+  - name: openbao-issuance
+    rules:
+    - alert: IssuanceCertificateNotReady
+      annotations:
+        description: 'Certificate {{ $labels.namespace }}/{{ $labels.name }} has not
+          been Ready for longer than this alert''s window. Its request may be Pending
+          (issuer or approver not answering) or Denied by an approver: kubectl -n {{
+          $labels.namespace }} describe certificaterequest.'
+        summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} is not Ready
+      expr: certmanager_certificate_ready_status{condition="False",namespace=~"app-\\d+",name=~".*\"quoted\".*"}
+        == 1
+      for: 30m
+      labels:
+        severity: warning
+    - alert: IssuanceCertificateRequestDenied
+      annotations:
+        description: 'An approver denied CertificateRequest {{ $labels.namespace }}/{{
+          $labels.name }}; the workload gets no certificate until the request or the
+          policy changes. Read the Denied condition''s message: kubectl -n {{ $labels.namespace
+          }} describe certificaterequest {{ $labels.name }}.'
+        summary: CertificateRequest {{ $labels.namespace }}/{{ $labels.name }} was denied
+      expr: max by (namespace, name) (kube_customresource_certificaterequest_condition{type="Denied"})
+        == 1
+      for: 5m
+      labels:
+        severity: critical
+    - alert: IssuanceCsiDriverSpiffeUnavailable
+      annotations:
+        description: csi-driver-spiffe (driver or approver) has pods that are not available
+          in {{ $labels.namespace }}. Workloads scheduled on the affected nodes cannot
+          get their SPIFFE identity.
+        summary: csi-driver-spiffe has unavailable pods
+      expr: kube_daemonset_status_number_unavailable{namespace="cert-manager",daemonset=~"cert-manager-csi-driver-spiffe"}
+        > 0 or kube_deployment_status_replicas_unavailable{namespace="cert-manager",deployment=~"cert-manager-csi-driver-spiffe-approver"}
+        > 0
+      for: 10m
+      labels:
+        severity: critical
+    - alert: IssuanceApproverPolicyUnavailable
+      annotations:
+        description: approver-policy has pods that are not available in {{ $labels.namespace
+          }}. With the built-in approver off, requests for the issuers it owns stay
+          Pending until it is back.
+        summary: approver-policy has unavailable pods
+      expr: kube_deployment_status_replicas_unavailable{namespace="cert-manager",deployment=~"cert-manager-approver-policy"}
+        > 0
+      for: 10m
+      labels:
+        severity: critical
+    - alert: IssuanceCertificateExpiringSoon
+      annotations:
+        description: Certificate {{ $labels.namespace }}/{{ $labels.name }} ends in
+          {{ $value | humanizeDuration }} and has not been renewed, which means renewal
+          has been failing for days.
+        summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} ends in less
+          than {{ $value | humanizeDuration }}
+      expr: certmanager_certificate_expiration_timestamp_seconds{namespace=~"app-\\d+",name=~".*\"quoted\".*"}
+        - time() < 604800
+      for: 15m
+      labels:
+        severity: warning
+    - alert: IssuanceCertificateRenewalOverdue
+      annotations:
+        description: Certificate {{ $labels.namespace }}/{{ $labels.name }} passed its
+          renewal time {{ $value | humanizeDuration }} ago and is still the old one.
+          Look at its CertificateRequests and the issuer.
+        summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} was not renewed
+          on time
+      expr: time() - certmanager_certificate_renewal_timestamp_seconds{namespace=~"app-\\d+",name=~".*\"quoted\".*"}
+        > 7200 and certmanager_certificate_renewal_timestamp_seconds{namespace=~"app-\\d+",name=~".*\"quoted\".*"}
+        > 0
+      for: 15m
+      labels:
+        severity: warning
+    - alert: IssuanceCaExpiring
+      annotations:
+        description: 'A CA certificate ends in {{ $value | humanizeDuration }}. Every
+          leaf it signed stops verifying then: rotate it before, with the trust bundle
+          carrying both.'
+        summary: An issuing or identity CA ends in less than {{ $value | humanizeDuration
+          }}
+      expr: x509_cert_not_after - time() < 2592000
+      for: 1h
+      labels:
+        severity: critical
+    - alert: IssuanceMetricsAbsent
+      annotations:
+        description: No certmanager_* series is being scraped, so the certificate alerts
+          cannot fire. cert-manager is down or is no longer scraped.
+        summary: cert-manager's metrics are absent
+      expr: absent(certmanager_clock_time_seconds)
+      for: 15m
+      labels:
+        severity: warning

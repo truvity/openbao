@@ -1,0 +1,13 @@
+# The plain rules file in a ConfigMap, for a ruler that loads files, with
+# the opt-in rules that need an exported metric switched on.
+alerts:
+  enabled: true
+  format: configmap
+  annotations:
+    example.internal/purpose: rules-file
+  rules:
+    certificateRequestDenied:
+      enabled: true
+    caExpiring:
+      enabled: true
+      matchers: 'secret_namespace="cert-manager"'

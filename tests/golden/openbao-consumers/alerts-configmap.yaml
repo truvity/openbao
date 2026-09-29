@@ -1,0 +1,92 @@
+---
+# Source: openbao-consumers/templates/alerts.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-consumers-issuance-alerts
+  namespace: default
+  annotations:
+    example.internal/purpose: rules-file
+data:
+  issuance-alerts.rules.yaml: |
+    groups:
+    - name: openbao-issuance
+      rules:
+      - alert: IssuanceCertificateNotReady
+        annotations:
+          description: 'Certificate {{ $labels.namespace }}/{{ $labels.name }} has not
+            been Ready for longer than this alert''s window. Its request may be Pending
+            (issuer or approver not answering) or Denied by an approver: kubectl -n {{
+            $labels.namespace }} describe certificaterequest.'
+          summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} is not Ready
+        expr: certmanager_certificate_ready_status{condition="False"} == 1
+        for: 30m
+        labels:
+          severity: warning
+      - alert: IssuanceCertificateRequestDenied
+        annotations:
+          description: 'An approver denied CertificateRequest {{ $labels.namespace }}/{{
+            $labels.name }}; the workload gets no certificate until the request or the
+            policy changes. Read the Denied condition''s message: kubectl -n {{ $labels.namespace
+            }} describe certificaterequest {{ $labels.name }}.'
+          summary: CertificateRequest {{ $labels.namespace }}/{{ $labels.name }} was denied
+        expr: max by (namespace, name) (kube_customresource_certificaterequest_condition{type="Denied"})
+          == 1
+        for: 5m
+        labels:
+          severity: critical
+      - alert: IssuanceCsiDriverSpiffeUnavailable
+        annotations:
+          description: csi-driver-spiffe (driver or approver) has pods that are not available
+            in {{ $labels.namespace }}. Workloads scheduled on the affected nodes cannot
+            get their SPIFFE identity.
+          summary: csi-driver-spiffe has unavailable pods
+        expr: kube_daemonset_status_number_unavailable{namespace="cert-manager",daemonset=~"cert-manager-csi-driver-spiffe"}
+          > 0 or kube_deployment_status_replicas_unavailable{namespace="cert-manager",deployment=~"cert-manager-csi-driver-spiffe-approver"}
+          > 0
+        for: 10m
+        labels:
+          severity: critical
+      - alert: IssuanceCertificateExpiringSoon
+        annotations:
+          description: Certificate {{ $labels.namespace }}/{{ $labels.name }} ends in
+            {{ $value | humanizeDuration }} and has not been renewed, which means renewal
+            has been failing for days.
+          summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} ends in less
+            than {{ $value | humanizeDuration }}
+        expr: certmanager_certificate_expiration_timestamp_seconds{} - time() < 604800
+        for: 15m
+        labels:
+          severity: warning
+      - alert: IssuanceCertificateRenewalOverdue
+        annotations:
+          description: Certificate {{ $labels.namespace }}/{{ $labels.name }} passed its
+            renewal time {{ $value | humanizeDuration }} ago and is still the old one.
+            Look at its CertificateRequests and the issuer.
+          summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} was not renewed
+            on time
+        expr: time() - certmanager_certificate_renewal_timestamp_seconds{} > 7200 and
+          certmanager_certificate_renewal_timestamp_seconds{} > 0
+        for: 15m
+        labels:
+          severity: warning
+      - alert: IssuanceCaExpiring
+        annotations:
+          description: 'A CA certificate ends in {{ $value | humanizeDuration }}. Every
+            leaf it signed stops verifying then: rotate it before, with the trust bundle
+            carrying both.'
+          summary: An issuing or identity CA ends in less than {{ $value | humanizeDuration
+            }}
+        expr: x509_cert_not_after{secret_namespace="cert-manager"} - time() < 2592000
+        for: 1h
+        labels:
+          severity: critical
+      - alert: IssuanceMetricsAbsent
+        annotations:
+          description: No certmanager_* series is being scraped, so the certificate alerts
+            cannot fire. cert-manager is down or is no longer scraped.
+          summary: cert-manager's metrics are absent
+        expr: absent(certmanager_clock_time_seconds)
+        for: 15m
+        labels:
+          severity: warning

@@ -1,0 +1,6 @@
+# The issuance alerts as a VMRule, every default: what an install that only
+# sets `alerts.enabled` gets. The opt-in rules stay off; approver-policy's
+# own rule follows approverPolicy, which is off here.
+alerts:
+  enabled: true
+  format: vmrule

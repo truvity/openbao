@@ -1,0 +1,31 @@
+# Every rule on, approver-policy included, with a selector whose regex
+# holds a quote and a backslash: what reaches PromQL must still parse
+# (conformance/alert_rules_test.go runs promtool over this render in every
+# format).
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+pki:
+  enabled: true
+  trustAnchors:
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  issuers:
+    - name: example-private
+      signPath: pki/sign/private
+      role: example-private
+approverPolicy:
+  enabled: true
+  issuers:
+    example-private:
+      dnsNames: ["*.example.internal"]
+alerts:
+  enabled: true
+  format: vmrule
+  selector:
+    namespaceRegex: 'app-\d+'
+    nameRegex: '.*"quoted".*'
+  rules:
+    certificateRequestDenied:
+      enabled: true
+    caExpiring:
+      enabled: true
