@@ -419,14 +419,17 @@ certificateExpiry:
 #   snapshotAge     is there a fresh backup where the backups are kept?
 #   jobSuccess      have these jobs actually SUCCEEDED lately?
 #   rootGeneration  is someone generating a root token?
+#   pluginCatalog   are the plugins pkg/serverpreset declares actually IN
+#                   the catalog, at the version a mount will ask for?
 #
 # They exist because the failure each watches for is silent. A snapshot job
 # can be green while the store is empty; a CronJob that stops being
 # scheduled never produces a failed Job; a root token is generated without
-# using any credential that could be revoked.
+# using any credential that could be revoked; a declarative plugin download
+# can fail and leave the server running anyway.
 #
-# All three deliver through the same contract as certificateExpiry, with the
-# same two presets, so an estate configures one channel and not three:
+# All four deliver through the same contract as certificateExpiry, with the
+# same two presets, so an estate configures one channel and not four:
 # a probe writes /work/alert — the first line a summary, the rest the
 # description — and the alert container delivers it and exits non-zero.
 # An empty report is silence.
@@ -738,6 +741,112 @@ rootGeneration:
         pullPolicy: ""
 
 # ---------------------------------------------------------------------------
+# Are the plugins pkg/serverpreset declares actually IN the catalog, at the
+# version a mount will ask for? OpenBAO downloads an OCI plugin
+# declaratively at startup, and the default download behaviour
+# (plugin_download_behavior = "continue") lets the server start anyway when
+# that download fails, with the plugin simply missing until something
+# retries it (docs/server.md "The plugin catalog: three faults, fixed
+# once") — so a failed download is silent until a mount tries to use the
+# plugin. This complements a log-based alert on "failed to download
+# plugin": it asks the catalog itself, on a schedule, rather than only
+# whichever pipeline happens to watch the server's own log lines.
+#
+# sys/plugins/catalog/<type>/<name> is the ground truth: the declarative
+# path is the only one that can register a catalog entry pointing into the
+# OCI cache (an API registration of the same entry is refused). A missing
+# entry, or one at the wrong version, is reported the same way a stale
+# snapshot is.
+pluginCatalog:
+  enabled: false
+  name: openbao-plugin-catalog
+  annotations: {}
+  serviceAccountAnnotations: {}
+  clusterName: ""
+  # The OpenBAO role the watch logs in as. Reading a sys/ path needs BOTH
+  # capabilities below, not read alone — it should have exactly:
+  #   path "sys/plugins/catalog/<type>/<name>" {
+  #     capabilities = ["read", "sudo"]
+  #   }
+  # for each entry in `plugins`, and nothing else.
+  baoRole: openbao-plugin-catalog
+
+  # Hourly: a plugin does not change outside a deliberate rollout, and the
+  # rollout runbook (docs/server.md) already checks the catalog by hand
+  # before trusting a change — this is what notices a download that never
+  # arrived in between.
+  schedule: "58 * * * *"
+  timeZone: Etc/UTC
+  startingDeadlineSeconds: 600
+  activeDeadlineSeconds: 300
+  # A retry would deliver the same alert twice, and the next run is an
+  # hour away.
+  backoffLimit: 0
+  nodeSelector: {}
+  tolerations: []
+
+  image:
+    repository: openbao/openbao
+    tag: "2.6.2"
+    digest: ""
+    pullPolicy: ""
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+  # One entry per plugin pkg/serverpreset's Config declares. `type` is the
+  # plugin's catalog type (the first label of its `plugin` HCL block):
+  # "auth", "secret" or "database". This list is also the whole of what
+  # the watch's role may read, named entry by entry.
+  plugins: []
+  #  - type: secret
+  #    name: openbao-plugin-example
+  #    version: v1.2.3
+  #    description: the example secrets engine
+  #    # Optional: fail the entry too when it does not report these. Only
+  #    # the declarative path can set either, so a false here on an entry
+  #    # that otherwise matches is a catalog entry an API call created —
+  #    # proof the download itself never actually ran.
+  #    oci: true
+  #    declarative: true
+
+  alert:
+    image:
+      repository: amazon/aws-cli
+      tag: "2.36.44"
+      digest: ""
+      pullPolicy: ""
+    command: []
+    args: []
+    env: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+    sns:
+      enabled: false
+      topicArn: ""
+      region: ""
+      runbook: ""
+    alertmanager:
+      enabled: false
+      url: ""
+      alertname: OpenBAOPluginMissing
+      severity: critical
+      release: ""
+      runbook: ""
+      image:
+        repository: curlimages/curl
+        tag: "8.22.0"
+        digest: ""
+        pullPolicy: ""
+
+# ---------------------------------------------------------------------------
 networkPolicy:
   enabled: false
   annotations: {}
@@ -748,6 +857,7 @@ networkPolicy:
     snapshotAgeIngress: openbao-snapshot-age-ingress
     jobSuccessIngress: openbao-job-success-ingress
     rootGenerationIngress: openbao-root-generation-ingress
+    pluginCatalogIngress: openbao-plugin-catalog-ingress
   # Where clients live. Required when enabled.
   clientCidrs: []
   # Anything else that may reach the API, as raw NetworkPolicyPeer entries.

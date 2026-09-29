@@ -1,0 +1,13 @@
+# The second would overwrite the first's answer, and one entry would go
+# unwatched while the report claimed to cover both.
+pluginCatalog:
+  enabled: true
+  plugins:
+    - type: secret
+      name: openbao-plugin-example
+      version: v1.2.3
+    - type: secret
+      name: openbao-plugin-example
+      version: v1.3.0
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

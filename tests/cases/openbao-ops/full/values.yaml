@@ -132,6 +132,30 @@ rootGeneration:
       topicArn: example-topic
       region: eu-example-1
       runbook: "The way back is `bao operator generate-root -cancel`."
+pluginCatalog:
+  enabled: true
+  annotations:
+    example.com/sync-wave: "80"
+  nodeSelector:
+    example.com/pool: batch
+  clusterName: example-cluster
+  plugins:
+    - type: secret
+      name: openbao-plugin-example
+      version: v1.2.3
+      description: the example secrets engine
+      oci: true
+      declarative: true
+    - type: auth
+      name: openbao-plugin-example-auth
+      version: v0.4.0
+      description: the example auth method
+  alert:
+    sns:
+      enabled: true
+      topicArn: example-topic
+      region: eu-example-1
+      runbook: "The way back is docs/server.md's plugin rollout runbook."
 networkPolicy:
   enabled: true
   annotations:

@@ -72,6 +72,7 @@ each has a part of its own:
 | `snapshotAge` | is there a fresh backup where the backups are kept? | the snapshot job can be green while the store is empty — a wrong prefix, a credential that lost its write, a lifecycle that expires faster than the schedule refills. The store is where a restore will look, so it is where the question belongs |
 | `jobSuccess` | have these jobs actually SUCCEEDED lately? | a CronJob that stops being scheduled never produces a failed Job, so "no failures" is not "working". `status.lastSuccessfulTime` is missing in exactly that case |
 | `rootGeneration` | is someone generating a root token? | a root token is bound by no policy, and generating one uses a quorum of the recovery-key holders rather than any credential that could be revoked |
+| `pluginCatalog` | are the plugins `pkg/serverpreset` declares actually IN the catalog, at the version a mount will ask for? | OpenBAO downloads an OCI plugin declaratively at startup, and `plugin_download_behavior = "continue"` (the default) lets the server start anyway when that download fails — a missing plugin is silent until a mount tries to use it. `sys/plugins/catalog/<type>/<name>` is the ground truth: the declarative path is the only one that can register an entry pointing into the OCI cache, so an entry present at the right version is proof the download ran (docs/server.md "The plugin catalog: three faults, fixed once") |
 
 Three rules they share, each learned from a way a check can be worse than
 none:
@@ -191,6 +192,7 @@ The charts assume, and do not create, a least-privilege split:
 | `snapshotAge` | none | LIST one prefix; no read, no write | none (no token automounted) |
 | `jobSuccess` | none | publish to one topic | `get` on the named CronJobs (the chart's Role) |
 | `rootGeneration` | read `sys/generate-root-token/attempt` | publish to one topic | none (no token automounted) |
+| `pluginCatalog` | read AND sudo `sys/plugins/catalog/<type>/<name>`, per configured entry, in root | publish to one topic | none (no token automounted) |
 | issuers | `pki.issuers[].role`, bound to the issuer's audience | — | cert-manager mints the login's tokens (the chart's Role) |
 | stores | `stores[].role` / `writers[].name` | — | the presented ServiceAccount's token |
 

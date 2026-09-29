@@ -307,6 +307,44 @@
         "alert": { "$ref": "#/definitions/alertContract" }
       }
     },
+    "pluginCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "serviceAccountAnnotations": { "$ref": "#/definitions/stringMap" },
+        "clusterName": { "type": "string" },
+        "baoRole": { "type": "string", "minLength": 1 },
+        "schedule": { "type": "string", "minLength": 1 },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "nodeSelector": { "$ref": "#/definitions/stringMap" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "image": { "$ref": "#/definitions/image" },
+        "resources": { "type": "object" },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "name", "version"],
+            "properties": {
+              "type": { "type": "string", "enum": ["auth", "secret", "database"] },
+              "name": { "$ref": "#/definitions/name" },
+              "version": { "type": "string", "minLength": 1 },
+              "description": { "type": "string" },
+              "oci": { "type": "boolean" },
+              "declarative": { "type": "boolean" }
+            }
+          }
+        },
+        "alert": { "$ref": "#/definitions/alertContract" }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
@@ -322,7 +360,8 @@
             "certificateExpiryIngress": { "type": "string", "minLength": 1 },
             "snapshotAgeIngress": { "type": "string", "minLength": 1 },
             "jobSuccessIngress": { "type": "string", "minLength": 1 },
-            "rootGenerationIngress": { "type": "string", "minLength": 1 }
+            "rootGenerationIngress": { "type": "string", "minLength": 1 },
+            "pluginCatalogIngress": { "type": "string", "minLength": 1 }
           }
         },
         "clientCidrs": { "type": "array", "items": { "type": "string" } },

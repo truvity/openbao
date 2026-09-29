@@ -295,6 +295,20 @@ version a mount will ask for.
    "the plugin isn't there" from the mount's side even once the catalog
    itself is correct.
 
+Step 2 above is also `charts/openbao-ops`'s `pluginCatalog` watch, run on a
+schedule rather than by hand: it re-reads `sys/plugins/catalog/<type>/<name>`
+for every plugin an estate configures and alerts the moment one is missing,
+at the wrong version, or — with `oci`/`declarative` checked — reports an
+entry an API call could have created rather than one the declarative
+download actually registered. It complements a log-based alert on `failed
+to download plugin`: that needs a pipeline watching the server's own log
+lines, where this asks the catalog itself, the same ground truth step 2
+reads by hand. Reading the catalog needs a policy granting **both** `read`
+and `sudo` on `sys/plugins/catalog/<type>/<name>`, per entry, in the root
+namespace — this chart never creates that policy or the role bound to it
+(docs/doctrine.md's ownership contract); see [docs/reference.md](reference.md#plugincatalog)
+for the values.
+
 ## Image
 
 Keep the server's image, `snapshot.image`, `restoreCheck.image` and

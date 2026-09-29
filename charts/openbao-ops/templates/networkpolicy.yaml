@@ -22,6 +22,9 @@
 {{- if $.Values.rootGeneration.enabled }}
 {{- $isolated = append $isolated (dict "name" $np.names.rootGenerationIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.rootGeneration.name)) }}
 {{- end }}
+{{- if $.Values.pluginCatalog.enabled }}
+{{- $isolated = append $isolated (dict "name" $np.names.pluginCatalogIngress "podSelector" (dict "app.kubernetes.io/name" $.Values.pluginCatalog.name)) }}
+{{- end }}
 {{- range $i := $np.isolated }}
 {{- if not (and $i.name $i.podSelector) }}
 {{- fail "every entry of networkPolicy.isolated needs a name and a podSelector — an empty selector would isolate every pod in the namespace" }}
@@ -83,6 +86,15 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: {{ $.Values.rootGeneration.name }}
+      ports:
+        - port: {{ $.Values.server.apiPort }}
+          protocol: TCP
+    {{- end }}
+    {{- if $.Values.pluginCatalog.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Values.pluginCatalog.name }}
       ports:
         - port: {{ $.Values.server.apiPort }}
           protocol: TCP

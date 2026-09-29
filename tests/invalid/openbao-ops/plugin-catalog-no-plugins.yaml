@@ -1,0 +1,6 @@
+# A watch over no plugin passes for ever.
+pluginCatalog:
+  enabled: true
+  plugins: []
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

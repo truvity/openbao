@@ -5,6 +5,28 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.20.0
+
+### Added
+
+- **`charts/openbao-ops`**: a fourth watch, `pluginCatalog`, complementing
+  the three that shipped in v0.6.1. OpenBAO downloads an external plugin
+  declaratively at startup, and `plugin_download_behavior = "continue"`
+  (the default) lets the server start anyway when that download fails --
+  the plugin simply missing until something retries it, and silent until
+  a mount tries to use it. `pluginCatalog` re-reads
+  `sys/plugins/catalog/<type>/<name>` for every entry an estate
+  configures (`type`, `name`, `version`, optionally `oci` and
+  `declarative`) and reports any that are missing, at the wrong version,
+  or -- with `oci`/`declarative` checked -- registered by an API call
+  rather than the declarative download itself. It is off by default, logs
+  in the same audience-scoped, short-lived way `rootGeneration` does, and
+  delivers through the same alert contract and presets as the other three.
+  Reading the catalog needs a policy granting **both** `read` and `sudo`
+  on `sys/plugins/catalog/<type>/<name>`, per entry, in the root
+  namespace -- this chart never creates that policy or the role bound to
+  it (docs/doctrine.md's ownership contract).
+
 ## v0.19.1
 
 - README rewritten in the component contract's heading order with `Consumers` and `Neighbours`; the doctrine link points at the policy component contract; `Status` states the AWS KMS coupling of `serverpreset`, `ceremony` and `custody` as of 2026-09-29.

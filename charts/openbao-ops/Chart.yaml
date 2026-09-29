@@ -5,10 +5,11 @@ description: >-
   chart: snapshots that are verified before they are stored, a weekly
   restore that opens one and proves the data and the PKI are still there,
   an alert before the serving certificate ends, watches for a store with no
-  fresh backup in it, a job that has quietly stopped succeeding and a root
-  token being generated, network policies that keep
-  the server and its jobs reachable only from what should, a serving
-  certificate, and the sidecar that reloads it when it is renewed.
+  fresh backup in it, a job that has quietly stopped succeeding, a root
+  token being generated and a plugin missing from the catalog, network
+  policies that keep the server and its jobs reachable only from what
+  should, a serving certificate, and the sidecar that reloads it when it
+  is renewed.
 type: application
 # Placeholder: the git tag is the sole version authority. The release
 # workflow stamps both fields from the tag (truvity/ci-workflows
