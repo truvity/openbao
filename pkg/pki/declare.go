@@ -232,7 +232,7 @@ func (c *Contract) EnvironmentCASpec(domainName, environment, value, generationI
 		// constrains to that environment's value alone.
 		PermittedURIDomains: []string{value},
 		RootArtifactPath:    c.RootArtifactPath(generationID),
-		ArtifactPath:        c.ArtifactPath(IntermediateArtifactName(generationID, domainName, environment)),
+		ArtifactPath:        c.ArtifactPath(domain.environmentCAArtifactName(generationID, environment)),
 		SerialNamespace:     c.SerialNamespace,
 	}, nil
 }

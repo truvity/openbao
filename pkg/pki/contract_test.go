@@ -298,6 +298,9 @@ func TestValidateRefusals(t *testing.T) {
 		{"environmentCA no common name suffix", mutate(func(c *Contract) {
 			c.TrustDomains.URI[0].EnvironmentCA.CommonNameSuffix = ""
 		}), "commonNameSuffix is required"},
+		{"environmentCA artifact pattern without environment placeholder", mutate(func(c *Contract) {
+			c.TrustDomains.URI[0].EnvironmentCA.ArtifactPattern = "{generation}-legacy.yaml"
+		}), `must contain "{environment}"`},
 		{"uri role wrong curve", mutate(func(c *Contract) { c.TrustDomains.URI[0].Role.KeyCurve = "P-521" }), "is neither global.keyCurve"},
 		{"alerts enabled", mutate(func(c *Contract) { c.Alerts.Enabled = true }), "alerts.enabled must remain false"},
 		{"sign alerts empty", mutate(func(c *Contract) { c.SignAlerts.Notify = nil }), "must name at least one recipient"},
