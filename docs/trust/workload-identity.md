@@ -51,7 +51,7 @@ domain is what makes it one.
 
 ## How a pod gets one
 
-1. The pod mounts a volume from the CSI driver (`csi.spiffe.io`) at a fixed path.
+1. The pod mounts a volume from the CSI driver (`spiffe.csi.cert-manager.io`) at a fixed path.
 2. The driver creates a `CertificateRequest` **as the pod's own ServiceAccount**
    (that is the attestation) for the URI naming that ServiceAccount, on an
    annotated request to the environment's `identity` issuer, with an ECDSA P-256
