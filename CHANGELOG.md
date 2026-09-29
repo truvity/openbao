@@ -24,6 +24,19 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
   composite actions the workflows call moved to `truvity/ci-actions`
   at v3.9.0, transparently to every workflow-level caller.
 
+### Fixed
+
+- **`internal/fakeissuer`: the authorize endpoint no longer redirects to
+  an unregistered `redirect_uri`** (CodeQL alert #1,
+  `go/unvalidated-url-redirection`). It now refuses, with 400, before a
+  code is ever issued, any `redirect_uri` that is not exactly one its
+  client registered -- the same shape a real OIDC client registration
+  takes. `fakeissuer.New`'s client map now carries a `Client{Secret,
+  RedirectURIs}` per id instead of a bare secret string; every caller in
+  this repository (`internal/fakeissuer`, `conformance`) is updated.
+  This is a test double with no production exposure, fixed anyway so the
+  contract it proves stays honest.
+
 ## v0.18.0
 
 ### Added

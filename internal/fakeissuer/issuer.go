@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,12 +60,23 @@ type (
 		// trusts this issuer can be handed either kind of token.
 		esKey   *ecdsa.PrivateKey
 		esKeyID string
-		clients map[string]string
+		clients map[string]Client
 
 		mu       sync.Mutex
 		signIn   *Claims
 		codes    map[string]grant
 		accesses map[string]map[string]any
+	}
+
+	// Client is one client the code flow admits: id to secret plus the
+	// exact redirect URIs it is registered for -- the same shape a real
+	// issuer's client registration takes. authorize refuses any
+	// redirect_uri not in this list, exactly, with 400, before it ever
+	// issues a code; nothing here follows a caller-supplied redirect it
+	// was not told to trust first (CodeQL go/unvalidated-url-redirection).
+	Client struct {
+		Secret       string
+		RedirectURIs []string
 	}
 
 	// Claims are what one token says. Subject and Audience are required;
@@ -89,9 +101,9 @@ type (
 	}
 )
 
-// New starts an issuer. Clients are the confidential clients the token
-// endpoint admits for the code flow, id to secret.
-func New(clients map[string]string) (*Issuer, error) {
+// New starts an issuer. Clients are the confidential clients the code flow
+// admits, id to secret and registered redirect URIs.
+func New(clients map[string]Client) (*Issuer, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("fakeissuer: generate a key: %w", err)
@@ -299,8 +311,17 @@ func (i *Issuer) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := i.clients[clientID]; !ok || redirectURI == "" {
-		http.Error(w, "unknown client or no redirect", http.StatusBadRequest)
+	// The redirect must be one this client registered, compared as an
+	// exact string, refused before a code is ever issued -- otherwise
+	// authorize hands a code (and, on redemption, an ID token) to whatever
+	// caller-supplied URI it is pointed at (CodeQL
+	// go/unvalidated-url-redirection). A real issuer's client registration
+	// works the same way; SignIn is left untouched here so a refused
+	// attempt does not consume a sign-in meant for the retry that follows
+	// it with a registered redirect.
+	client, ok := i.clients[clientID]
+	if !ok || redirectURI == "" || !slices.Contains(client.RedirectURIs, redirectURI) {
+		http.Error(w, "unknown client or unregistered redirect", http.StatusBadRequest)
 
 		return
 	}
@@ -351,7 +372,7 @@ func (i *Issuer) token(w http.ResponseWriter, r *http.Request) {
 		clientID, secret = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
 	}
 
-	if want, known := i.clients[clientID]; !known || secret != want {
+	if want, known := i.clients[clientID]; !known || secret != want.Secret {
 		oauthError(w, http.StatusUnauthorized, "invalid_client")
 
 		return
