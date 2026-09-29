@@ -477,12 +477,19 @@ func start(t *testing.T) *conformance {
 	t.Helper()
 
 	binary := tool(t, "bao")
+	address := devServer(t, binary)
 
-	issuer, err := fakeissuer.New(map[string]string{model.RosterUIClient: uiSecret})
+	// The redirect the UI door will actually send -- computed the same way
+	// examples/roster does it, from the same address -- registered for the
+	// client up front, the way a real issuer's client registration works.
+	// authorize refuses anything else (CodeQL go/unvalidated-url-redirection).
+	issuer, err := fakeissuer.New(map[string]fakeissuer.Client{
+		model.RosterUIClient: {Secret: uiSecret, RedirectURIs: []string{model.UICallback(address, model.RosterUIMount)}},
+	})
 	require.NoError(t, err)
 	t.Cleanup(issuer.Close)
 
-	c := &conformance{issuer: issuer, address: devServer(t, binary)}
+	c := &conformance{issuer: issuer, address: address}
 	desired := roster.Desired(roster.Params{Issuer: issuer.URL, Address: c.address})
 
 	opts := apply.Options{

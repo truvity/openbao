@@ -186,7 +186,9 @@ func TestDiscoveryAndTokens(t *testing.T) {
 // redeemed once, by its client, with the client's secret, for an ID token
 // carrying the nonce and the groups.
 func TestCodeFlow(t *testing.T) {
-	issuer, err := fakeissuer.New(map[string]string{"openbao-ui": "s3cret"})
+	issuer, err := fakeissuer.New(map[string]fakeissuer.Client{
+		"openbao-ui": {Secret: "s3cret", RedirectURIs: []string{"https://openbao.example.com/cb"}},
+	})
 	require.NoError(t, err)
 	t.Cleanup(issuer.Close)
 
@@ -248,4 +250,41 @@ func TestCodeFlow(t *testing.T) {
 	again := redeem("s3cret")
 	_ = again.Body.Close()
 	assert.Equal(t, http.StatusBadRequest, again.StatusCode, "a code is redeemed once")
+}
+
+// authorize must refuse a redirect_uri the client did not register, before
+// it ever issues a code -- the fix for CodeQL go/unvalidated-url-redirection
+// (alert #1, internal/fakeissuer/issuer.go): the endpoint used to redirect
+// to whatever the caller passed, once the client_id was merely known.
+func TestAuthorizeRejectsUnregisteredRedirect(t *testing.T) {
+	issuer, err := fakeissuer.New(map[string]fakeissuer.Client{
+		"openbao-ui": {Secret: "s3cret", RedirectURIs: []string{"https://openbao.example.com/cb"}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(issuer.Close)
+
+	issuer.SignIn(fakeissuer.Claims{Subject: "person@example.com"})
+
+	noRedirects := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	authorize := func(redirectURI string) *http.Response {
+		response, err := noRedirects.Get(issuer.URL + fakeissuer.AuthorizePath + "?" + url.Values{
+			"response_type": {"code"}, "scope": {"openid"}, "client_id": {"openbao-ui"},
+			"redirect_uri": {redirectURI}, "state": {"st"},
+		}.Encode())
+		require.NoError(t, err)
+
+		return response
+	}
+
+	unregistered := authorize("https://evil.example.com/cb")
+	_ = unregistered.Body.Close()
+	require.Equal(t, http.StatusBadRequest, unregistered.StatusCode,
+		"a redirect_uri the client never registered must be refused before a code is issued")
+
+	// The rejected attempt above must not have consumed the pending
+	// SignIn: a registered redirect still gets it, proving the refusal
+	// happens before authorize touches sign-in state at all.
+	registered := authorize("https://openbao.example.com/cb")
+	_ = registered.Body.Close()
+	assert.Equal(t, http.StatusFound, registered.StatusCode, "a registered redirect_uri still works")
 }
