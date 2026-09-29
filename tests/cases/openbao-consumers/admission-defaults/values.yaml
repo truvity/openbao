@@ -1,0 +1,4 @@
+# The admission policy, every default: what an install that only sets
+# `admissionPolicy.enabled` gets. Deny, Fail, all three rules, workloads.
+admissionPolicy:
+  enabled: true

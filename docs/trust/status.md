@@ -52,7 +52,8 @@ Last reviewed: 2026-09-30.
 | CSI driver, driver approver, identity role | LIVE | |
 | one project on identity, `permissive` | IN PROGRESS | a pilot in one development environment |
 | calls catalogue and its render-time checks | LIVE | |
-| `enforced` level and strict components | PLANNED | nothing is strict today |
+| `enforced` level: admission policy (identity volume, ServiceAccount, TLS ports) | PARTIAL | shipped in `openbao-consumers` (off by default, dry-run mode), proved on a real API server; no namespace is labelled yet by the platform |
+| strict components | PLANNED | nothing is strict today |
 | ServiceAccount per component | IN PROGRESS | mandatory; rolling out across projects; charts render it, others to migrate |
 | single-identity, non-CA leaf checks in the transport libraries | LIVE | Go, Python and the Kotlin example (policy v1.32.0); a leaf that is a CA, may sign certificates or CRLs, or lacks exactly one URI name is refused |
 | broker mapping identity to a user (NATS `verify_and_map`) | LIVE (pilot) | one publisher in one development environment connects with its identity and no token, mapped over TLS 1.3; the transitional shared-account entry is removed |

@@ -1,0 +1,21 @@
+# The dry-run rollout: warn and audit, refuse nothing; a different opt-in
+# label, driver, exemption and gateway annotation; allow lists; the pod
+# rules only on Pods (no workload templates); the Service rule on.
+admissionPolicy:
+  enabled: true
+  name: mtls-dry-run
+  labels: {tier: platform}
+  annotations: {note: dry-run}
+  namespaceLabel:
+    key: example.test/mtls-level
+    value: enforced
+  validationActions: [Warn, Audit]
+  workloads: false
+  exemptAnnotation: example.test/mtls-exempt
+  csi:
+    driver: csi.example.test
+    ignoreContainers: [mesh-proxy]
+  services:
+    tlsAppProtocols: [https, tls]
+    allow: [edge-backend, metrics/prom]
+    gatewayFrontedAnnotation: example.test/gateway-fronted
