@@ -319,12 +319,25 @@ func (i *Issuer) authorize(w http.ResponseWriter, r *http.Request) {
 	// works the same way; SignIn is left untouched here so a refused
 	// attempt does not consume a sign-in meant for the retry that follows
 	// it with a registered redirect.
+	//
+	// trustedRedirectURI, not redirectURI, is what gets parsed and
+	// redirected to below: the registered string, from this server's own
+	// client table, never the query parameter a caller supplied. A merely
+	// equal-value check leaves the tainted string itself flowing into
+	// url.Parse/http.Redirect, which is the shape CodeQL's taint tracker
+	// flags regardless of what was checked first; substituting the
+	// server-trusted copy severs that flow at its source instead of
+	// arguing with the analyzer about it.
 	client, ok := i.clients[clientID]
-	if !ok || redirectURI == "" || !slices.Contains(client.RedirectURIs, redirectURI) {
+	index := slices.Index(client.RedirectURIs, redirectURI)
+
+	if !ok || redirectURI == "" || index < 0 {
 		http.Error(w, "unknown client or unregistered redirect", http.StatusBadRequest)
 
 		return
 	}
+
+	trustedRedirectURI := client.RedirectURIs[index]
 
 	i.mu.Lock()
 	who := i.signIn
@@ -340,10 +353,10 @@ func (i *Issuer) authorize(w http.ResponseWriter, r *http.Request) {
 	code := randomString()
 	claims := *who
 	claims.Audience = clientID
-	i.codes[code] = grant{claims: claims, clientID: clientID, redirectURI: redirectURI, nonce: query.Get("nonce")}
+	i.codes[code] = grant{claims: claims, clientID: clientID, redirectURI: trustedRedirectURI, nonce: query.Get("nonce")}
 	i.mu.Unlock()
 
-	back, err := url.Parse(redirectURI)
+	back, err := url.Parse(trustedRedirectURI)
 	if err != nil {
 		http.Error(w, "bad redirect", http.StatusBadRequest)
 
