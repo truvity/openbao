@@ -259,6 +259,9 @@ _, err := custody.Deploy(ctx, custody.Args{
   charts assume
 - [docs/ceremony.md](docs/ceremony.md) — the KMS-rooted CA ceremony,
   step by step
+- [docs/pki.md](docs/pki.md) — `pkg/pki`, the authored private-PKI
+  contract above the ceremony: root generations, trust domains,
+  per-environment roles, and per-environment identity CAs
 - [docs/custody.md](docs/custody.md) — the root key's policy, roles and
   Sign alarm
 - [docs/model.md](docs/model.md) — OpenBAO's desired state per engine,

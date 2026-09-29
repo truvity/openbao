@@ -5,6 +5,32 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.18.0
+
+### Added
+
+- **`pkg/pki`: the authored private-PKI contract, above `pkg/ceremony`.**
+  Loading and validating a hierarchy's policy — how many root generations
+  exist and their AWS KMS custody, the DNS- and URI-shaped trust domains
+  below them, the leaf roles each domain offers per environment, and a
+  workload-identity domain's per-environment issuing CAs signed DIRECTLY
+  by the root (a real OpenBAO 2.6.2 limitation this avoids —
+  [openbao/openbao#4104](https://github.com/openbao/openbao/issues/4104),
+  see [docs/pki.md](docs/pki.md#per-environment-identity-cas-and-why) —
+  rather than a preference) — used to be something every consuming estate
+  wrote for itself. `Contract.Validate` carries the invariants (immutable
+  crypto policy with a declared, allow-listed exception for the one leaf
+  curve a caller's own client cannot be told to change; strictly
+  decreasing lifetimes root > domain intermediate > cluster intermediate
+  > leaf; exactly one active generation; a domain that
+  `requireTrusted` actually is); `Contract.RootSpec` /
+  `DNSIntermediateSpec` / `URIIntermediateSpec` / `EnvironmentCASpec` /
+  `EmergencyServerSpec` turn it into the `ceremony.RootSpec` /
+  `IntermediateSpec` / `EmergencyServerSpec` values `pkg/ceremony` signs
+  from, and `Contract.TrustAnchors` / `LoadSignedIntermediate` /
+  `IntermediateSigned` read the committed artifacts back, offline, with no
+  KMS credential. See [docs/pki.md](docs/pki.md).
+
 ## v0.17.0
 
 ### Changed

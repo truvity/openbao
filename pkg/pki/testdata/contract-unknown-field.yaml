@@ -1,0 +1,21 @@
+schemaVersion: 1
+notAField: true
+global:
+  immutable: true
+  keyAlgorithm: ECDSA
+  keyCurve: P-384
+  signatureAlgorithm: ECDSA_SHA_384
+  minimumTlsVersion: TLS1.3
+rootGenerations: []
+trustDomains: {}
+alerts:
+  enabled: false
+  thresholds:
+    rootGeneration: 43800h
+    domainIntermediate: 17520h
+    clusterIntermediate: 4320h
+    leaf: 240h
+signAlerts:
+  notify: [security@example.org]
+migration:
+  trustedGenerations: []
