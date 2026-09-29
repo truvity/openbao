@@ -20,6 +20,7 @@ Every part is off until enabled, so one install can carry any subset.
 | `snapshot` | ServiceAccount, one CronJob per tier |
 | `restoreCheck` | ServiceAccount, ConfigMap, CronJob |
 | `certificateExpiry` | ServiceAccount, Role, RoleBinding, CronJob |
+| `pluginCatalog` | ServiceAccount, CronJob |
 | `networkPolicy` | the server's ingress, an ingress deny per job pod and per `isolated` entry, `egress.rules` |
 | `serverCertificate` | Certificate |
 | `tlsReload` | nothing: a fragment for the upstream chart |
@@ -141,6 +142,44 @@ Every part is off until enabled, so one install can carry any subset.
 | `alert.alertmanager.release` | `""` | The `release` label, which tells two installs apart; empty leaves the label out. A value like every other name here, never Helm's release name. |
 | `alert.alertmanager.runbook` | `""` | The `runbook` annotation: where the way back is written down. |
 | `alert.alertmanager.image` | `curlimages/curl:8.22.0` | This preset's image, because `alert.image` defaults to the AWS CLI. Anything with a POSIX shell and curl does. |
+
+### pluginCatalog
+
+Are the plugins [`pkg/serverpreset`](#pkgserverpreset) declares actually
+in the catalog, at the version a mount will ask for? See
+[server.md](server.md#the-plugin-catalog-three-faults-fixed-once). Reading
+`sys/plugins/catalog/<type>/<name>` needs a policy granting **both** `read`
+and `sudo` on that path, per entry, in the root namespace — this chart
+never creates that policy or the role bound to it (docs/doctrine.md's
+ownership contract).
+
+| Value | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Render the watch. |
+| `name` | `openbao-plugin-catalog` | The ServiceAccount and the CronJob, and the pods' label. |
+| `annotations` | `{}` | On every object of the part. |
+| `serviceAccountAnnotations` | `{}` | On the ServiceAccount only, over `annotations`. |
+| `clusterName` | `""` | Named in the alert. |
+| `baoRole` | `openbao-plugin-catalog` | The OpenBAO role the watch logs in as: `read` and `sudo` on `sys/plugins/catalog/<type>/<name>` per entry below, and nothing else. |
+| `schedule`, `timeZone` | `58 * * * *`, `Etc/UTC` | Hourly. |
+| `startingDeadlineSeconds`, `activeDeadlineSeconds`, `backoffLimit` | `600`, `300`, `0` | A retry would deliver the same alert twice, and the next run is an hour away. |
+| `nodeSelector`, `tolerations` | none | |
+| `image` | `openbao/openbao:2.6.2` | Needs the `bao` CLI to log in and read the catalog. |
+| `resources` | 10m / 64Mi, limit 256Mi | |
+| `plugins` | `[]` *(required)* | One entry per plugin `pkg/serverpreset`'s `Config` declares: `type` (`auth`, `secret` or `database` — the catalog path's first segment), `name`, `version`, optionally `description`, `oci` and `declarative`. This list is also the whole of what the watch's role may read, named entry by entry; two entries naming the same `type`/`name` fail the render. |
+| `plugins[].oci`, `plugins[].declarative` | `false` (unchecked) | When `true`, the entry must also report that field as `true`, or it counts as a problem — only the declarative download path can set either, so a `false` on an otherwise-matching entry is a catalog entry an API call created, not one the download registered. |
+| `alert.image` | `amazon/aws-cli:2.36.44` | |
+| `alert.command`, `alert.args`, `alert.env`, `alert.resources` | none | A replacement alert (the contract above). |
+| `alert.sns.enabled` | `false` | The SNS preset: publish, then fail the run. At most one preset may be on. |
+| `alert.sns.topicArn`, `alert.sns.region` | `""` | Required with the preset. |
+| `alert.sns.runbook` | `""` | A last line of the message: where the way back is written down. |
+| `alert.alertmanager.enabled` | `false` | The Alertmanager preset: one POST, then fail the run. At most one preset may be on. |
+| `alert.alertmanager.url` | `""` | Required with the preset: where Alertmanager answers. The chart appends `/api/v2/alerts`, so a value that is not an `http(s)` origin fails the render. |
+| `alert.alertmanager.alertname` | `OpenBAOPluginMissing` | The `alertname` label. |
+| `alert.alertmanager.severity` | `critical` | The `severity` label. |
+| `alert.alertmanager.release` | `""` | The `release` label, which tells two installs apart; empty leaves the label out. |
+| `alert.alertmanager.runbook` | `""` | The `runbook` annotation: where the way back is written down. |
+| `alert.alertmanager.image` | `curlimages/curl:8.22.0` | This preset's image, because `alert.image` defaults to the AWS CLI. |
 
 ### networkPolicy
 

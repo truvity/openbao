@@ -1,4 +1,4 @@
-# The three watches alone, on a cluster whose alerts arrive through
+# The four watches alone, on a cluster whose alerts arrive through
 # Alertmanager: an install that runs the jobs elsewhere — or not at all —
 # and only wants to be told when something has gone quiet.
 #
@@ -44,6 +44,25 @@ jobSuccess:
 rootGeneration:
   enabled: true
   clusterName: example-cluster
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
+pluginCatalog:
+  enabled: true
+  clusterName: example-cluster
+  plugins:
+    - type: secret
+      name: openbao-plugin-example
+      version: v1.2.3
+      description: the example secrets engine
+      oci: true
+      declarative: true
+    - type: auth
+      name: openbao-plugin-example-auth
+      version: v0.4.0
+      description: the example auth method
   alert:
     alertmanager:
       enabled: true

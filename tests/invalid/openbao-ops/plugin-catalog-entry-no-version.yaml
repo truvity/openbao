@@ -1,0 +1,10 @@
+# The version is half of the path this watch reads and half of the
+# consumer's policy: without it there is nothing to check the catalog
+# entry against.
+pluginCatalog:
+  enabled: true
+  plugins:
+    - type: secret
+      name: openbao-plugin-example
+  alert:
+    sns: {enabled: true, topicArn: example-topic, region: eu-example-1}

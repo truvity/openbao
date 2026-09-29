@@ -1,0 +1,230 @@
+{{- if .Values.pluginCatalog.enabled }}
+{{- $a := .Values.pluginCatalog }}
+{{- $ns := include "ops.namespace" . }}
+{{- if not $a.plugins }}
+{{- fail "pluginCatalog.plugins is empty — a watch over no plugin is a job that always passes" }}
+{{- end }}
+{{- $seen := dict }}
+{{- range $p := $a.plugins }}
+{{- if or (not $p.type) (not $p.name) (not $p.version) }}
+{{- fail "every pluginCatalog.plugins entry needs a type, a name and a version: they are the path and the query this watch reads, and granted by name in the consumer's policy" }}
+{{- end }}
+{{- $key := printf "%s/%s" $p.type $p.name }}
+{{- if hasKey $seen $key }}
+{{- fail (printf "pluginCatalog.plugins has two entries for %q — the second would overwrite the first's answer and one plugin would go unwatched" $key) }}
+{{- end }}
+{{- $seen = set $seen $key true }}
+{{- end }}
+{{- include "ops.alertRefusals" (dict "part" "pluginCatalog" "alert" $a.alert) }}
+{{- $serverSelector := list }}
+{{- range $k, $v := .Values.server.podLabels }}
+{{- $serverSelector = append $serverSelector (printf "%s=%s" $k $v) }}
+{{- end }}
+{{- $serverSelector = join "," $serverSelector }}
+---
+{{- /* Reading the catalog needs a login to OpenBAO, not the Kubernetes
+       API, so this job keeps the default token off just like the other
+       watches that dial the server directly. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" (mergeOverwrite (deepCopy ($a.annotations | default dict)) ($a.serviceAccountAnnotations | default dict))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+{{- /* Are the plugins pkg/serverpreset declares actually IN the catalog,
+       at the version a mount will ask for?
+
+       OpenBAO downloads an OCI plugin declaratively at startup, and the
+       default download behaviour (plugin_download_behavior = "continue")
+       lets the server start anyway when that download fails, with the
+       plugin simply missing until something retries it. A failed
+       download is therefore silent until a mount tries to use the
+       plugin — and sys/plugins/catalog/<type>/<name> is the one place
+       that says whether it actually landed: the declarative path is the
+       only one that can register an entry pointing into the OCI cache,
+       so an entry that exists at all, at the right version, is proof the
+       download ran.
+
+       The watch failing to even ASK is itself an alert, the same as the
+       other watches that log in: losing that access is a step someone
+       would take before an entry could disappear unnoticed, and it is
+       equally what a sealed or unreachable server looks like. */}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $a.name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ops.labels" $a.name | nindent 4 }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $a.schedule | quote }}
+  timeZone: {{ $a.timeZone }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $a.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $a.backoffLimit }}
+      activeDeadlineSeconds: {{ $a.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ $a.name }}
+        spec:
+          serviceAccountName: {{ $a.name }}
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          {{- with $a.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $a.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ops.podSecurityContext" $ | nindent 12 }}
+          initContainers:
+            - name: read
+              {{- include "ops.imageLines" $a.image | nindent 14 }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  : > /work/alert
+                  : > /work/report
+                  problems=0
+                  {{- /* Shell WORDS, never shell: see ops.shellArg. The
+                         mount and the role are what this watch is, so
+                         they are named in the report as well as used. */}}
+                  cluster={{ include "ops.shellArg" ($a.clusterName | default "") }}
+                  mount={{ include "ops.shellArg" $.Values.auth.mountPath }}
+                  role={{ include "ops.shellArg" $a.baoRole }}
+
+                  # Nothing below the login exits non-zero: the alert
+                  # container is the only thing that tells anyone, and it
+                  # never runs if this one fails the pod.
+                  blind() {
+                    {
+                      echo "${cluster:+$cluster: }the plugin-catalog watch cannot see OpenBAO"
+                      echo "$1: $(head -c 300 /work/why 2>/dev/null)"
+                      echo "This watch logs in as the role $role through the $mount mount to read sys/plugins/catalog/<type>/<name>, and it can no longer do so. Losing that access is a step someone would take before a catalog entry could disappear unnoticed, and it is equally what a sealed or unreachable server looks like."
+                      echo "Look at: kubectl -n {{ $ns }} get pods -l {{ $serverSelector }}; bao status; bao read auth/$mount/role/$role; bao policy read <the policy bound to it>."
+                      echo "The way back: restore the role and its policy — read AND sudo on sys/plugins/catalog/<type>/<name> for each configured entry, and nothing else — from the configuration that owns them, and re-run this job."
+                    } > /work/alert
+                    cat /work/alert
+                    exit 0
+                  }
+
+                  if ! bao write -field=token "auth/$mount/login" \
+                       "role=$role" jwt=@{{ include "ops.tokenPath" $ }} \
+                       > /work/token 2> /work/why; then
+                    blind "logging in failed"
+                  fi
+                  BAO_TOKEN="$(cat /work/token)"
+                  export BAO_TOKEN
+                  rm -f /work/token
+
+                  # Reading one entry does not exit the container: a
+                  # single plugin missing, or a policy narrowed to drop
+                  # one of several entries, is a problem for the report,
+                  # not proof the whole watch has gone blind.
+                  look() {
+                    type=$1; name=$2; version=$3; want_oci=$4; want_declarative=$5; what=$6
+                    if ! bao read "sys/plugins/catalog/$type/$name" "version=$version" \
+                         > /work/answer 2> /work/why; then
+                      echo "  $type/$name ($what) is not in the catalog at version $version: $(head -c 300 /work/why)" >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    if [ "$want_oci" = "true" ]; then
+                      got=$(bao read -field=oci "sys/plugins/catalog/$type/$name" "version=$version" 2> /work/why) || got="?"
+                      if [ "$got" != "true" ]; then
+                        echo "  $type/$name ($what) is in the catalog at $version but oci=$got, not true — an API registration, not a declarative download" >> /work/report
+                        problems=$((problems + 1))
+                        return 0
+                      fi
+                    fi
+                    if [ "$want_declarative" = "true" ]; then
+                      got=$(bao read -field=declarative "sys/plugins/catalog/$type/$name" "version=$version" 2> /work/why) || got="?"
+                      if [ "$got" != "true" ]; then
+                        echo "  $type/$name ($what) is in the catalog at $version but declarative=$got, not true — an API registration, not a declarative download" >> /work/report
+                        problems=$((problems + 1))
+                        return 0
+                      fi
+                    fi
+                    echo "$type/$name: in the catalog at $version"
+                  }
+
+                  {{- range $p := $a.plugins }}
+                  look {{ include "ops.shellArg" $p.type }} {{ include "ops.shellArg" $p.name }} {{ include "ops.shellArg" $p.version }} {{ include "ops.shellArg" (ternary "true" "false" ($p.oci | default false)) }} {{ include "ops.shellArg" (ternary "true" "false" ($p.declarative | default false)) }} {{ include "ops.shellArg" ($p.description | default (printf "%s/%s" $p.type $p.name)) }}
+                  {{- end }}
+
+                  bao token revoke -self || true
+
+                  if [ "$problems" = 0 ]; then
+                    exit 0
+                  fi
+                  {
+                    echo "${cluster:+$cluster: }$problems of {{ len $a.plugins }} OpenBAO plugin(s) are not in the catalog as configured"
+                    echo "OpenBAO downloads an OCI plugin declaratively at startup, and plugin_download_behavior = \"continue\" lets the server start anyway when that download fails — a mount that uses a missing plugin fails only when something tries to use it, never when the download itself was silently skipped:"
+                    cat /work/report
+                    echo "Look at: kubectl -n {{ $ns }} get pods -l {{ $serverSelector }} (each pod's own logs for \"failed to download plugin\"); bao read sys/plugins/catalog/<type>/<name>."
+                    echo "The way back: canary one standby, confirm the catalog entry there, then roll the rest — docs/server.md's plugin rollout runbook."
+                  } > /work/alert
+                  cat /work/alert
+              env:
+                - name: BAO_ADDR
+                  value: {{ include "ops.serverAddress" $ }}
+                - name: BAO_CACERT
+                  value: /tls/{{ $.Values.server.caKey }}
+                {{- with $.Values.server.tlsServerName }}
+                {{- /* Dial the active pod, verify the name the serving
+                       certificate carries. */}}
+                - name: BAO_TLS_SERVER_NAME
+                  value: {{ . | quote }}
+                {{- end }}
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: {{ $.Values.auth.tokenMountPath }}
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                {{- toYaml $a.resources | nindent 16 }}
+              securityContext:
+                {{- include "ops.containerSecurityContext" $ | nindent 16 }}
+          containers:
+            {{- include "ops.alertContainer" (dict "root" $ "part" "pluginCatalog" "alert" $a.alert) | nindent 12 }}
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+            - {{- include "ops.loginVolume" $ | nindent 14 }}
+            - name: ca
+              secret:
+                secretName: {{ $.Values.server.tlsSecretName }}
+                items:
+                  - key: {{ $.Values.server.caKey }}
+                    path: {{ $.Values.server.caKey }}
+{{- end }}

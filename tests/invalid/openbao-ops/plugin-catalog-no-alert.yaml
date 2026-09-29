@@ -1,0 +1,8 @@
+# A plugin-catalog watch that tells nobody is a log line in a pod that is
+# deleted an hour later.
+pluginCatalog:
+  enabled: true
+  plugins:
+    - type: secret
+      name: openbao-plugin-example
+      version: v1.2.3
