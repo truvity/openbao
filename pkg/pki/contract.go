@@ -527,6 +527,17 @@ func (d *URITrustDomain) environmentCAArtifactName(generationID, environment str
 	return name
 }
 
+// EnvironmentCAIssuerName is the deterministic OpenBAO issuer (and key)
+// name of one environment's own root-signed CA under this domain: this
+// domain's own name and the environment, the same shape
+// [Contract.EnvironmentCASpec]'s TrustDomain already uses for the
+// ceremony's serial derivation, so a caller building the desired state a
+// signed artifact installs into (an `External` [model.PKIIssuer]) and the
+// ceremony that signed it never disagree on what this CA is called.
+func (d *URITrustDomain) EnvironmentCAIssuerName(environment string) string {
+	return d.Name + "-" + environment
+}
+
 // RootGeneration returns the authored generation with this ID, or nil.
 func (c *Contract) RootGeneration(id string) *RootGeneration {
 	for i := range c.Generations {
