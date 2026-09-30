@@ -85,12 +85,61 @@ func TestIdentitySignerIsSkippedOnlyWhenNamed(t *testing.T) {
 	assert.Contains(t, out, "skipped: 1")
 }
 
+// certificatesFile writes one Certificate for issuer/dns to a file.
+func certificatesFile(t *testing.T, dns string) string {
+	t.Helper()
+
+	body := fmt.Sprintf(`apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: leaf}
+spec:
+  secretName: leaf
+  duration: 720h
+  dnsNames: [%s]
+  privateKey: {algorithm: ECDSA, size: 384}
+  issuerRef: {name: example-private, kind: ClusterIssuer, group: cert-manager.io}
+`, dns)
+	path := filepath.Join(t.TempDir(), "certs.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
+}
+
+func TestCertificatesAreCheckedOffline(t *testing.T) {
+	code, out, _ := runCLI(t, "--policies", chartPolicies, "--certificates", certificatesFile(t, "api.east.example.internal"), "--namespace", "ci-tenant")
+	assert.Equal(t, 0, code, out)
+	assert.Contains(t, out, "ci-tenant/leaf-1")
+	assert.Contains(t, out, "approved: 1")
+
+	code, out, _ = runCLI(t, "--policies", chartPolicies, "--certificates", certificatesFile(t, "api.evil.example.com"))
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "denied: 1")
+
+	// Requests and certificates are checked together.
+	good := requestFile(t, "example-private", "ClusterIssuer", "api.east.example.internal", elliptic.P384())
+	code, out, _ = runCLI(t, "--policies", chartPolicies, "--requests", good, "--certificates", certificatesFile(t, "api.east.example.internal"))
+	assert.Equal(t, 0, code, out)
+	assert.Contains(t, out, "approved: 2")
+}
+
+func TestPoliciesMayBeGivenMoreThanOnce(t *testing.T) {
+	empty := filepath.Join(t.TempDir(), "empty.yaml")
+	require.NoError(t, os.WriteFile(empty, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\n"), 0o600))
+
+	good := requestFile(t, "example-private", "ClusterIssuer", "api.east.example.internal", elliptic.P384())
+	code, out, _ := runCLI(t, "--policies", empty, "--policies", chartPolicies, "--requests", good)
+	assert.Equal(t, 0, code, out)
+	assert.Contains(t, out, "3 policies")
+}
+
 func TestUsageErrors(t *testing.T) {
 	good := requestFile(t, "example-private", "ClusterIssuer", "api.east.example.internal", elliptic.P384())
 	for name, args := range map[string][]string{
 		"no policies":               {"--requests", good},
 		"neither requests nor live": {"--policies", chartPolicies},
 		"both requests and live":    {"--policies", chartPolicies, "--requests", good, "--live"},
+		"certificates and live":     {"--policies", chartPolicies, "--certificates", "x.yaml", "--live"},
+		"namespace alone":           {"--policies", chartPolicies, "--requests", good, "--namespace", "x"},
+		"certificates missing":      {"--policies", chartPolicies, "--certificates", "/nonexistent.yaml"},
 		"context without live":      {"--policies", chartPolicies, "--requests", good, "--context", "x"},
 		"blanket check offline":     {"--policies", chartPolicies, "--requests", good, "--require-blanket-approver-off"},
 		"policies file missing":     {"--policies", "/nonexistent.yaml", "--requests", good},

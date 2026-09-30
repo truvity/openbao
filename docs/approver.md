@@ -169,6 +169,7 @@ A policy whose signer is not in that list can never fire.
 
 ```
 approvercheck --policies policies.yaml --requests crs.yaml
+approvercheck --policies chart.yaml --policies extra.yaml --certificates certs.yaml [--namespace NS]
 approvercheck --policies policies.yaml --live --context NAME \
   --identity-signer clusterissuers.cert-manager.io/example-identity \
   --require-blanket-approver-off
@@ -187,6 +188,20 @@ otherwise; 2 a usage or load error.
 
 - **`--requests`** is offline and proves the selector and shape half. It
   cannot prove RBAC (there is no cluster to ask).
+- **`--policies`** may be given more than once for a set rendered in
+  pieces (the chart's policies and a hand-written one): every file's
+  policies are checked together, and a file with none is tolerated as long
+  as another has some.
+- **`--certificates`** is offline too, and reads cert-manager
+  `Certificate`s (`helm template ... --show-only templates/certificates.yaml`)
+  instead of requests: it builds the `CertificateRequest` cert-manager
+  would create for each (subject, SANs, a CA's basicConstraints, the key
+  the `privateKey` asks for, RSA 2048 when it names none, and the spec's
+  `isCA`, `usages`, `duration` and `issuerRef`) and checks those. It is
+  how a tenant that does not exist yet is proven. `--namespace` replaces
+  the Certificates' own namespace, and it may be combined with `--requests`.
+  A Certificate that states no `duration` yields a request with none, so a
+  policy's `maxDuration` is proven only against a duration you state.
 - **`--live`** lists every `CertificateRequest`, and for each candidate
   policy asks the API server, by a read-only `SubjectAccessReview`
   (nothing is persisted), whether the request's own requester may `use`
@@ -217,10 +232,10 @@ used, so read it.
 tenants (a CI namespace that mints its own `Issuer`s under a fresh
 release name) are invisible to it, so a cutover proven against live
 requests alone can still leave every such install hanging with nothing
-failing. Prove every request **shape** that can ever arrive: build the
-`CertificateRequest`s those tenants would make (the package's
-`Review` takes any `CertificateRequest`) and assert they are approved, in
-a test. The same goes for subject fields: approver-policy denies an
+failing. Prove every request **shape** that can ever arrive: render the
+tenant's `Certificate`s and check them with `--certificates` (or, in a Go
+test, `LoadCertificates` and `RequestsForCertificates`, then `Review`), and
+assert they are approved. The same goes for subject fields: approver-policy denies an
 `O=` or `C=` no policy names, so a leaf that carries one needs it listed.
 
 ## Cutover runbook

@@ -14,9 +14,14 @@
 // Two modes:
 //
 //	approvercheck --policies policies.yaml --requests crs.yaml
+//	approvercheck --policies policies.yaml --certificates certs.yaml
 //	approvercheck --policies policies.yaml --live [--context NAME]
 //
-// The first is offline and checks the selector and shape half. --live lists
+// The first two are offline and check the selector and shape half; the
+// second builds the requests cert-manager would make for a rendered set of
+// Certificates, so a tenant that does not exist yet is proven too.
+// --policies may be given more than once, for a set rendered in pieces.
+// --live lists
 // the cluster's CertificateRequests and additionally proves the RBAC half
 // with one read-only SubjectAccessReview per candidate policy per request.
 //
@@ -56,8 +61,14 @@ func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("approvercheck", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	policiesPath := fs.String("policies", "", "YAML/JSON file with one or more CertificateRequestPolicy objects, e.g. the rendered openbao-consumers chart")
+	var policyPaths stringList
+	fs.Var(&policyPaths, "policies", "YAML/JSON file with one or more CertificateRequestPolicy objects, e.g. the rendered openbao-consumers chart. "+
+		"Repeatable: the policies of every file are checked together (a file with none is tolerated if another has some)")
 	requestsPath := fs.String("requests", "", "YAML/JSON file with a CertificateRequestList (kubectl get certificaterequests -A -o yaml > file)")
+	certificatesPath := fs.String("certificates", "", "YAML/JSON file with cert-manager Certificates "+
+		"(e.g. `helm template ... --show-only templates/certificates.yaml`): "+
+		"checks the CertificateRequest cert-manager would create for each, offline. May be combined with --requests")
+	namespace := fs.String("namespace", "", "with --certificates, the namespace the requests are made in, replacing the Certificates' own")
 	live := fs.Bool("live", false, "list live CertificateRequests and check the RBAC binding live instead of --requests (read-only)")
 	kubeconfig := fs.String("kubeconfig", "", "kubeconfig path; defaults to the standard client-go loading rules. Used at its CURRENT-CONTEXT: see --context")
 	kubeContext := fs.String("context", "", "kubeconfig context to use instead of the current-context. Pass it whenever the kubeconfig holds more than one "+
@@ -79,16 +90,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	if *policiesPath == "" {
+	if len(policyPaths) == 0 {
 		logf(stderr, "approvercheck: --policies is required")
 		return 2
 	}
-	if !*live && *requestsPath == "" {
-		logf(stderr, "approvercheck: one of --requests or --live is required")
+	offline := *requestsPath != "" || *certificatesPath != ""
+	if !*live && !offline {
+		logf(stderr, "approvercheck: one of --requests, --certificates or --live is required")
 		return 2
 	}
-	if *live && *requestsPath != "" {
-		logf(stderr, "approvercheck: --requests and --live are alternatives")
+	if *live && offline {
+		logf(stderr, "approvercheck: --live is an alternative to --requests and --certificates")
+		return 2
+	}
+	if *namespace != "" && *certificatesPath == "" {
+		logf(stderr, "approvercheck: --namespace needs --certificates")
 		return 2
 	}
 	if !*live && (*requireBlanketOff || *kubeContext != "") {
@@ -96,7 +112,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	policies, err := approvercheck.LoadPolicies(*policiesPath)
+	policies, err := approvercheck.LoadPolicyFiles(policyPaths...)
 	if err != nil {
 		logf(stderr, "approvercheck: load policies: %v", err)
 		return 2
@@ -118,7 +134,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if *live {
 		requests, err = approvercheck.ListLiveCertificateRequests(ctx, dynClient)
 	} else {
-		requests, err = approvercheck.LoadCertificateRequests(*requestsPath)
+		requests, err = loadOffline(*requestsPath, *certificatesPath, *namespace)
 	}
 	if err != nil {
 		logf(stderr, "approvercheck: load CertificateRequests: %v", err)
@@ -163,6 +179,32 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	logf(stdout, "OK: every CertificateRequest is approved by some policy (or skipped as an identity signer)")
 	return 0
+}
+
+// loadOffline reads the requests of --requests and the requests built from
+// --certificates, in that order.
+func loadOffline(requestsPath, certificatesPath, namespace string) ([]cmapi.CertificateRequest, error) {
+	var requests []cmapi.CertificateRequest
+	if requestsPath != "" {
+		loaded, err := approvercheck.LoadCertificateRequests(requestsPath)
+		if err != nil {
+			return nil, err
+		}
+		requests = loaded
+	}
+	if certificatesPath != "" {
+		certs, err := approvercheck.LoadCertificates(certificatesPath)
+		if err != nil {
+			return nil, err
+		}
+		built, err := approvercheck.RequestsForCertificates(certs, namespace)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, built...)
+	}
+
+	return requests, nil
 }
 
 // logf writes a formatted line to w, ignoring the write error: w is

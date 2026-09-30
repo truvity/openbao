@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	policyapi "github.com/cert-manager/approver-policy/pkg/apis/policy/v1alpha1"
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -45,11 +46,43 @@ func LoadPolicies(path string) ([]policyapi.CertificateRequestPolicy, error) {
 	}
 
 	if len(policies) == 0 {
-		return nil, fmt.Errorf("%s: no CertificateRequestPolicy documents found", path)
+		return nil, fmt.Errorf("%s: %s", path, noPolicies)
 	}
 
 	return policies, nil
 }
+
+// LoadPolicyFiles reads the policies of several files and returns them in
+// order: the usual shape of a set that is rendered in pieces (a chart's
+// policies plus a hand-written one). A file with no policy in it is
+// tolerated as long as some file has one, since a piece may render empty
+// on a cluster that does not need it; no policy anywhere is an error. With
+// exactly one path it is LoadPolicies, error message included.
+func LoadPolicyFiles(paths ...string) ([]policyapi.CertificateRequestPolicy, error) {
+	if len(paths) == 1 {
+		return LoadPolicies(paths[0])
+	}
+
+	var all []policyapi.CertificateRequestPolicy
+	for _, path := range paths {
+		policies, err := LoadPolicies(path)
+		if err != nil {
+			if strings.HasSuffix(err.Error(), noPolicies) {
+				continue
+			}
+			return nil, err
+		}
+		all = append(all, policies...)
+	}
+
+	if len(all) == 0 {
+		return nil, fmt.Errorf("%s: %s", strings.Join(paths, ", "), noPolicies)
+	}
+
+	return all, nil
+}
+
+const noPolicies = "no CertificateRequestPolicy documents found"
 
 // LoadCertificateRequests reads a CertificateRequestList (as `kubectl get
 // certificaterequests -A -o yaml` produces) or a bare multi-document stream
