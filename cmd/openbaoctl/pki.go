@@ -31,6 +31,8 @@ const (
 	flagImportCertificate = "import-certificate"
 	flagAWSProfile        = "aws-profile"
 	flagRoleARN           = "role-arn"
+	flagCustodyOutputs    = "custody-outputs"
+	flagSkipCustodyCheck  = "skip-custody-check"
 	flagPrintTemplate     = "print-template"
 	flagConfirmTemplate   = "confirm-template"
 	flagNotBefore         = "not-before"
@@ -51,6 +53,11 @@ type (
 		awsProfile string
 		roleARN    string
 		kms        kmsFactory
+		// custodyOutputs is the synced custody outputs file, and
+		// skipCustody the reason to sign without checking against it
+		// (custody_check.go); a --contract source needs one of the two.
+		custodyOutputs string
+		skipCustody    string
 	}
 
 	// sourceOptions names either a hierarchy file or a pki.Contract file
@@ -244,13 +251,30 @@ func pkiCommand() *cli.Command {
 	}
 	signingFlags := []cli.Flag{
 		&cli.StringFlag{Name: flagAWSProfile, Usage: "AWS shared-config profile to start from (default: the SDK's default chain)"},
-		&cli.StringFlag{Name: flagRoleARN, Usage: "ceremony role to assume on top of the profile before signing"},
+		&cli.StringFlag{
+			Name: flagRoleARN,
+			Usage: "ceremony role to assume on top of the profile before signing " +
+				"(with --" + flagCustodyOutputs + ": must be the published one, and defaults to it)",
+		},
+		&cli.StringFlag{
+			Name: flagCustodyOutputs,
+			Usage: "the synced custody outputs file (docs/pki.md, \"The custody cross-check\"); the key, its region and replica, the generation, the role and " +
+				"the profile are verified against it and the contract before anything is signed; required with --" + flagContract + " unless --" + flagSkipCustodyCheck,
+		},
+		&cli.StringFlag{
+			Name: flagSkipCustodyCheck,
+			Usage: "sign without the custody cross-check, for this REASON (printed with the template review and logged); " +
+				"excludes --" + flagCustodyOutputs,
+		},
 	}
 	signing := func(cmd *cli.Command) signingOptions {
 		return signingOptions{
 			keyARN:     cmd.String(flagKeyARN),
 			awsProfile: cmd.String(flagAWSProfile),
 			roleARN:    cmd.String(flagRoleARN),
+
+			custodyOutputs: cmd.String(flagCustodyOutputs),
+			skipCustody:    cmd.String(flagSkipCustodyCheck),
 		}
 	}
 
@@ -384,7 +408,19 @@ func runCreateRoot(ctx context.Context, out io.Writer, options createRootOptions
 		return err
 	}
 
-	client, err := options.signing.client(ctx, options.signing.keyARN)
+	signing, check, err := options.signing.withCustody(pkiSource, "")
+	if err != nil {
+		return err
+	}
+
+	// The result on stdout is the artifact's YAML alone, so the check
+	// reports on stderr.
+	fmt.Fprint(os.Stderr, check.text)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	check.log(ctx, logger)
+
+	client, err := signing.client(ctx, signing.keyARN)
 	if err != nil {
 		return err
 	}
@@ -392,7 +428,7 @@ func runCreateRoot(ctx context.Context, out io.Writer, options createRootOptions
 	artifactPath := pkiSource.rootArtifactPath()
 
 	result, err := ceremony.CreateRoot(ctx, client, spec, ceremony.RootOptions{
-		KeyARN:                options.signing.keyARN,
+		KeyARN:                signing.keyARN,
 		ArtifactPath:          artifactPath,
 		ImportCertificatePath: options.importCertificate,
 	})
@@ -400,7 +436,6 @@ func runCreateRoot(ctx context.Context, out io.Writer, options createRootOptions
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if result.Signed {
 		logger.InfoContext(ctx, "created root certificate and public ceremony state", slog.String("state", artifactPath))
 	} else {
@@ -447,19 +482,30 @@ func runSignIntermediate(ctx context.Context, out io.Writer, options signInterme
 		return err
 	}
 
+	// The custody check is offline, so the review shows it: what an
+	// operator confirms with the template hash is the template and this.
+	signing, check, err := options.signing.withCustody(pkiSource, root.KeyARN)
+	if err != nil {
+		return err
+	}
+
 	if options.printTemplate {
 		var text strings.Builder
 		fmt.Fprintf(&text, "root artifact %s, fingerprint SHA256 %s\n\n", spec.RootArtifactPath, root.FingerprintSHA256)
 		text.WriteString(plan.Text())
-		fmt.Fprintf(&text, "\nnothing was signed; to sign exactly this, rerun with --%s %s\n", flagConfirmTemplate, plan.TemplateSHA256)
+		text.WriteString("\n" + check.text)
+		fmt.Fprintf(&text, "\nnothing was signed; to sign exactly this, rerun with --%s %s%s\n", flagConfirmTemplate, plan.TemplateSHA256, check.rerun)
 		_, err = io.WriteString(out, text.String())
 
 		return err
 	}
 
-	keyARN := options.signing.keyARNOr(root.KeyARN)
+	keyARN := signing.keyARNOr(root.KeyARN)
 
-	client, err := options.signing.client(ctx, keyARN)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	check.log(ctx, logger)
+
+	client, err := signing.client(ctx, keyARN)
 	if err != nil {
 		return err
 	}
@@ -472,7 +518,6 @@ func runSignIntermediate(ctx context.Context, out io.Writer, options signInterme
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if result.Signed {
 		logger.InfoContext(ctx, "signed intermediate certificate and wrote its public artifact",
 			slog.String("trust_domain", spec.TrustDomain), slog.String("artifact", spec.ArtifactPath))
@@ -486,7 +531,7 @@ func runSignIntermediate(ctx context.Context, out io.Writer, options signInterme
 		return fmt.Errorf("marshal public ceremony output: %w", err)
 	}
 
-	_, err = io.WriteString(out, proofText(result.Proof)+"\n"+string(raw))
+	_, err = io.WriteString(out, check.text+"\n"+proofText(result.Proof)+"\n"+string(raw))
 
 	return err
 }
@@ -567,12 +612,18 @@ func runSignEmergencyServer(ctx context.Context, out io.Writer, options signEmer
 		return err
 	}
 
+	signing, check, err := options.signing.withCustody(pkiSource, root.KeyARN)
+	if err != nil {
+		return err
+	}
+
 	if options.printTemplate {
 		var text strings.Builder
 		fmt.Fprintf(&text, "root artifact %s, fingerprint SHA256 %s\n\n", spec.RootArtifactPath, root.FingerprintSHA256)
 		text.WriteString(plan.Text())
+		text.WriteString("\n" + check.text)
 		fmt.Fprintf(&text, "\nnothing was signed. Signing fires the root key's Sign alarm. To sign exactly this, rerun with\n"+
-			"  --%s %s --%s %s\n", flagNotBefore, plan.Spec.NotBefore.Format(time.RFC3339), flagConfirmTemplate, plan.TemplateSHA256)
+			"  --%s %s --%s %s%s\n", flagNotBefore, plan.Spec.NotBefore.Format(time.RFC3339), flagConfirmTemplate, plan.TemplateSHA256, check.rerun)
 		_, err = io.WriteString(out, text.String())
 
 		return err
@@ -584,9 +635,12 @@ func runSignEmergencyServer(ctx context.Context, out io.Writer, options signEmer
 		return fmt.Errorf("--%s %s exists; refusing to overwrite a signed certificate", flagOut, options.outPath)
 	}
 
-	keyARN := options.signing.keyARNOr(root.KeyARN)
+	keyARN := signing.keyARNOr(root.KeyARN)
 
-	client, err := options.signing.client(ctx, keyARN)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	check.log(ctx, logger)
+
+	client, err := signing.client(ctx, keyARN)
 	if err != nil {
 		return err
 	}
@@ -603,12 +657,12 @@ func runSignEmergencyServer(ctx context.Context, out io.Writer, options signEmer
 		return fmt.Errorf("%w (the signed leaf, PEM, is below -- save it by hand)\n%s", err, result.CertificatePEM)
 	}
 
-	slog.New(slog.NewTextHandler(os.Stderr, nil)).WarnContext(ctx, "signed a break-glass certificate with the KMS root",
+	logger.WarnContext(ctx, "signed a break-glass certificate with the KMS root",
 		slog.String("name", spec.DNSName),
 		slog.String("not_after", result.Certificate.NotAfter.UTC().Format(time.RFC3339)),
 		slog.String("out", options.outPath))
 
-	_, err = io.WriteString(out, proofText(result.Proof)+"\nwritten: "+options.outPath+"\n")
+	_, err = io.WriteString(out, check.text+"\n"+proofText(result.Proof)+"\nwritten: "+options.outPath+"\n")
 
 	return err
 }

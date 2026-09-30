@@ -166,10 +166,20 @@ and reviews it; a second person repeats the dry run.
 1. `openbaoctl pki sign-intermediate ... --print-template` needs no
    credential and prints every field and a `template sha256`: the hash of the
    exact TBSCertificate the root key would sign. Nothing in it depends on the
-   signer, so two people on the same branch and CSR get the same hash.
+   signer, so two people on the same branch and CSR get the same hash. With
+   `--contract` it also prints the **custody cross-check**: the key, its
+   region and replica, the generation, the ceremony role and the profile,
+   verified against the custody outputs the custody side published
+   (`--custody-outputs`), or the reason it was skipped
+   (`--skip-custody-check`). A key that is not the published one, a wrong
+   region or generation, or a role that is not the ceremony role is refused
+   before anything is reserved or signed; see
+   [pki.md](../pki.md#the-custody-cross-check).
 2. Both check the subject, the issuer, the name constraints and the validity,
-   and write the hash down.
-3. The signing run accepts **only that hash**. It rebuilds the template and
+   and write the hash down; the second person also reads the custody lines
+   (or the skip reason).
+3. The signing run accepts **only that hash**, and repeats the custody
+   check. It rebuilds the template and
    refuses a mismatch *before* reserving anything, checks the KMS key is the
    one behind the committed root, creates an exclusive `<artifact>.attempt`
    reservation (so nothing signs twice for one artifact), signs once, proves

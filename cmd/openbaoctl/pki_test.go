@@ -217,7 +217,7 @@ func createContractRoot(t *testing.T, path string, client *fakeKMS) {
 	var out bytes.Buffer
 	require.NoError(t, runCreateRoot(context.Background(), &out, createRootOptions{
 		source:  sourceOptions{contract: path, generation: "example-root-2026-01"},
-		signing: signingOptions{keyARN: keyARN, kms: client.factory},
+		signing: signingOptions{keyARN: contractKeyARN, kms: client.factory, custodyOutputs: writeCustodyOutputs(t)},
 	}))
 	assert.Contains(t, out.String(), "generationId: example-root-2026-01")
 }
@@ -402,7 +402,7 @@ func TestContractCeremonyEndToEnd(t *testing.T) {
 	csr := writeCSR(t, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "example.internal Intermediate CA", Organization: []string{"Example Org"}}})
 	base := signIntermediateOptions{
 		source:      sourceOptions{contract: path, generation: "example-root-2026-01"},
-		trustDomain: "private", csrPath: csr, signing: signingOptions{kms: client.factory},
+		trustDomain: "private", csrPath: csr, signing: signingOptions{kms: client.factory, custodyOutputs: writeCustodyOutputs(t)},
 	}
 
 	var review bytes.Buffer
@@ -438,7 +438,7 @@ func TestContractEnvironmentCA(t *testing.T) {
 	base := signIntermediateOptions{
 		source:      sourceOptions{contract: path, generation: "example-root-2026-01"},
 		trustDomain: "identity", environment: "dev", zone: "dev.example.internal",
-		csrPath: csr, signing: signingOptions{kms: client.factory},
+		csrPath: csr, signing: signingOptions{kms: client.factory, custodyOutputs: writeCustodyOutputs(t)},
 	}
 
 	var signed bytes.Buffer
@@ -475,7 +475,7 @@ func TestContractSignEmergencyServer(t *testing.T) {
 	var review bytes.Buffer
 	require.NoError(t, runSignEmergencyServer(context.Background(), &review, signEmergencyServerOptions{
 		source: sourceOptions{contract: path, generation: "example-root-2026-01"}, dnsName: "emergency.example.internal",
-		csrPath: csr, printTemplate: true, now: fixedNow,
+		csrPath: csr, printTemplate: true, now: fixedNow, signing: signingOptions{custodyOutputs: writeCustodyOutputs(t)},
 	}))
 	match := confirmPattern.FindStringSubmatch(review.String())
 	require.NotNil(t, match, review.String())
@@ -484,7 +484,7 @@ func TestContractSignEmergencyServer(t *testing.T) {
 	require.NoError(t, runSignEmergencyServer(context.Background(), &signed, signEmergencyServerOptions{
 		source: sourceOptions{contract: path, generation: "example-root-2026-01"}, dnsName: "emergency.example.internal",
 		csrPath: csr, notBefore: "2026-12-12T11:00:00Z", confirmTemplate: match[1],
-		outPath: out, now: fixedNow, signing: signingOptions{kms: client.factory},
+		outPath: out, now: fixedNow, signing: signingOptions{kms: client.factory, custodyOutputs: writeCustodyOutputs(t)},
 	}))
 	assert.Equal(t, 1, client.signCalls)
 	assert.FileExists(t, out)
