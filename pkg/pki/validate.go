@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/truvity/openbao/pkg/model"
 )
 
 // generationInfo is what a trust domain needs to know about the root
@@ -61,8 +63,10 @@ func (c *Contract) Validate() error {
 			return err
 		}
 
-		if err := claimName(usedNames, domain.DomainIntermediate.Name, "trustDomains.uri["+domain.Name+"].domainIntermediate.name"); err != nil {
-			return err
+		if domain.hasSharedIntermediate() {
+			if err := claimName(usedNames, domain.DomainIntermediate.Name, "trustDomains.uri["+domain.Name+"].domainIntermediate.name"); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -292,7 +296,7 @@ func (d *DNSTrustDomain) validate(global Global, generations map[string]generati
 		return err
 	}
 
-	leafDefault, leafMaximum, err := d.Lifetimes.validate(path, rootLifetime)
+	leafDefault, leafMaximum, err := d.Lifetimes.validate(path, rootLifetime, true)
 	if err != nil {
 		return err
 	}
@@ -301,7 +305,15 @@ func (d *DNSTrustDomain) validate(global Global, generations map[string]generati
 		return err
 	}
 
-	return validateLeafRoles(path+".roles", d.Roles, global, d.Suffix, d.DomainIntermediate.PermittedDNSDomains, leafDefault, leafMaximum)
+	if err := d.Placement.validate(path); err != nil {
+		return err
+	}
+
+	if err := validateLeafRoles(path+".roles", d.Roles, global, d.Suffix, d.DomainIntermediate.PermittedDNSDomains, leafDefault, leafMaximum); err != nil {
+		return err
+	}
+
+	return validateCredentialRoles(path+".credentialRoles", d.CredentialRoles, d.Roles, global, leafDefault, leafMaximum)
 }
 
 // validate checks the domain intermediate's template: a DNS-safe issuer
@@ -373,12 +385,22 @@ func (d *URITrustDomain) validate(global Global, generations map[string]generati
 		return err
 	}
 
-	leafDefault, leafMaximum, err := d.Lifetimes.validate(path, rootLifetime)
+	shared := d.hasSharedIntermediate()
+
+	leafDefault, leafMaximum, err := d.Lifetimes.validate(path, rootLifetime, shared)
 	if err != nil {
 		return err
 	}
 
-	if err := d.DomainIntermediate.validate(path+".domainIntermediate", global, rootMaxPathLen); err != nil {
+	if shared {
+		if err := d.DomainIntermediate.validate(path+".domainIntermediate", global, rootMaxPathLen); err != nil {
+			return err
+		}
+	} else if d.EnvironmentCA == nil {
+		return fmt.Errorf("pki: %s declares neither domainIntermediate nor environmentCA: nothing would sign its environments", path)
+	}
+
+	if err := d.Placement.validate(path); err != nil {
 		return err
 	}
 
@@ -405,7 +427,7 @@ func (d *URITrustDomain) validate(global Global, generations map[string]generati
 		seenEnvironments[environment] = struct{}{}
 	}
 
-	if len(d.RootSignedEnvironments) == 0 {
+	if len(d.RootSignedEnvironments) == 0 && shared {
 		if d.EnvironmentCA != nil {
 			return fmt.Errorf("pki: %s.environmentCA is declared but rootSignedEnvironments is empty", path)
 		}
@@ -417,7 +439,14 @@ func (d *URITrustDomain) validate(global Global, generations map[string]generati
 		return fmt.Errorf("pki: %s.rootSignedEnvironments is declared but environmentCA is not", path)
 	}
 
-	if err := d.EnvironmentCA.validate(path+".environmentCA", global, d.DomainIntermediate.MaxPathLen); err != nil {
+	// The root's budget below the shared intermediate (when there is
+	// one) or below the root itself.
+	ceiling := rootMaxPathLen
+	if shared {
+		ceiling = d.DomainIntermediate.MaxPathLen
+	}
+
+	if err := d.EnvironmentCA.validate(path+".environmentCA", global, ceiling, shared); err != nil {
 		return err
 	}
 
@@ -437,6 +466,14 @@ func (d *URITrustDomain) validate(global Global, generations map[string]generati
 		}
 
 		seenRootSigned[environment] = struct{}{}
+	}
+
+	// With no shared intermediate every environment is root-signed, so
+	// a list that says otherwise contradicts the domain.
+	if !shared && len(d.RootSignedEnvironments) != 0 && len(seenRootSigned) != len(seenEnvironments) {
+		return fmt.Errorf(
+			"pki: %s.rootSignedEnvironments %v must name every environment %v: with no shared domainIntermediate there is no other way to sign one",
+			path, d.RootSignedEnvironments, d.Environments)
 	}
 
 	return nil
@@ -493,16 +530,20 @@ func (d URIDomainIntermediate) validate(path string, global Global, rootMaxPathL
 // strictly shorter than the sibling domain intermediate's -- signed
 // directly by the root, one level shorter, because nothing sits between it
 // and the leaf it issues.
-func (ca EnvironmentCA) validate(path string, global Global, domainIntermediateMaxPathLen int) error {
+func (ca EnvironmentCA) validate(path string, global Global, ceiling int, shared bool) error {
 	if ca.KeyCurve != global.KeyCurve {
 		return fmt.Errorf("pki: %s.keyCurve must be %q (global.keyCurve), got %q", path, global.KeyCurve, ca.KeyCurve)
 	}
 
-	if ca.MaxPathLen < 0 || ca.MaxPathLen >= domainIntermediateMaxPathLen {
+	if ca.MaxPathLen < 0 || ca.MaxPathLen >= ceiling {
+		what := "the root's own maxPathLen"
+		if shared {
+			what = "the domain's own intermediate maxPathLen"
+		}
+
 		return fmt.Errorf(
-			"pki: %s.maxPathLen must be non-negative and strictly less than the domain's own intermediate"+
-				" maxPathLen %d: this CA is signed directly by the root, one level shorter",
-			path, domainIntermediateMaxPathLen,
+			"pki: %s.maxPathLen must be non-negative and strictly less than %s %d: this CA is signed directly by the root, one level shorter",
+			path, what, ceiling,
 		)
 	}
 
@@ -515,6 +556,19 @@ func (ca EnvironmentCA) validate(path string, global Global, domainIntermediateM
 			"pki: %s.artifactPattern must contain \"{environment}\": without it, every environment's CA would share one file",
 			path,
 		)
+	}
+
+	if ca.IssuerNamePattern != "" {
+		if !strings.Contains(ca.IssuerNamePattern, "{environment}") {
+			return fmt.Errorf(
+				"pki: %s.issuerNamePattern must contain \"{environment}\": without it, every environment's CA would share one issuer name",
+				path,
+			)
+		}
+
+		if !isDNSName(strings.ReplaceAll(ca.IssuerNamePattern, "{environment}", "environment")) {
+			return fmt.Errorf("pki: %s.issuerNamePattern %q must be a DNS-safe issuer name", path, ca.IssuerNamePattern)
+		}
 	}
 
 	return nil
@@ -705,10 +759,24 @@ func (l LeafLifetimes) validate(path string, leafDefault, leafMaximum time.Durat
 // validate checks a trust domain's lifetime ordering against its root
 // generation's own lifetime, and returns the leaf default/maximum every
 // role or the URI role must sit inside.
-func (l Lifetimes) validate(path string, rootLifetime time.Duration) (leafDefault, leafMaximum time.Duration, err error) {
-	domainLifetime, err := parsePositiveDuration(path+".lifetimes.domainIntermediate", l.DomainIntermediate)
-	if err != nil {
-		return 0, 0, err
+func (l Lifetimes) validate(path string, rootLifetime time.Duration, needDomainIntermediate bool) (leafDefault, leafMaximum time.Duration, err error) {
+	// Above the cluster intermediate sits the root, or -- with a shared
+	// intermediate -- the domain intermediate and then the root.
+	parent := rootLifetime
+
+	if needDomainIntermediate {
+		domainLifetime, err := parsePositiveDuration(path+".lifetimes.domainIntermediate", l.DomainIntermediate)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		if rootLifetime <= domainLifetime {
+			return 0, 0, errLifetimeOrdering(path)
+		}
+
+		parent = domainLifetime
+	} else if l.DomainIntermediate != "" {
+		return 0, 0, fmt.Errorf("pki: %s.lifetimes.domainIntermediate is set but the domain has no domainIntermediate", path)
 	}
 
 	clusterLifetime, err := parsePositiveDuration(path+".lifetimes.clusterIntermediate", l.ClusterIntermediate)
@@ -731,20 +799,23 @@ func (l Lifetimes) validate(path string, rootLifetime time.Duration) (leafDefaul
 		return 0, 0, err
 	}
 
-	validOrdering := rootLifetime > domainLifetime &&
-		domainLifetime > clusterLifetime &&
+	validOrdering := parent > clusterLifetime &&
 		clusterLifetime > leafMaximum &&
 		leafMaximum >= leafDefault &&
 		leafDefault > renewBefore
 
 	if !validOrdering {
-		return 0, 0, fmt.Errorf(
-			"pki: %s lifetimes must satisfy root > domain intermediate > cluster intermediate > leaf maximum >= leaf default > renewBefore",
-			path,
-		)
+		return 0, 0, errLifetimeOrdering(path)
 	}
 
 	return leafDefault, leafMaximum, nil
+}
+
+func errLifetimeOrdering(path string) error {
+	return fmt.Errorf(
+		"pki: %s lifetimes must satisfy root > domain intermediate (when there is one) > cluster intermediate > leaf maximum >= leaf default > renewBefore",
+		path,
+	)
 }
 
 // checkGenerationRef resolves a trust domain's rootGeneration reference and
@@ -938,6 +1009,108 @@ func isDNSLabel(label string) bool {
 
 	for _, char := range label {
 		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validate checks the mount paths and description templates. Both mounts
+// have a default, so an empty value is fine; a value that is stated must be
+// usable.
+func (p Placement) validate(path string) error {
+	for name, value := range map[string]string{"domainMount": p.DomainMount, "issuingMount": p.IssuingMount} {
+		if value != "" && !isMountPath(value) {
+			return fmt.Errorf("pki: %s.%s %q must be a lowercase mount path (letters, digits, '-' and '_')", path, name, value)
+		}
+	}
+
+	for name, template := range map[string]string{
+		"domainMountDescription":  p.DomainMountDescription,
+		"issuingMountDescription": p.IssuingMountDescription,
+	} {
+		rest := template
+		for _, known := range []string{"{commonName}", "{domain}", "{environment}"} {
+			rest = strings.ReplaceAll(rest, known, "")
+		}
+
+		if strings.ContainsAny(rest, "{}") {
+			return fmt.Errorf("pki: %s.%s %q has a placeholder other than {commonName}, {domain} and {environment}", path, name, template)
+		}
+	}
+
+	if strings.Contains(p.DomainMountDescription, "{environment}") {
+		return fmt.Errorf("pki: %s.domainMountDescription must not use {environment}: the domain's mount is not per environment", path)
+	}
+
+	return nil
+}
+
+// validateCredentialRoles checks the roles that sign a caller's own CSR:
+// each names the mount its subject is read from, is usable, is short and
+// never renewed, and does not share a name with a leaf role (they sit on the
+// same mount).
+func validateCredentialRoles(path string, roles []CredentialRole, leafRoles []LeafRole, global Global, leafDefault, leafMaximum time.Duration) error {
+	seen := map[string]struct{}{}
+
+	for i := range leafRoles {
+		seen[leafRoles[i].Name] = struct{}{}
+	}
+
+	for i := range roles {
+		role := &roles[i]
+		rolePath := fmt.Sprintf("%s[%d]", path, i)
+
+		if strings.TrimSpace(role.Name) == "" {
+			return fmt.Errorf("pki: %s.name is required", rolePath)
+		}
+
+		if _, duplicate := seen[role.Name]; duplicate {
+			return fmt.Errorf("pki: %s duplicates role name %q", rolePath, role.Name)
+		}
+
+		seen[role.Name] = struct{}{}
+
+		if strings.TrimSpace(role.SubjectMount) == "" {
+			return fmt.Errorf("pki: %s.subjectMount is required: the common name is the caller's own alias name on it", rolePath)
+		}
+
+		if !role.Usage.Server && !role.Usage.Client {
+			return fmt.Errorf("pki: %s.usage must allow server or client use", rolePath)
+		}
+
+		for _, validation := range role.CNValidations {
+			if validation != model.CNValidationEmail && validation != model.CNValidationHostname {
+				return fmt.Errorf("pki: %s.cnValidations %q is not one of %s, %s", rolePath, validation, model.CNValidationEmail, model.CNValidationHostname)
+			}
+		}
+
+		if !global.leafKeyCurveAllowed(role.KeyCurve) {
+			return fmt.Errorf("pki: %s.keyCurve %q is neither global.keyCurve %q nor one of global.additionalLeafKeyCurves", rolePath, role.KeyCurve, global.KeyCurve)
+		}
+
+		if role.Lifetimes.RenewBefore != "" {
+			return fmt.Errorf("pki: %s.lifetimes.renewBefore must be empty: a credential is minted for one use, never renewed", rolePath)
+		}
+
+		if err := role.Lifetimes.validate(rolePath+".lifetimes", leafDefault, leafMaximum); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// isMountPath accepts what OpenBAO takes as a single-segment mount path
+// here: lowercase letters, digits, '-' and '_'.
+func isMountPath(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' && char != '_' {
 			return false
 		}
 	}

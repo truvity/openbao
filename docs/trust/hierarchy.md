@@ -5,7 +5,9 @@ Below it, three kinds of chain, each with a different constraint and a
 different set of relying parties. This page is the shape and the reasons;
 [ceremony.md](../ceremony.md) is the step-by-step, [custody.md](../custody.md)
 is the key's policy, and [pki.md](../pki.md) is the authored contract
-(`pkg/pki`) that encodes the invariants below.
+(`pkg/pki`) that encodes the invariants below and derives everything OpenBAO
+holds from them: the domain intermediates, each environment's issuing CAs,
+their leaf and credential roles, and the mounts they live in.
 
 ```
 <root generation>                        KMS key, self-signed, 20 years, no name constraint
@@ -98,7 +100,9 @@ constraints correctly. So each environment's identity CA is signed
 **directly by the root** by the ceremony, with an *exact* URI constraint (its
 own trust domain, no leading dot: an exact host match) and path length 0. The
 CA cryptographically cannot mint another environment's identity. There is no
-shared identity intermediate. Full mechanism: [pki.md](../pki.md#per-environment-identity-cas-and-why).
+shared identity intermediate (the contract's `domainIntermediate` for a URI
+domain is optional for exactly this reason). Full mechanism:
+[pki.md](../pki.md#per-environment-identity-cas-and-why).
 
 The same finding shapes what you may rely on OpenBAO to enforce: **only DNS
 name constraints can be set through OpenBAO's own endpoints**; `excluded_ip_ranges`

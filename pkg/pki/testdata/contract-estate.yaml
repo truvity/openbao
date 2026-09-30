@@ -1,0 +1,159 @@
+# An estate that adopted the contract over a PKI that was already deployed:
+# every name below is one a live mount, issuer or role already carries, so
+# the derivation must reproduce them exactly (docs/pki.md, "adopting a
+# deployed estate"). It exercises what the plain example (contract.yaml)
+# does not: authored mount placement and descriptions, an issuer-name
+# pattern, credential roles, a catalog role that admits wildcards, and a
+# workload-identity domain with no shared intermediate at all.
+schemaVersion: 1
+
+# The label every deterministic serial is derived under. It is the value the
+# estate's own ceremony used before it adopted this package, so nothing
+# already signed is re-derived.
+serialNamespace: example-private-pki
+artifactDir: pki-roots
+
+global:
+  immutable: true
+  keyAlgorithm: ECDSA
+  keyCurve: P-384
+  signatureAlgorithm: ECDSA_SHA_384
+  minimumTlsVersion: TLS1.3
+  # The one leaf that cannot be told to use P-384: a CSI driver that always
+  # generates P-256. OpenBAO counts key_bits as a MINIMUM for an EC role, so
+  # the role itself must say P-256 for its CSR to be accepted at all.
+  additionalLeafKeyCurves: [P-256]
+
+rootGenerations:
+  - id: example-root-2026-09
+    lifetime: 175200h # 20 years
+    certificate:
+      notBefore: "2026-09-01T00:00:00Z"
+      subject:
+        commonName: Example Root 2026-09
+        organization: Example Org
+      maxPathLen: 3
+    custody:
+      provider: aws-kms
+      accountId: "111122223333"
+      profile: example-root@admin
+      region: eu-central-1
+      trustedPrincipalArnPattern: "arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_role-admin_*"
+      disasterRecovery:
+        mode: multi-region-replica
+        region: eu-north-1
+    state: active
+
+trustDomains:
+  dns:
+    - name: private
+      suffix: example.private
+      rootGeneration: example-root-2026-09
+      requireTrusted: true
+      domainIntermediate:
+        name: example-private-2026-09
+        subject:
+          commonName: example.private Intermediate CA
+          organization: Example Org
+        keyCurve: P-384
+        maxPathLen: 2
+        permittedDnsDomains: [example.private, cluster.local]
+      lifetimes: &standardLifetimes
+        domainIntermediate: 87600h
+        clusterIntermediate: 26280h
+        leafDefault: 720h
+        leafMaximum: 2160h
+        renewBefore: 240h
+      # The root namespace's mount is one a retiring chain already holds;
+      # the intermediate is a further issuer in it.
+      domainMount: pki-example-private
+      domainMountDescription: "{commonName}; signs environment issuing CAs only"
+      issuingMount: pki
+      issuingCA:
+        commonNameSuffix: Issuing CA
+      roles:
+        - name: private
+          names: {source: environment-zone, patterns: ["{zone}"], bare: true, subdomains: true}
+          usage: {server: true, client: true}
+          keyCurve: P-384
+          lifetimes: &leafLifetimes
+            default: 720h
+            maximum: 2160h
+            renewBefore: 240h
+        - name: workload
+          names: {source: static, patterns: [svc.cluster.local], bare: false, subdomains: true}
+          usage: {server: true, client: true}
+          keyCurve: P-384
+          lifetimes: *leafLifetimes
+        - name: restore-check
+          names: {source: environment-zone, patterns: ["restore-check.{zone}"], bare: true, subdomains: false}
+          usage: {server: true, client: false}
+          keyCurve: P-384
+          lifetimes: {default: 1h, maximum: 1h}
+      credentialRoles:
+        - name: db-client
+          subjectMount: jwt-people
+          cnValidations: [email]
+          usage: {server: false, client: true}
+          keyCurve: P-384
+          lifetimes: {default: 1h, maximum: 1h}
+    - name: origin
+      suffix: example.net
+      rootGeneration: example-root-2026-09
+      requireTrusted: true
+      # Unconstrained on purpose: a public zone is a role change, never a CA
+      # re-issue.
+      domainIntermediate:
+        name: example-origin-2026-09
+        subject:
+          commonName: example.net Origin Intermediate CA
+          organization: Example Org
+        keyCurve: P-384
+        maxPathLen: 2
+      lifetimes: *standardLifetimes
+      issuingMount: pki-origin
+      issuingMountDescription: "{commonName}; the {domain} chain's leaves in {environment}"
+      roles:
+        - name: origin
+          names: {source: catalog, bare: true, subdomains: false}
+          usage: {server: true, client: false}
+          keyCurve: P-384
+          allowWildcardCertificates: true
+          lifetimes: *leafLifetimes
+  uri:
+    # No shared intermediate: every environment's CA is signed by the root.
+    - name: identity
+      rootGeneration: example-root-2026-09
+      lifetimes:
+        clusterIntermediate: 26280h
+        leafDefault: 1h
+        leafMaximum: 24h
+        renewBefore: 10m
+      issuingMount: pki-identity
+      environments: [dev, prod]
+      role:
+        name: identity
+        uriSanPattern: "spiffe://{zone}/*"
+        usage: {server: true, client: true}
+        keyCurve: P-256
+        lifetimes: {default: 1h, maximum: 24h, renewBefore: 10m}
+      environmentCA:
+        keyCurve: P-384
+        maxPathLen: 0
+        commonNameSuffix: Workload Identity CA
+        artifactPattern: "{generation}-identity-{environment}.yaml"
+        issuerNamePattern: "example-identity-2026-09-{environment}-root-signed"
+
+alerts:
+  enabled: false
+  thresholds:
+    rootGeneration: 43800h
+    domainIntermediate: 17520h
+    clusterIntermediate: 4320h
+    leaf: 240h
+
+signAlerts:
+  notify: [security@example.org]
+
+migration:
+  trustedGenerations: [example-root-2026-09]

@@ -4,8 +4,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"time"
-
-	"github.com/truvity/openbao/pkg/ceremony"
 )
 
 // TrustAnchor is one root certificate the estate trusts: what a verifier
@@ -59,7 +57,7 @@ func (c *Contract) TrustAnchors() ([]TrustAnchor, error) {
 func (c *Contract) loadTrustAnchor(generation *RootGeneration) (*TrustAnchor, error) {
 	artifactPath := c.ArtifactPath(RootArtifactName(generation.ID))
 
-	artifact, err := ceremony.LoadRootArtifact(artifactPath)
+	artifact, err := c.loadRootArtifact(artifactPath)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"pki: generation %q is trusted but its ceremony artifact %s cannot be read: %w",

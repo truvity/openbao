@@ -1,0 +1,288 @@
+domains:
+  - artifact: testdata/pki-roots/example-root-2026-09-intermediate-private.yaml
+    domain: private
+    issuer: example-private-2026-09
+    mount: pki-example-private
+  - artifact: testdata/pki-roots/example-root-2026-09-intermediate-origin.yaml
+    domain: origin
+    issuer: example-origin-2026-09
+    mount: pki-origin
+rootMounts:
+  - path: pki-example-private
+    description: example.private Intermediate CA; signs environment issuing CAs only
+    defaultLeaseTtl: 87600h
+    maxLeaseTtl: 87600h
+    defaultIssuer: example-private-2026-09
+    issuers:
+      - name: example-private-2026-09
+        commonName: example.private Intermediate CA
+        organization: Example Org
+        keyCurve: P-384
+        ttl: 87600h
+        maxPathLength: 2
+        nameConstraints:
+          permittedDnsDomains:
+            - example.private
+            - cluster.local
+          excludedIpRanges:
+            - 0.0.0.0/0
+            - ::/0
+        external: true
+  - path: pki-origin
+    description: example.net Origin Intermediate CA; signs environment issuing CAs only
+    defaultLeaseTtl: 87600h
+    maxLeaseTtl: 87600h
+    defaultIssuer: example-origin-2026-09
+    issuers:
+      - name: example-origin-2026-09
+        commonName: example.net Origin Intermediate CA
+        organization: Example Org
+        keyCurve: P-384
+        ttl: 87600h
+        maxPathLength: 2
+        external: true
+environments:
+  dev:
+    artifacts:
+      example-identity-2026-09-dev-root-signed: testdata/pki-roots/example-root-2026-09-identity-dev.yaml
+    mounts:
+      - path: pki
+        description: dev.example.private Issuing CA; the private chain's leaves in dev
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-private-2026-09-dev
+        issuers:
+          - name: example-private-2026-09-dev
+            commonName: dev.example.private Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 1
+            nameConstraints:
+              permittedDnsDomains:
+                - dev.example.private
+                - cluster.local
+              excludedIpRanges:
+                - 0.0.0.0/0
+                - ::/0
+            signedBy:
+              mount: pki-example-private
+              issuer: example-private-2026-09
+        roles:
+          - name: private
+            issuer: example-private-2026-09-dev
+            allowedDomains:
+              - dev.example.private
+            allowBareDomains: true
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: workload
+            issuer: example-private-2026-09-dev
+            allowedDomains:
+              - svc.cluster.local
+            allowBareDomains: false
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: restore-check
+            issuer: example-private-2026-09-dev
+            allowedDomains:
+              - restore-check.dev.example.private
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: false
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+        credentialRoles:
+          - name: db-client
+            issuer: example-private-2026-09-dev
+            subjectMount: jwt-people
+            cnValidations:
+              - email
+            server: false
+            client: true
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+      - path: pki-origin
+        description: dev.example.net Issuing CA; the origin chain's leaves in dev
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-origin-2026-09-dev
+        issuers:
+          - name: example-origin-2026-09-dev
+            commonName: dev.example.net Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 1
+            signedBy:
+              mount: pki-origin
+              issuer: example-origin-2026-09
+        roles:
+          - name: origin
+            issuer: example-origin-2026-09-dev
+            allowedDomains:
+              - '*.dev.example.net'
+              - app.dev.example.net
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: true
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+      - path: pki-identity
+        description: dev.example.private Workload Identity CA; the identity chain's leaves in dev
+        defaultLeaseTtl: 1h
+        maxLeaseTtl: 24h
+        defaultIssuer: example-identity-2026-09-dev-root-signed
+        issuers:
+          - name: example-identity-2026-09-dev-root-signed
+            commonName: dev.example.private Workload Identity CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 0
+            nameConstraints:
+              excludedIpRanges:
+                - 0.0.0.0/0
+                - ::/0
+              permittedUriDomains:
+                - dev.example.private
+            external: true
+        roles:
+          - name: identity
+            issuer: example-identity-2026-09-dev-root-signed
+            allowedDomains: []
+            allowBareDomains: false
+            allowSubdomains: false
+            allowWildcardCertificates: false
+            allowedUriSans:
+              - spiffe://dev.example.private/*
+            server: true
+            client: true
+            keyCurve: P-256
+            ttl: 1h
+            maxTtl: 24h
+            renewBefore: 10m
+  prod:
+    artifacts: {}
+    mounts:
+      - path: pki
+        description: prod.example.private Issuing CA; the private chain's leaves in prod
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-private-2026-09-prod
+        issuers:
+          - name: example-private-2026-09-prod
+            commonName: prod.example.private Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 1
+            nameConstraints:
+              permittedDnsDomains:
+                - prod.example.private
+                - cluster.local
+              excludedIpRanges:
+                - 0.0.0.0/0
+                - ::/0
+            signedBy:
+              mount: pki-example-private
+              issuer: example-private-2026-09
+        roles:
+          - name: private
+            issuer: example-private-2026-09-prod
+            allowedDomains:
+              - prod.example.private
+            allowBareDomains: true
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: workload
+            issuer: example-private-2026-09-prod
+            allowedDomains:
+              - svc.cluster.local
+            allowBareDomains: false
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: restore-check
+            issuer: example-private-2026-09-prod
+            allowedDomains:
+              - restore-check.prod.example.private
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: false
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+        credentialRoles:
+          - name: db-client
+            issuer: example-private-2026-09-prod
+            subjectMount: jwt-people
+            cnValidations:
+              - email
+            server: false
+            client: true
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+      - path: pki-origin
+        description: example.net Issuing CA; the origin chain's leaves in prod
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-origin-2026-09-prod
+        issuers:
+          - name: example-origin-2026-09-prod
+            commonName: example.net Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 1
+            signedBy:
+              mount: pki-origin
+              issuer: example-origin-2026-09
+        roles:
+          - name: origin
+            issuer: example-origin-2026-09-prod
+            allowedDomains:
+              - app.example.net
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: true
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h

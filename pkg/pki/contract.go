@@ -20,8 +20,10 @@ package pki
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -85,6 +87,10 @@ const (
 	// is in, when the contract does not name ArtifactDir explicitly.
 	DefaultArtifactDir = "pki-roots"
 
+	// DefaultIssuingCACommonNameSuffix ends the subject of an issuing CA
+	// when the domain does not author one.
+	DefaultIssuingCACommonNameSuffix = "Issuing CA"
+
 	// intermediateArtifactInfix sits between a generation ID and a trust
 	// domain (and, for a per-environment CA, the environment) in the file
 	// name of a signed intermediate, so every ceremony artifact of one
@@ -129,6 +135,9 @@ type (
 		// resolved against it. Unexported: not part of the authored
 		// document.
 		dir string
+		// fsys, when set, is where committed ceremony artifacts are read
+		// from ([LoadFS]): paths are relative to its root, which is dir.
+		fsys fs.FS
 	}
 
 	// Global is the crypto policy every authority and every leaf in the
@@ -243,7 +252,71 @@ type (
 		RequireTrusted     bool               `yaml:"requireTrusted,omitempty"`
 		DomainIntermediate DomainIntermediate `yaml:"domainIntermediate"`
 		Lifetimes          Lifetimes          `yaml:"lifetimes"`
-		Roles              []LeafRole         `yaml:"roles"`
+		// Placement is where OpenBAO keeps the domain's authorities.
+		Placement Placement `yaml:",inline"`
+		// IssuingCA is the template of each environment's issuing CA
+		// under the domain intermediate.
+		IssuingCA IssuingCA  `yaml:"issuingCA,omitempty"`
+		Roles     []LeafRole `yaml:"roles"`
+		// CredentialRoles are roles on each environment's issuing CA that
+		// sign a caller's own CSR for a person, never a workload: see
+		// [CredentialRole].
+		CredentialRoles []CredentialRole `yaml:"credentialRoles,omitempty"`
+	}
+
+	// Placement is where OpenBAO keeps a trust domain's authorities, and
+	// what the mounts are called for an operator reading sys/mounts. Every
+	// field is optional: the mount paths default to "pki-<domain name>" and
+	// the descriptions to a generic sentence.
+	//
+	// The paths are part of the deployed state: a mount that changes path
+	// is a new mount and the old one is deleted with its CAs. They are
+	// authored here, once, because the contract is the only place a
+	// reviewer looks for what the estate serves.
+	Placement struct {
+		// DomainMount is the root-namespace mount that holds the domain
+		// intermediate. Two domains may share one; the mount is then
+		// created once and each domain's intermediate is a further issuer
+		// in it.
+		DomainMount string `yaml:"domainMount,omitempty"`
+		// IssuingMount is the mount, inside each environment's namespace,
+		// that holds that environment's issuing CA and its roles.
+		IssuingMount string `yaml:"issuingMount,omitempty"`
+		// DomainMountDescription and IssuingMountDescription are templates:
+		// "{commonName}" is the (first) authority's subject, "{domain}" the
+		// trust domain's name and, for the issuing mount only,
+		// "{environment}" the environment's.
+		DomainMountDescription  string `yaml:"domainMountDescription,omitempty"`
+		IssuingMountDescription string `yaml:"issuingMountDescription,omitempty"`
+	}
+
+	// IssuingCA is the certificate template every environment's issuing CA
+	// under a shared intermediate has in common. The subject is derived
+	// per environment (its own value for [ZonePlaceholder] and the
+	// suffix), never authored per environment.
+	IssuingCA struct {
+		// CommonNameSuffix is appended to the environment's value; empty
+		// means [DefaultIssuingCACommonNameSuffix].
+		CommonNameSuffix string `yaml:"commonNameSuffix,omitempty"`
+	}
+
+	// CredentialRole is a leaf role that signs a CSR for the caller and
+	// nobody else: the only common name it accepts is the caller's own
+	// entity alias name on SubjectMount. It is never a workload's role:
+	// no cert-manager-style login is granted it, and its leaves are short.
+	CredentialRole struct {
+		Name string `yaml:"name"`
+		// SubjectMount is the auth mount, in the same namespace, whose
+		// alias name the common name must equal.
+		SubjectMount string `yaml:"subjectMount"`
+		// CNValidations is how the common name must read: "email" or
+		// "hostname".
+		CNValidations []string `yaml:"cnValidations,omitempty"`
+		Usage         Usage    `yaml:"usage"`
+		KeyCurve      string   `yaml:"keyCurve"`
+		// Lifetimes bound the leaf; RenewBefore is not allowed: a
+		// credential is minted for one use, never renewed.
+		Lifetimes LeafLifetimes `yaml:"lifetimes"`
 	}
 
 	// DomainIntermediate is the certificate template of a DNS trust
@@ -264,10 +337,24 @@ type (
 	// no per-role name patterns, one role, and an explicit
 	// per-environment allow-list rather than a DNS domain's roles list.
 	URITrustDomain struct {
-		Name               string                `yaml:"name"`
-		RootGeneration     string                `yaml:"rootGeneration"`
-		DomainIntermediate URIDomainIntermediate `yaml:"domainIntermediate"`
+		Name           string `yaml:"name"`
+		RootGeneration string `yaml:"rootGeneration"`
+		// DomainIntermediate is the shared intermediate every environment
+		// without its own root-signed CA is issued under. It is OPTIONAL:
+		// a domain whose every environment has its own root-signed CA
+		// (EnvironmentCA set, no shared intermediate) has nothing between
+		// the root and the environment CAs, so the root's path length is
+		// spent one level less, and Lifetimes.DomainIntermediate is left
+		// out. Leave it out ENTIRELY: a half-authored intermediate is
+		// refused.
+		DomainIntermediate URIDomainIntermediate `yaml:"domainIntermediate,omitempty"`
 		Lifetimes          Lifetimes             `yaml:"lifetimes"`
+		// Placement is where OpenBAO keeps the domain's authorities.
+		Placement Placement `yaml:",inline"`
+		// IssuingCA is the certificate template of an environment's
+		// issuing CA under the shared intermediate (an environment that
+		// is not root-signed).
+		IssuingCA IssuingCA `yaml:"issuingCA,omitempty"`
 		// Environments is which environments get an issuing CA and the
 		// role under this domain. THIS LIST IS THE ONLY LEVER: adding a
 		// name here is the entire change needed to reach another
@@ -282,7 +369,10 @@ type (
 		EnvironmentCA *EnvironmentCA `yaml:"environmentCA,omitempty"`
 		// RootSignedEnvironments is a SUBSET of Environments: which of
 		// them have their own issuing CA signed directly by the root
-		// rather than by DomainIntermediate. Requires EnvironmentCA.
+		// rather than by DomainIntermediate. Requires EnvironmentCA. A
+		// domain without a shared intermediate has no other kind of
+		// environment: every environment is root-signed, and this list
+		// may then be left out (or must equal Environments).
 		RootSignedEnvironments []string `yaml:"rootSignedEnvironments,omitempty"`
 	}
 
@@ -329,6 +419,16 @@ type (
 		// needs no new .attempt reservation for an artifact that is
 		// already signed and committed.
 		ArtifactPattern string `yaml:"artifactPattern,omitempty"`
+		// IssuerNamePattern overrides the OpenBAO issuer (and key) name of
+		// each environment's root-signed CA. It must contain
+		// "{environment}". Empty means "<domain name>-<environment>"
+		// ([URITrustDomain.EnvironmentCAIssuerName]).
+		//
+		// An estate adopting deployed CAs sets this to whatever name they
+		// already carry: the name is what the apply's resources are named
+		// after, so a different one is a create of the new resource and a
+		// delete of the old, and the delete removes the CA's key.
+		IssuerNamePattern string `yaml:"issuerNamePattern,omitempty"`
 	}
 
 	// URIRole is the one leaf role a URI trust domain's issuing CA offers:
@@ -386,7 +486,9 @@ type (
 	// DomainIntermediate > ClusterIntermediate > LeafMaximum >=
 	// LeafDefault > RenewBefore.
 	Lifetimes struct {
-		DomainIntermediate  string `yaml:"domainIntermediate"`
+		// DomainIntermediate is required except for a URI trust domain
+		// with no shared intermediate.
+		DomainIntermediate  string `yaml:"domainIntermediate,omitempty"`
 		ClusterIntermediate string `yaml:"clusterIntermediate"`
 		LeafDefault         string `yaml:"leafDefault"`
 		LeafMaximum         string `yaml:"leafMaximum"`
@@ -433,7 +535,8 @@ type (
 )
 
 // Load reads a contract from path, strictly (an unknown key is an error),
-// and validates it.
+// and validates it. Ceremony artifacts are read from disk, relative to the
+// file's own directory.
 func Load(path string) (*Contract, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -446,6 +549,36 @@ func Load(path string) (*Contract, error) {
 	}
 
 	contract.dir = pathDir(path)
+
+	if err := contract.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &contract, nil
+}
+
+// LoadFS is [Load] for a contract inside a file system that is not the
+// working directory's -- an embedded configuration tree, typically. name is
+// the contract's path in fsys; dir is where that file system's root sits
+// relative to the caller's working directory ("cfg" for a repository whose
+// configuration lives in cfg/), so [Contract.ArtifactPath] still names a
+// path a command run from the repository root can open, while the
+// contract's own reads of committed artifacts ([Contract.TrustAnchors],
+// [Contract.IntermediateSigned], [Contract.LoadSignedIntermediate]) go
+// through fsys.
+func LoadFS(fsys fs.FS, name, dir string) (*Contract, error) {
+	raw, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return nil, fmt.Errorf("read contract %s: %w", name, err)
+	}
+
+	var contract Contract
+	if err := readYAMLStrict(raw, &contract); err != nil {
+		return nil, fmt.Errorf("read contract %s: %w", name, err)
+	}
+
+	contract.dir = path.Join(dir, path.Dir(name))
+	contract.fsys = fsys
 
 	if err := contract.Validate(); err != nil {
 		return nil, err
@@ -528,14 +661,46 @@ func (d *URITrustDomain) environmentCAArtifactName(generationID, environment str
 }
 
 // EnvironmentCAIssuerName is the deterministic OpenBAO issuer (and key)
-// name of one environment's own root-signed CA under this domain: this
-// domain's own name and the environment, the same shape
-// [Contract.EnvironmentCASpec]'s TrustDomain already uses for the
-// ceremony's serial derivation, so a caller building the desired state a
-// signed artifact installs into (an `External` [model.PKIIssuer]) and the
-// ceremony that signed it never disagree on what this CA is called.
+// name of one environment's own root-signed CA under this domain:
+// [EnvironmentCA.IssuerNamePattern] with its placeholder substituted, or
+// this domain's own name and the environment. A caller building the desired
+// state a signed artifact installs into (an `External` [model.PKIIssuer])
+// and the ceremony that signed it never disagree on what this CA is called.
 func (d *URITrustDomain) EnvironmentCAIssuerName(environment string) string {
+	if d.EnvironmentCA != nil && d.EnvironmentCA.IssuerNamePattern != "" {
+		return strings.ReplaceAll(d.EnvironmentCA.IssuerNamePattern, "{environment}", environment)
+	}
+
 	return d.Name + "-" + environment
+}
+
+// hasSharedIntermediate reports whether the domain authors an intermediate
+// below the root that environments without their own CA are issued under.
+func (d *URITrustDomain) hasSharedIntermediate() bool {
+	i := d.DomainIntermediate
+
+	return i.Name != "" || i.Subject != (Subject{}) || i.KeyCurve != "" || i.MaxPathLen != 0 || len(i.PermittedURIDomains) != 0
+}
+
+// IsRootSigned reports whether the environment's CA is signed directly by
+// the root: listed in RootSignedEnvironments or, in a domain with no shared
+// intermediate, any environment of the domain.
+func (d *URITrustDomain) IsRootSigned(environment string) bool {
+	if !slices.Contains(d.Environments, environment) {
+		return false
+	}
+
+	if !d.hasSharedIntermediate() {
+		return true
+	}
+
+	return slices.Contains(d.RootSignedEnvironments, environment)
+}
+
+// URISAN is the URI SAN this role allows for one environment: the pattern
+// with [ZonePlaceholder] replaced by the environment's value.
+func (r URIRole) URISAN(value string) string {
+	return strings.ReplaceAll(r.URISANPattern, ZonePlaceholder, value)
 }
 
 // RootGeneration returns the authored generation with this ID, or nil.

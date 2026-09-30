@@ -107,6 +107,27 @@ func LoadRootArtifact(path string) (RootArtifact, error) {
 	return artifact, nil
 }
 
+// ParseRootArtifact is [LoadRootArtifact] over bytes already read, for an
+// artifact that lives somewhere other than the local disk (an embedded
+// configuration tree).
+func ParseRootArtifact(raw []byte) (RootArtifact, error) {
+	var artifact RootArtifact
+	if err := decodeYAMLStrict(raw, &artifact); err != nil {
+		return RootArtifact{}, fmt.Errorf("parse root artifact: %w", err)
+	}
+	return artifact, nil
+}
+
+// ParseIntermediateArtifact is [LoadIntermediateArtifact] over bytes already
+// read.
+func ParseIntermediateArtifact(raw []byte) (IntermediateArtifact, error) {
+	var artifact IntermediateArtifact
+	if err := decodeYAMLStrict(raw, &artifact); err != nil {
+		return IntermediateArtifact{}, fmt.Errorf("parse intermediate artifact: %w", err)
+	}
+	return artifact, nil
+}
+
 // LoadIntermediateArtifact reads a committed intermediate artifact.
 func LoadIntermediateArtifact(path string) (IntermediateArtifact, error) {
 	var artifact IntermediateArtifact
@@ -146,6 +167,10 @@ func readYAMLStrict(path string, into any) error {
 	if err != nil {
 		return err
 	}
+	return decodeYAMLStrict(raw, into)
+}
+
+func decodeYAMLStrict(raw []byte, into any) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	return decoder.Decode(into)
