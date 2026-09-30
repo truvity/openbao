@@ -70,7 +70,7 @@ Last reviewed: 2026-09-30.
 | Capability | State | Notes |
 |---|---|---|
 | server certificate from the private chain | LIVE | opt-in per project and environment |
-| server certificate served without restart on renewal | LIVE | server-TLS and server-CA Secrets carry `cnpg.io/reload` (truvity/cnpg-cluster v2.0.1 and v1.2.2); a forced renewal was served within 10 s in a development environment |
+| server certificate served without restart on renewal | LIVE | server-TLS and server-CA Secrets carry `cnpg.io/reload` (truvity/cnpg v2.0.1 and v1.2.2); a forced renewal was served within 10 s in a development environment |
 | PostgreSQL phase 1: server on the private chain, clients `verify-full` | LIVE | an identity server (own ServiceAccount, FQDN host, root mounted as a directory) in development and production; the url-shortener example (`database.tls.mode`, policy v1.33.0) in development; the platform's audit and dashboard databases on the management cluster; the document service's database servers on the private chain in every environment, with clients verifying where the chart version allows (development today) |
 | phase 0 spikes (client CA without key, per-database CA, people path) | LIVE | all GO; one open design point on trust-manager sources ([databases.md](databases.md#the-per-database-ca)) |
 | Java client key format (DER PKCS#8) via cert-manager `additionalOutputFormats` | PLANNED | to be verified |
@@ -146,7 +146,7 @@ Newest first. One line per delivery; link the pull request once merged.
   databases (management cluster), and the document service's database servers in
   every environment, with clients verifying where the chart version allows
   (development). Renewed server certificates are served without restart
-  (`cnpg.io/reload`; truvity/cnpg-cluster v2.0.1 and v1.2.2).
+  (`cnpg.io/reload`; truvity/cnpg v2.0.1 and v1.2.2).
 - **2026-09-30** -- approver policies are rendered by the `openbao-consumers`
   chart (`approverPolicy`, with `extraPolicies` for issuers that are not OpenBAO,
   such as a self-signed bootstrap issuer); the consumer no longer hand-writes
