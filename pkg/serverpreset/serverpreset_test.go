@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/truvity/openbao/pkg/model"
 	"github.com/truvity/openbao/pkg/serverpreset"
 )
 
@@ -259,4 +260,75 @@ func TestHCLRefusesInvalidConfig(t *testing.T) {
 
 	_, err := c.HCL()
 	require.Error(t, err)
+}
+
+// A whole-server render refuses what it would otherwise write as
+// `address = ""` or leave out; the plugin-only entry points stay usable
+// with a bare Config.
+func TestHCLRefusesAnEmptyListenerAndNoStorage(t *testing.T) {
+	bare := serverpreset.Config{Arch: "arm64"}
+
+	_, err := bare.HCL()
+	require.ErrorContains(t, err, "Listener.Address")
+
+	_, err = bare.Values("openbao-plugins")
+	require.ErrorContains(t, err, "Listener.Address")
+
+	withListener := serverpreset.Config{Arch: "arm64", Listener: serverpreset.Listener{Address: "[::]:8200"}}
+
+	_, err = withListener.HCL()
+	require.ErrorContains(t, err, "no storage block")
+
+	withListener.ExternalStorage = true
+	hcl, err := withListener.HCL()
+	require.NoError(t, err)
+	assert.NotContains(t, hcl, "storage")
+
+	peers := serverpreset.Config{
+		Arch:     "arm64",
+		Listener: serverpreset.Listener{Address: "[::]:8200"},
+		Raft:     serverpreset.Raft{Peers: []serverpreset.RaftPeer{{LeaderAPIAddr: "https://peer-0.example:8200"}}},
+	}
+
+	_, err = peers.HCL()
+	require.ErrorContains(t, err, "Raft.Path")
+
+	peers.Raft.Path = "/openbao/data"
+	peers.Raft.Peers[0].LeaderAPIAddr = ""
+	_, err = peers.HCL()
+	require.ErrorContains(t, err, "LeaderAPIAddr")
+
+	_, err = bare.PluginHCL()
+	require.NoError(t, err)
+	assert.Empty(t, bare.EgressDomains())
+}
+
+func desiredWithAWSMount(version string, registered bool) *model.Desired {
+	desired := &model.Desired{Namespaces: []model.Namespace{{
+		Name:    "dev",
+		AWSAuth: []model.AWSAuthMount{{Path: "aws", PluginVersion: version}},
+	}}}
+
+	if registered {
+		desired.Plugins = []model.Plugin{{Type: "auth", Name: "aws"}}
+	}
+
+	return desired
+}
+
+// A mount's plugin must resolve through one of the two registration paths.
+func TestCheckMountsCrossChecksThePluginVersion(t *testing.T) {
+	c := serverpreset.Config{Arch: "arm64", Plugins: []serverpreset.Plugin{awsAuthPlugin()}}
+
+	require.NoError(t, c.CheckMounts(desiredWithAWSMount("v0.1.1", false)), "a pin the declarative catalog has")
+	require.NoError(t, c.CheckMounts(desiredWithAWSMount("latest", false)), "latest resolves to whatever is registered")
+	require.NoError(t, c.CheckMounts(desiredWithAWSMount("", true)), "an unpinned mount with an unversioned registration")
+	require.NoError(t, c.CheckMounts(&model.Desired{}), "no AWS mount, nothing to check")
+
+	require.ErrorContains(t, c.CheckMounts(desiredWithAWSMount("v9.9.9", false)), `pins plugin version "v9.9.9"`)
+	require.ErrorContains(t, c.CheckMounts(desiredWithAWSMount("v9.9.9", true)), "cannot satisfy a pin")
+	require.ErrorContains(t, c.CheckMounts(desiredWithAWSMount("", false)), "registers no auth/aws plugin")
+
+	none := serverpreset.Config{Arch: "arm64"}
+	require.ErrorContains(t, none.CheckMounts(desiredWithAWSMount("v0.1.1", false)), "declared: none")
 }

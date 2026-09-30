@@ -191,6 +191,13 @@ type (
 		Seal     Seal
 		Listener Listener
 		Raft     Raft
+		// ExternalStorage says the storage backend is configured outside
+		// this package (another backend, or a stanza the caller appends).
+		// [Config.HCL] and [Config.Values] refuse a Config with no Raft peers
+		// and no ExternalStorage, because a server with no storage block does
+		// not start; the flag is the explicit alternative. It renders
+		// nothing.
+		ExternalStorage bool
 		// UI serves the web UI on the same listener (`ui = true`).
 		UI bool
 		// DisableStandbyReads: standbys forward every request to the
@@ -209,6 +216,39 @@ type (
 		AuditDevice string
 	}
 )
+
+// validateServer is what a whole-server render ([Config.HCL],
+// [Config.Values]) needs beyond [Config.Validate]: the listener and the
+// storage are rendered there, so an empty one is refused rather than
+// written as `address = ""` or left out. The plugin-only entry points
+// (PluginHCL, SealHCL, EgressDomains, the retry sidecar) do not need
+// either and do not call it.
+func (c *Config) validateServer() error {
+	if strings.TrimSpace(c.Listener.Address) == "" {
+		return fmt.Errorf("config: Listener.Address is required — the listener renders `address = \"\"` otherwise, which no server accepts")
+	}
+
+	if len(c.Raft.Peers) == 0 {
+		if !c.ExternalStorage {
+			return fmt.Errorf("config: no storage block — set Raft.Peers, or ExternalStorage when the storage backend is configured elsewhere; " +
+				"a server with no storage block does not start")
+		}
+
+		return nil
+	}
+
+	if strings.TrimSpace(c.Raft.Path) == "" {
+		return fmt.Errorf("config: Raft.Path is required when Raft.Peers is set")
+	}
+
+	for i, peer := range c.Raft.Peers {
+		if strings.TrimSpace(peer.LeaderAPIAddr) == "" {
+			return fmt.Errorf("config: Raft.Peers[%d].LeaderAPIAddr is required", i)
+		}
+	}
+
+	return nil
+}
 
 // Command is the on-disk name OpenBAO's declarative download links the
 // verified binary as — "<Kind>-<Name>-<Version>", NOT BinaryName. A
@@ -512,6 +552,10 @@ func (c *Config) RaftHCL() string {
 // is easy to read line for line.
 func (c *Config) HCL() (string, error) {
 	if err := c.Validate(); err != nil {
+		return "", err
+	}
+
+	if err := c.validateServer(); err != nil {
 		return "", err
 	}
 
