@@ -1,0 +1,87 @@
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-consumers-approver-use
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: example-ca-labelled-use
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - "example-ca-labelled"
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-consumers-approver-use
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-consumers-approver-use
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: example-ca-labelled-use
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: example-ca-labelled-use
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: example-ca-labelled
+spec:
+  selector:
+    issuerRef:
+      group: cert-manager.io
+      kind: ClusterIssuer
+      name: example-ca
+    namespace:
+      matchLabels:
+        example.com/ca: "true"
+  allowed:
+    dnsNames:
+      required: true
+      values:
+      - '*.example.internal'
+    ipAddresses:
+      values:
+      - 10.*
+    emailAddresses:
+      values:
+      - '*@example.com'
+    isCA: false
+    usages:
+      - server auth
+  constraints:
+    maxDuration: 720h
+    minDuration: 1h

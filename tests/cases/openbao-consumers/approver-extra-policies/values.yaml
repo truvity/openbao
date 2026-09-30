@@ -1,0 +1,37 @@
+# approverPolicy.extraPolicies: a per-database CA policy (commonName only,
+# one namespace) and a self-signed bootstrap policy, next to one OpenBAO
+# issuer's own policy.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustAnchors: [{name: root, certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=}]
+  issuers:
+    - {name: example-private, signPath: pki/sign/private, role: example-private}
+approverPolicy:
+  enabled: true
+  issuers:
+    example-private:
+      dnsNames: ["*.east.example.internal"]
+  extraPolicies:
+    - name: example-db-ca
+      issuerRef: {group: cert-manager.io, kind: Issuer, name: example-db-ca}
+      selector:
+        namespace: {matchNames: [example-db]}
+      allowed:
+        commonName: {value: "example-db-*", required: true}
+        isCA: false
+        usages: [digital signature, key encipherment, client auth]
+      constraints:
+        privateKey: {algorithm: ECDSA, minSize: 256, maxSize: 384}
+        maxDuration: 2160h
+    - name: example-selfsigned-bootstrap
+      issuerRef: {group: cert-manager.io, kind: ClusterIssuer, name: example-selfsigned-bootstrap}
+      selector:
+        namespace: {matchNames: [example-app]}
+      allowed:
+        commonName: {value: example-app, required: true}
+        isCA: false
+        usages: [digital signature, key encipherment]
+      syncWave: 32
+      annotations: {example.com/owner: platform}

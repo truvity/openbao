@@ -108,6 +108,43 @@ approverPolicy:
   backed by OpenBAO: the render refuses `kind: Issuer` entries in
   `pki.issuers` while it is on, since they would ride the allow-all policy
   and their own shape would never be enforced.
+- **Policies for issuers outside `pki.issuers`.** A SelfSigned or CA
+  `Issuer`, or a `ClusterIssuer` not backed by OpenBAO (a per-database CA,
+  a bootstrap self-signer) has no entry in `pki.issuers`, so
+  `approverPolicy.extraPolicies[]` names it directly. Each entry is written
+  out as given: no `defaults`, no allow-all, and what it does not name is
+  refused.
+
+  ```yaml
+  approverPolicy:
+    extraPolicies:
+      - name: example-db-ca
+        issuerRef: {group: cert-manager.io, kind: Issuer, name: example-db-ca}
+        selector:
+          namespace: {matchNames: [example-db]}     # or matchLabels
+        allowed:
+          commonName: {value: "example-db-*", required: true}   # a commonName alone is enough
+          # dnsNames / uris / ipAddresses / emailAddresses: {values: [...], required: false}
+          isCA: false
+          usages: [digital signature, key encipherment]
+        constraints:
+          privateKey: {algorithm: ECDSA, minSize: 256, maxSize: 384}
+          maxDuration: 2160h
+        syncWave: 32          # optional; annotations: {} and roleName: "" too
+  ```
+
+  `name`, `issuerRef` (all of `group`, `kind`, `name`) and an `allowed` that
+  names a commonName, dnsNames, uris, ipAddresses or emailAddresses are
+  required; a `spiffe:` URI is refused as everywhere else. Each entry gets
+  its **own** `ClusterRole` and `ClusterRoleBinding` granting `use` on that
+  policy alone, named `<roleName>-<name>` (`<release>-approver-use-<name>`
+  by default; the entry's `roleName` overrides), bound to the same
+  requesters as the shared role. With `syncWave` set the policy carries that
+  Argo CD wave and its role and binding the wave before, so the grant exists
+  before the policy does. `approverPolicy.enabled` may then be used with no
+  `pki.issuers` at all. `approvercheck` evaluates these policies like any
+  other. List the issuer's signer in approver-policy's
+  `app.approveSignerNames` too.
 - **RBAC.** A `ClusterRole` granting `use` on exactly these policies and a
   binding to whoever creates the requests: cert-manager's own
   ServiceAccount, for every `Certificate` (`approverPolicy.requesters`

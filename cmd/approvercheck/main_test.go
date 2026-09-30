@@ -138,3 +138,60 @@ func TestContextSelectsTheClusterAndTheRunSaysWhich(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `no context "third"`)
 }
+
+const extraPolicies = "../../tests/golden/openbao-consumers/approver-extra-policies.yaml"
+
+// commonNameRequest writes one CertificateRequest that carries a
+// commonName and nothing else -- the shape a per-database CA policy allows.
+func commonNameRequest(t *testing.T, namespace, issuer, kind, cn string) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: cn},
+	}, key)
+	require.NoError(t, err)
+	csr := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+
+	body := fmt.Sprintf(`apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata: {name: leaf-1, namespace: %s}
+spec:
+  duration: 720h
+  usages: [digital signature, key encipherment]
+  request: %s
+  issuerRef: {name: %s, kind: %s, group: cert-manager.io}
+`, namespace, base64.StdEncoding.EncodeToString(csr), issuer, kind)
+	path := filepath.Join(t.TempDir(), "crs.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
+}
+
+// approverPolicy.extraPolicies render policies approvercheck evaluates like
+// any other: the issuer, the namespace and the commonName all count.
+func TestExtraPoliciesAreEvaluated(t *testing.T) {
+	ok := commonNameRequest(t, "example-app", "example-selfsigned-bootstrap", "ClusterIssuer", "example-app")
+	code, out, _ := runCLI(t, "--policies", extraPolicies, "--requests", ok)
+	assert.Equal(t, 0, code, out)
+	assert.Contains(t, out, "approved: 1")
+
+	// The same request from another namespace rides no policy.
+	elsewhere := commonNameRequest(t, "other", "example-selfsigned-bootstrap", "ClusterIssuer", "example-app")
+	code, out, _ = runCLI(t, "--policies", extraPolicies, "--requests", elsewhere)
+	assert.Equal(t, 1, code, out)
+
+	// A commonName the policy does not name is denied.
+	wrongCN := commonNameRequest(t, "example-app", "example-selfsigned-bootstrap", "ClusterIssuer", "somebody-else")
+	code, out, _ = runCLI(t, "--policies", extraPolicies, "--requests", wrongCN)
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "denied: 1")
+
+	// The per-database CA policy: a namespaced Issuer, its namespace only.
+	db := commonNameRequest(t, "example-db", "example-db-ca", "Issuer", "example-db-primary")
+	code, out, _ = runCLI(t, "--policies", extraPolicies, "--requests", db)
+	assert.Equal(t, 0, code, out)
+	dbElsewhere := commonNameRequest(t, "example-app", "example-db-ca", "Issuer", "example-db-primary")
+	code, _, _ = runCLI(t, "--policies", extraPolicies, "--requests", dbElsewhere)
+	assert.Equal(t, 1, code)
+}
