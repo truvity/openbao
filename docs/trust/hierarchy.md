@@ -301,11 +301,39 @@ and one compromised key must not cost both. People do not use the user CA at
 all in the target shape (they use opkssh); see [people.md](people.md#ssh) and
 [decision 0003](../decisions/0003-ssh-people-external-machines-and-hosts-on-our-cas.md).
 
+## The seal key and the seal plugin
+
+The KMS root above signs and nothing else. A **second** KMS key belongs to
+the server: the auto-unseal (seal) key, which wraps the barrier key OpenBAO
+encrypts everything with. They are different keys with different policies,
+and neither can do the other's job: the seal key only encrypts, decrypts and
+describes (its grants are `Encrypt`, `Decrypt`, `DescribeKey`) and cannot
+sign a certificate; the root can sign and is never used to unseal. Losing the
+seal key's access seals every node at its next restart; the recovery keys and
+the raft snapshot are the way back, so both are kept where the estate keeps
+its other recovery material.
+
+From OpenBAO 2.7 the code that talks to that key is an **external plugin
+binary** the server runs as a child process, with the server's own KMS
+credentials. It therefore sits inside the trust boundary in a way an auth
+plugin does not: whoever controls that binary can decrypt the barrier key. So
+the binary is pinned, never fetched by the server at runtime: by the
+manifest-list digest of its OCI image (and optionally its raw-binary
+checksum), installed before the server starts by an init container that
+pulls nothing itself (the kubelet pulls the digest, through the estate's own
+mirror if the nodes cannot reach the public registry), into a per-pod
+directory that is thrown away with the pod. A bump of the plugin is a
+reviewed change to a digest, rolled standby first like any configuration
+change. Why the delivery is shaped this way, what the render refuses, the
+rehearsal that proves it and the 2.6 to 2.7 runbook are in
+[server.md](../server.md#the-seal-as-a-plugin-openbao-27).
+
 ## Where each part is used
 
 | You need to change | Read |
 |---|---|
 | the root, its custody, the yearly drill | [ceremony.md](../ceremony.md), [custody.md](../custody.md) |
+| the server's seal (auto-unseal key, seal plugin), rolling to 2.7 | [server.md](../server.md#the-seal-as-a-plugin-openbao-27) |
 | which trust domains, roles, lifetimes exist | [pki.md](../pki.md) |
 | what OpenBAO is asked to hold | [model.md](../model.md#pki-mounts-issuers-roles) |
 | who may ask cert-manager for a certificate | [issuance.md](issuance.md) |

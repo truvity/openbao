@@ -11,7 +11,7 @@ from.
 | `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates |
 | `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader |
 | `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged |
-| `pkg/serverpreset` (Go) | A reusable OpenBAO server preset for the plugin catalog, the `awskms` seal, the listener and Raft |
+| `pkg/serverpreset` (Go) | A reusable OpenBAO server preset for the plugin catalog, the `awskms` seal (built in on 2.6, an external plugin on 2.7), the listener and Raft |
 | `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format |
 | `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region |
 | `pkg/pki` (Go) | The authored private-PKI contract above `pkg/ceremony`: root generations, trust domains, per-environment roles, and per-environment identity CAs |
@@ -332,7 +332,7 @@ v0.1.0; the Go module and `openbaoctl` from v0.2.0; `pkg/model` and
 `pkg/apply` from v0.3.0.
 
 As of 2026-09-29, the AWS coupling is real, not incidental: `pkg/serverpreset`
-renders an `awskms` seal stanza and refuses any other seal type outright,
+renders an `awskms` seal stanza (with the 2.7 plugin form) and refuses any other seal type outright,
 and `pkg/ceremony` and `pkg/custody` are written against AWS KMS
 specifically (a multi-region P-384 key, its policy and roles, `aws sts`
 for the ceremony's caller identity) -- there is no GCP, Azure or other KMS

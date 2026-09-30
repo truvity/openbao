@@ -25,6 +25,15 @@
 //     disposition terminates a process that has not installed a handler
 //     for it yet.
 //
+// OpenBAO 2.7 makes the awskms seal an external KMS plugin too, and a seal
+// cannot wait for the server to be Ready: the plugin binary must be on disk
+// BEFORE `bao server` starts, because the server cannot unseal — cannot
+// become Ready — without it. [SealPlugin] is that: an init container
+// installs the binary from a digest-pinned image, the `plugin "kms"` block
+// registers the local file, and nothing about the seal depends on the
+// network, the retry sidecar or a download. See docs/server.md, "The seal
+// as a plugin (OpenBAO 2.7)".
+//
 // docs/server.md is the runbook this package's output is proven against
 // (a real `bao server`, conformance/server_preset_test.go) and the
 // migration note for an install that already authors this HCL by hand.
@@ -34,8 +43,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -65,6 +76,48 @@ var hclIdent = regexp.MustCompile(`^[A-Za-z0-9_./:@-]+$`)
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{` + itoa(hex.EncodedLen(sha256.Size)) + `}$`)
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
+
+// ociDigest is an OCI content digest as a registry and a kubelet spell it:
+// "sha256:" and 64 lowercase hex digits.
+var ociDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// fileName is a name that is one path element: what the plugin directory
+// may hold and what `command` may name (OpenBAO resolves it relative to
+// plugin_directory and refuses anything else).
+var fileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+// serverVersion reads "2.7.0", "v2.7.0" or "2.7.0-rc1" as (major, minor).
+var serverVersion = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)(?:\.[0-9]+)?(?:[-+].*)?$`)
+
+const (
+	// SealPluginKind is the plugin type of an external KMS seal: the first
+	// label of its `plugin` block. KMS plugins cannot be registered through
+	// the API (they must exist while the server is sealed), so this is the
+	// only way one is ever declared.
+	SealPluginKind = "kms"
+
+	// DeliveryInitCopy installs the seal plugin with an init container that
+	// copies the binary out of a digest-pinned OCI image into the plugin
+	// directory before `bao server` starts. The default.
+	DeliveryInitCopy = "init-copy"
+	// DeliveryPreinstalled renders only the HCL: the binary is already in
+	// the plugin directory when the server starts, put there by whatever
+	// the adopter owns (an image that bakes it in, a node-local volume).
+	// Nothing verifies that; the server refuses to start if it is missing.
+	DeliveryPreinstalled = "preinstalled"
+
+	// DefaultSealPluginBinaryName is the file the plugin's image carries at
+	// its root (openbao-plugins publishes `FROM scratch` images with the
+	// binary as the ENTRYPOINT).
+	DefaultSealPluginBinaryName = "openbao-plugin-kms-aws"
+	// DefaultSealPluginDelivery is DeliveryInitCopy.
+	DefaultSealPluginDelivery = DeliveryInitCopy
+	// DefaultSealPluginSourceVolume names the image volume the init
+	// container reads the binary from.
+	DefaultSealPluginSourceVolume = "seal-plugin-src"
+
+	sealPluginSourceMount = "/seal-plugin-src"
+)
 
 type (
 	// Plugin is one external plugin registered declaratively — a `plugin
@@ -117,17 +170,71 @@ type (
 	// Seal is the server's auto-unseal mechanism.
 	Seal struct {
 		// Type is "awskms" today — the only seal type this package
-		// renders. OpenBAO 2.7 moves awskms auto-unseal out of the main
-		// distribution into an external plugin (like Plugin above, but
-		// downloaded and verified BEFORE the server can unseal, which
-		// makes egress and the startup race matter even more than they
-		// do for an auth plugin); Validate refuses any other Type today
-		// with that as the reason, so a caller who reaches for
-		// "awskms-plugin" gets an explanation, not a parse error.
+		// renders. Built in up to OpenBAO 2.6, an external KMS plugin from
+		// 2.7 (see Plugin below); Validate refuses any other Type, so a
+		// caller who reaches for another provider gets an explanation,
+		// not a parse error.
 		Type string
 		// Region and KMSKeyID are the awskms seal's own HCL fields.
 		Region   string
 		KMSKeyID string
+		// Endpoint is the seal's `endpoint` line — a VPC endpoint, or a
+		// KMS-compatible service. Empty: the region's public KMS host.
+		// EgressDomains names this host instead of the public one.
+		Endpoint string
+		// Plugin, when non-nil, runs the seal as an external KMS plugin —
+		// mandatory from OpenBAO 2.7 (the seal is no longer built in),
+		// available from 2.6. Nil renders the built-in seal exactly as
+		// before, which only a server older than 2.7 has.
+		Plugin *SealPlugin
+	}
+
+	// SealPlugin is the awskms seal delivered as an external KMS plugin:
+	// a `plugin "kms" "<Seal.Type>"` block registering a binary that must
+	// already be on disk when the server starts (see the package comment),
+	// and — with the default DeliveryInitCopy — the init container and image
+	// volume that put it there.
+	SealPlugin struct {
+		// Delivery is [DeliveryInitCopy] (the default, empty) or
+		// [DeliveryPreinstalled].
+		Delivery string
+		// Image is the plugin's OCI repository without tag or digest, e.g.
+		// "ghcr.io/openbao/openbao-plugin-kms-aws". It is the kubelet, not
+		// the pod, that pulls it, so this is the one place an adopter
+		// points at its own mirror or pull-through cache. Required for
+		// DeliveryInitCopy.
+		Image string
+		// Digest pins the image: the manifest-list digest, "sha256:<hex>",
+		// which the kubelet resolves to the node's architecture (no
+		// per-architecture checksum, unlike [Plugin.SHA256ByArch]).
+		// Required for DeliveryInitCopy; a tag alone is never enough.
+		Digest string
+		// Version is the plugin's release version ("v0.1.0"), the `version`
+		// line and the tail of the on-disk name (Command).
+		Version string
+		// BinaryName is the binary's name at the image's root. Empty:
+		// [DefaultSealPluginBinaryName].
+		BinaryName string
+		// SHA256ByArch is the plugin binary's checksum per architecture, as
+		// the plugin release's checksums file lists it (the raw binary, not
+		// the archive or the image). REQUIRED for a server below 2.7
+		// (ServerVersion set), which refuses a manually installed plugin
+		// with no checksum; optional from 2.7, where the image digest is
+		// the pin. When present it is rendered as `sha256sum` and also
+		// verified by the init container before it installs anything. It
+		// must carry Config.Arch.
+		SHA256ByArch map[string]string
+		// CopyImage is the init container's own image: anything with `sh`,
+		// `cp`, `chmod` and `mv` — the server's image, by convention, for
+		// the same pairing reason as the retry sidecar. Required for
+		// DeliveryInitCopy.
+		CopyImage string
+		// SourceVolume names the image volume. Empty:
+		// [DefaultSealPluginSourceVolume].
+		SourceVolume string
+		// PullPolicy is the image volume's pullPolicy. Empty:
+		// IfNotPresent (the digest makes that safe).
+		PullPolicy string
 	}
 
 	// Listener is the one TCP listener OpenBAO's chart configures, TLS
@@ -164,6 +271,14 @@ type (
 	// seal, the listener, Raft, and the handful of top-level settings
 	// docs/server.md's reference HCL sets beside them.
 	Config struct {
+		// ServerVersion is the OpenBAO version this configuration is for
+		// ("2.7.0"). Optional, and only ever a guard: empty renders as
+		// before. From 2.7 on, a Seal with no Plugin is refused — the seal
+		// is not built in there, and the server would fail to start on it.
+		// Below 2.6 a Seal.Plugin is refused (no KMS plugins). The mode
+		// itself is always the explicit Seal.Plugin, never inferred from
+		// this.
+		ServerVersion string
 		// Arch is the EXPLICIT architecture selector — never derived,
 		// never guessed. A caller whose node selection could resolve to
 		// more than one architecture must resolve that FIRST (see
@@ -380,6 +495,11 @@ func (c *Config) Validate() error {
 			return err
 		}
 
+		if p.Kind == SealPluginKind {
+			return fmt.Errorf("plugin %s %s: a KMS plugin is never downloaded by the server — set Seal.Plugin, which installs it BEFORE the server starts; "+
+				"a server-side download is racing the network at exactly the moment the seal needs the binary", p.Kind, p.Name)
+		}
+
 		key := p.Kind + "/" + p.Name
 		if names[key] {
 			return fmt.Errorf("plugin %s declared twice", key)
@@ -392,12 +512,179 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.validateSealPlugin(); err != nil {
+		return err
+	}
+
 	if len(c.Plugins) > 0 && strings.TrimSpace(c.pluginDirectory()) == "" {
 		return fmt.Errorf("PluginDirectory is required when Plugins is non-empty")
 	}
 
 	return nil
 }
+
+// versionAtLeast reports whether ServerVersion is at least major.minor;
+// known is false when ServerVersion is empty.
+func (c *Config) versionAtLeast(major, minor int) (atLeast, known bool, err error) {
+	if strings.TrimSpace(c.ServerVersion) == "" {
+		return false, false, nil
+	}
+
+	m := serverVersion.FindStringSubmatch(strings.TrimSpace(c.ServerVersion))
+	if m == nil {
+		return false, false, fmt.Errorf("ServerVersion %q is not a version like 2.7.0", c.ServerVersion)
+	}
+
+	gotMajor, _ := strconv.Atoi(m[1])
+	gotMinor, _ := strconv.Atoi(m[2])
+
+	return gotMajor > major || (gotMajor == major && gotMinor >= minor), true, nil
+}
+
+// validateSealPlugin refuses a seal that cannot be satisfied at startup —
+// the checks a sealed server cannot make up for later, because it cannot
+// become Ready to be retried, patched or signalled.
+func (c *Config) validateSealPlugin() error {
+	s := &c.Seal
+
+	from27, known, err := c.versionAtLeast(2, 7)
+	if err != nil {
+		return err
+	}
+
+	if s.Type != "" && s.Plugin == nil && known && from27 {
+		return fmt.Errorf("seal %q has no Plugin, but ServerVersion %s has no built-in %s seal (external plugin since 2.7.0): "+
+			"the server would fail to start — set Seal.Plugin", s.Type, c.ServerVersion, s.Type)
+	}
+
+	if s.Plugin == nil {
+		return nil
+	}
+
+	if s.Type == "" {
+		return fmt.Errorf("seal plugin: Seal.Type is empty — a plugin with no seal to serve")
+	}
+
+	if from26, known, _ := c.versionAtLeast(2, 6); known && !from26 {
+		return fmt.Errorf("seal plugin: ServerVersion %s predates KMS plugins (2.6.0); use the built-in seal", c.ServerVersion)
+	}
+
+	if err := s.Plugin.validate(c.pluginDirectory(), s.Type); err != nil {
+		return err
+	}
+
+	sum, have := s.Plugin.SHA256ByArch[c.Arch]
+	if !have && (len(s.Plugin.SHA256ByArch) > 0 || (known && !from27)) {
+		return fmt.Errorf("seal plugin: no SHA256ByArch entry for arch %q — a server below 2.7 refuses a plugin with no checksum "+
+			"(\"error verifying checksum: no checksum provided\"), and a checksum map must carry the architecture Config.Arch names", c.Arch)
+	}
+
+	if have && !sha256Hex.MatchString(sum) {
+		return fmt.Errorf("seal plugin: SHA256ByArch[%q] %q is not a lowercase sha256 hex digest", c.Arch, sum)
+	}
+
+	return nil
+}
+
+// sealPluginChecksum is the checksum for Config.Arch, or "".
+func (c *Config) sealPluginChecksum() string {
+	if c.Seal.Plugin == nil {
+		return ""
+	}
+
+	return c.Seal.Plugin.SHA256ByArch[c.Arch]
+}
+
+func (sp *SealPlugin) validate(dir, sealName string) error {
+	if !fileName.MatchString(sealName) {
+		return fmt.Errorf("seal plugin: seal name %q is not a plain name", sealName)
+	}
+
+	if !strings.HasPrefix(dir, "/") || !hclIdent.MatchString(dir) {
+		return fmt.Errorf("seal plugin: PluginDirectory %q must be an absolute path (plugin_directory must exist at startup, and a seal cannot wait for it)", dir)
+	}
+
+	if !fileName.MatchString(sp.Version) {
+		return fmt.Errorf("seal plugin: Version %q is required and must be one plain token such as v0.1.0", sp.Version)
+	}
+
+	if !fileName.MatchString(sp.binaryName()) {
+		return fmt.Errorf("seal plugin: BinaryName %q is not a plain file name", sp.binaryName())
+	}
+
+	switch sp.Delivery {
+	case "", DeliveryInitCopy:
+	case DeliveryPreinstalled:
+		return nil
+	default:
+		return fmt.Errorf("seal plugin: Delivery %q is not %q or %q", sp.Delivery, DeliveryInitCopy, DeliveryPreinstalled)
+	}
+
+	if strings.TrimSpace(sp.Image) == "" || !hclIdent.MatchString(sp.Image) || strings.Contains(sp.Image, "@") ||
+		strings.Contains(sp.Image[strings.LastIndex(sp.Image, "/")+1:], ":") {
+		return fmt.Errorf("seal plugin: Image %q must be a repository with no tag and no digest, e.g. ghcr.io/openbao/openbao-plugin-kms-aws "+
+			"(the digest is Digest)", sp.Image)
+	}
+
+	if !ociDigest.MatchString(sp.Digest) {
+		return fmt.Errorf("seal plugin: Digest %q must be sha256:<64 lowercase hex> — a seal plugin is pinned by digest, never by tag alone", sp.Digest)
+	}
+
+	if strings.TrimSpace(sp.CopyImage) == "" || !hclIdent.MatchString(sp.CopyImage) {
+		return fmt.Errorf("seal plugin: CopyImage is required — the init container's image, which needs sh, cp, chmod and mv (the server's own image does)")
+	}
+
+	if !fileName.MatchString(sp.sourceVolume()) {
+		return fmt.Errorf("seal plugin: SourceVolume %q is not a plain name", sp.sourceVolume())
+	}
+
+	switch sp.PullPolicy {
+	case "", "IfNotPresent", "Always", "Never":
+	default:
+		return fmt.Errorf("seal plugin: PullPolicy %q is not IfNotPresent, Always or Never", sp.PullPolicy)
+	}
+
+	return nil
+}
+
+func (sp *SealPlugin) binaryName() string {
+	if sp.BinaryName == "" {
+		return DefaultSealPluginBinaryName
+	}
+
+	return sp.BinaryName
+}
+
+func (sp *SealPlugin) sourceVolume() string {
+	if sp.SourceVolume == "" {
+		return DefaultSealPluginSourceVolume
+	}
+
+	return sp.SourceVolume
+}
+
+func (sp *SealPlugin) delivery() string {
+	if sp.Delivery == "" {
+		return DefaultSealPluginDelivery
+	}
+
+	return sp.Delivery
+}
+
+// SealPluginCommand is the seal plugin's on-disk name in the plugin directory,
+// "kms-<seal>-<version>" — the same "<kind>-<name>-<version>" shape
+// [Plugin.Command] uses, so one directory holds both without a collision.
+func (c *Config) SealPluginCommand() string {
+	if c.Seal.Plugin == nil {
+		return ""
+	}
+
+	return SealPluginKind + "-" + c.Seal.Type + "-" + c.Seal.Plugin.Version
+}
+
+// hasSealPlugin says the rendered server needs a plugin directory for the
+// seal, whatever else Plugins holds.
+func (c *Config) hasSealPlugin() bool { return c.Seal.Plugin != nil }
 
 func (s Seal) validate() error {
 	if s.Type == "" {
@@ -406,13 +693,19 @@ func (s Seal) validate() error {
 
 	if s.Type != "awskms" {
 		return fmt.Errorf(
-			"seal type %q is not supported — this package renders \"awskms\" only; OpenBAO 2.7 moves awskms auto-unseal to an "+
-				"external plugin, and support for that (download-before-unseal, its own egress and startup race) is not built yet",
-			s.Type)
+			"seal type %q is not supported — this package renders \"awskms\" only (built in up to OpenBAO 2.6, an external plugin from OpenBAO 2.7); "+
+				"other providers' plugins are not built yet", s.Type)
 	}
 
 	if strings.TrimSpace(s.Region) == "" || strings.TrimSpace(s.KMSKeyID) == "" {
 		return fmt.Errorf("seal awskms: Region and KMSKeyID are both required")
+	}
+
+	if s.Endpoint != "" {
+		u, err := url.Parse(s.Endpoint)
+		if err != nil || !hclIdent.MatchString(s.Endpoint) || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" {
+			return fmt.Errorf("seal awskms: Endpoint %q must be an http(s) URL with a host", s.Endpoint)
+		}
 	}
 
 	return nil
@@ -452,11 +745,19 @@ func (c *Config) PluginHCL() (string, error) {
 		return "", err
 	}
 
-	if len(c.Plugins) == 0 {
+	if len(c.Plugins) == 0 && !c.hasSealPlugin() {
 		return "", nil
 	}
 
 	var b strings.Builder
+
+	if len(c.Plugins) == 0 {
+		// Only the seal plugin: a local binary, nothing to download, so
+		// none of the download settings.
+		fmt.Fprintf(&b, "plugin_directory = %q\n", c.pluginDirectory())
+
+		return b.String(), nil
+	}
 
 	fmt.Fprintf(&b, "plugin_directory         = %q\n", c.pluginDirectory())
 	fmt.Fprintf(&b, "plugin_auto_download     = true\n")
@@ -482,10 +783,16 @@ func (c *Config) PluginHCL() (string, error) {
 	return b.String(), nil
 }
 
-// SealHCL renders the `seal "awskms" { ... }` stanza, or "" when Seal is
-// the zero value.
+// SealHCL renders the `seal "awskms" { ... }` stanza — followed, with a
+// Seal.Plugin, by the `plugin "kms" "awskms"` block that registers the
+// binary — or "" when Seal is the zero value. (plugin_directory itself is
+// PluginHCL's line, once, for every plugin.)
 func (c *Config) SealHCL() (string, error) {
 	if err := c.Seal.validate(); err != nil {
+		return "", err
+	}
+
+	if err := c.validateSealPlugin(); err != nil {
 		return "", err
 	}
 
@@ -498,7 +805,28 @@ func (c *Config) SealHCL() (string, error) {
 	fmt.Fprintf(&b, "seal %q {\n", c.Seal.Type)
 	fmt.Fprintf(&b, "  region     = %q\n", c.Seal.Region)
 	fmt.Fprintf(&b, "  kms_key_id = %q\n", c.Seal.KMSKeyID)
+
+	if c.Seal.Endpoint != "" {
+		fmt.Fprintf(&b, "  endpoint   = %q\n", c.Seal.Endpoint)
+	}
+
 	fmt.Fprintf(&b, "}\n")
+
+	if p := c.Seal.Plugin; p != nil {
+		// The registration of a binary that is already on disk: no image
+		// and no download. The checksum line is only there when one is
+		// given (2.6 requires it; 2.7 does not, and the init container's
+		// digest pin is the integrity check).
+		fmt.Fprintf(&b, "plugin %q %q {\n", SealPluginKind, c.Seal.Type)
+		fmt.Fprintf(&b, "  command = %q\n", c.SealPluginCommand())
+		fmt.Fprintf(&b, "  version = %q\n", p.Version)
+
+		if sum := c.sealPluginChecksum(); sum != "" {
+			fmt.Fprintf(&b, "  sha256sum = %q\n", sum)
+		}
+
+		fmt.Fprintf(&b, "}\n")
+	}
 
 	return b.String(), nil
 }
@@ -664,7 +992,15 @@ func (c *Config) EgressDomains() []string {
 		}
 	}
 
-	if c.Seal.Type == "awskms" && c.Seal.Region != "" {
+	// The seal plugin adds nothing here: with DeliveryInitCopy the KUBELET
+	// pulls its image (node egress, not the pod's), and the plugin's KMS
+	// calls go to the same host the built-in seal used.
+	switch {
+	case c.Seal.Type == "awskms" && c.Seal.Endpoint != "":
+		if u, err := url.Parse(c.Seal.Endpoint); err == nil && u.Hostname() != "" {
+			set[u.Hostname()] = true
+		}
+	case c.Seal.Type == "awskms" && c.Seal.Region != "":
 		set[fmt.Sprintf("kms.%s.amazonaws.com", c.Seal.Region)] = true
 	}
 
@@ -704,12 +1040,25 @@ func (c *Config) Values(volumeName string) (map[string]any, error) {
 		},
 	}
 
-	if len(c.Plugins) > 0 {
+	if len(c.Plugins) > 0 || c.hasSealPlugin() {
 		if strings.TrimSpace(volumeName) == "" {
-			return nil, fmt.Errorf("Values: volumeName is required when Plugins is non-empty")
+			return nil, fmt.Errorf("Values: volumeName is required when Plugins or Seal.Plugin is set")
 		}
 
-		server["volumes"] = []any{c.PluginVolume(volumeName)}
+		volumes := []any{c.PluginVolume(volumeName)}
+
+		if c.hasSealPlugin() && c.Seal.Plugin.delivery() == DeliveryInitCopy {
+			volumes = append(volumes, c.SealPluginSourceVolume())
+
+			init, err := c.SealPluginInitContainer(volumeName)
+			if err != nil {
+				return nil, err
+			}
+
+			server["extraInitContainers"] = []any{init}
+		}
+
+		server["volumes"] = volumes
 		server["volumeMounts"] = []any{c.PluginVolumeMount(volumeName)}
 	}
 

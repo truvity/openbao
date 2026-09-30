@@ -11,7 +11,10 @@ import (
 	"github.com/truvity/openbao/examples/server"
 )
 
-const goldenPath = "values.yaml"
+const (
+	goldenPath   = "values.yaml"
+	golden27Path = "values-2.7.yaml"
+)
 
 // The example is valid for both reference architectures, and values.yaml
 // is what arm64 derives, byte for byte: the fragment a reader copies is
@@ -22,6 +25,23 @@ func TestExampleGolden(t *testing.T) {
 
 	values, err := server.Values("arm64")
 	require.NoError(t, err)
+
+	checkGolden(t, goldenPath, values)
+}
+
+// values-2.7.yaml is the same for OpenBAO 2.7: the seal as a plugin, its
+// init container and image volume. The 2.6 golden above is unchanged.
+func TestExampleGolden27(t *testing.T) {
+	require.NoError(t, server.Config27("arm64").Validate())
+
+	values, err := server.Values27("arm64")
+	require.NoError(t, err)
+
+	checkGolden(t, golden27Path, values)
+}
+
+func checkGolden(t *testing.T, goldenPath string, values map[string]any) {
+	t.Helper()
 
 	var out bytes.Buffer
 
@@ -49,5 +69,6 @@ func TestExampleGolden(t *testing.T) {
 func TestExampleValidForBothReferenceArchitectures(t *testing.T) {
 	for _, arch := range []string{"amd64", "arm64"} {
 		require.NoError(t, server.Config(arch).Validate(), "arch %s", arch)
+		require.NoError(t, server.Config27(arch).Validate(), "arch %s", arch)
 	}
 }
