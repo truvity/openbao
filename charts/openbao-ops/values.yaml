@@ -258,6 +258,13 @@ restoreCheck:
       existingSecret: ""
       prefix: raft/
 
+  # Off by default. With canary and pki both off, the check refuses to
+  # render (a restore judged on nothing proves only that a process ran);
+  # loginOnly: true accepts the login to the restored copy (through the
+  # restored auth mount, with the restored role) as the whole proof, for an
+  # install with no KV mount and no PKI.
+  loginOnly: false
+
   # Read a known value back in every namespace. Judging a restore on the
   # process exiting zero proves only that a process ran.
   #

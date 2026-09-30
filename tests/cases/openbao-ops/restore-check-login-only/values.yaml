@@ -1,0 +1,17 @@
+# An install with no KV mount and no PKI: the login to the restored copy is
+# the whole proof.
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary:
+    enabled: false
+  sealConfig: |
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+  fetch:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1

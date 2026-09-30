@@ -157,6 +157,9 @@
         "vaultNamespace": {
           "type": "string"
         },
+        "authMountPath": {
+          "type": "string"
+        },
         "trustAnchors": {
           "type": "array",
           "items": {

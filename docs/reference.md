@@ -98,7 +98,8 @@ Every part is off until enabled, so one install can carry any subset.
 | `serverResources` | 50m / 128Mi, limit 512Mi | |
 | `resources` | 10m / 64Mi, limit 256Mi | The check container. |
 | `fetch.*` | as `snapshot.upload` | The fetcher: `image`, `command`, `args`, `env`, `resources`, and the S3 preset `s3.enabled`, `s3.bucket`, `s3.region`, `s3.endpoint`, `s3.pathStyle`, `s3.existingSecret`, `s3.prefix` (`raft/`: the tier it restores from). |
-| `canary.enabled` | `true` | Read a canary back in every namespace. At least one of `canary` and `pki` must be on. |
+| `canary.enabled` | `true` | Read a canary back in every namespace. At least one of `canary` and `pki` must be on, unless `loginOnly` is set. |
+| `loginOnly` | `false` | Accept the login to the restored copy as the whole proof when `canary` and `pki` are both off (an install with no KV mount and no PKI). It does not excuse `sealConfig`. |
 | `canary.kvMount` | `kv` | The KV v2 mount holding the canary. |
 | `canary.path` | `restore-canary` | Its path. Its data must be exactly `{namespace: <the namespace's name>}`. |
 | `canary.namespaces` | `[]` | Empty: every namespace the restored copy lists, and none listed is a failure. |
@@ -270,6 +271,7 @@ Stores and PKI are independent: an install may render either or both.
 | `pki.certManager.serviceAccountName` | `cert-manager` | cert-manager's own identity, bound to mint the login's tokens. |
 | `pki.issuerServiceAccount` | `openbao-issuer` | The identity issuers log in as; its Role and RoleBinding are `<name>-token`. |
 | `pki.vaultNamespace` | `""` | Default for every issuer; empty: `vaultNamespace`. |
+| `pki.authMountPath` | `""` | The auth mount the issuers log in on; empty: `auth.mountPath`. |
 | `pki.trustAnchors` | *required* | Each: `name` (the ConfigMap), `certificate` (base64 PEM), optional `labels`, `annotations`. Public certificates only. |
 | `pki.rootKey` | `ca.crt` | The key each anchor's ConfigMap holds its certificate under. |
 | `pki.issuers` | `[]` | Each: `name`, `signPath` (the role that bounds what it signs), `role` (the auth role), optional `kind` (`ClusterIssuer` or `Issuer`), `audiences`, `vaultNamespace`, `annotations`, `identity` (the SPIFFE identity issuer: rendered like any other, never given a policy). A Vault issuer's path is fixed, so a second chain or role is a second issuer. |

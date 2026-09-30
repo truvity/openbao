@@ -131,7 +131,7 @@ spec:
         role: {{ $issuer.role }}
         {{- /* The /v1/ prefix is required here and nowhere else:
                cert-manager passes this path through verbatim. */}}
-        mountPath: {{ printf "/v1/auth/%s" $.Values.auth.mountPath }}
+        mountPath: {{ printf "/v1/auth/%s" ($pki.authMountPath | default $.Values.auth.mountPath) }}
         serviceAccountRef:
           name: {{ $pki.issuerServiceAccount }}
           {{- with $issuer.audiences }}

@@ -1,0 +1,9 @@
+# loginOnly does not excuse the seal: a snapshot opens only under the seal
+# that wrapped it.
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary:
+    enabled: false
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
