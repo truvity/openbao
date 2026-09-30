@@ -239,6 +239,56 @@ reason: it would signal a server that has to be running already.
   roll the pod.) The plugin file name carries the version, so a new version is
   a new file, not an in-place overwrite of a running binary.
 
+### The restore check needs the plugin too
+
+`openbao-ops`' `restoreCheck` runs its own scratch `bao server` on the same
+image, with the seal you give it in `sealConfig`. On 2.7 that server has no
+built-in `awskms` either, and exits `unknown wrapper: awskms` unless it gets
+the same installation the real server does. `restoreCheck.sealPlugin` is that,
+and it is opt-in: unset, the render is byte for byte what it was. Fill both it
+and `sealConfig` from the Config you already build the server with:
+
+```go
+values, err := cfg.RestoreCheckValues() // Seal.Plugin required
+// values["sealConfig"]  the seal stanza and the `plugin "kms" "awskms"` block
+// values["sealPlugin"]  {directory, initContainer, sourceVolume}
+```
+
+Merge the result under `restoreCheck` in the `openbao-ops` values. It is the
+same init container and image volume as the server pod (`SealPluginInitContainer`,
+`SealPluginSourceVolume`), with the plugin directory bound to the emptyDir the
+chart names `seal-plugin`:
+
+```yaml
+restoreCheck:
+  sealConfig: |
+    seal "awskms" { ... }
+    plugin "kms" "awskms" { command = "kms-awskms-v0.1.0"  version = "v0.1.0" }
+  sealPlugin:
+    directory: /openbao/plugins
+    sourceVolume:
+      name: seal-plugin-src
+      image:
+        reference: registry.example.com/openbao/openbao-plugin-kms-aws@sha256:<64 hex>
+        pullPolicy: IfNotPresent
+    initContainer:            # copies, verifies and installs the binary
+      name: seal-plugin-install
+      image: registry.example.com/openbao/openbao:2.7.0
+      command: ["/bin/sh", "-c"]
+      args: ["..."]
+      volumeMounts:
+        - { name: seal-plugin, mountPath: /openbao/plugins }
+        - { name: seal-plugin-src, mountPath: /seal-plugin-src, readOnly: true }
+```
+
+The chart adds `plugin_directory` to the scratch server's HCL, runs the init
+container first, and mounts the plugin directory into the scratch server. The
+schema refuses a plugin image that is not pinned by digest; the render refuses
+an init container without the source volume (or the reverse) or one that does
+not install into `directory`. With `DeliveryPreinstalled` only `directory` is
+set: the binary is already in the image. The restore check, like the pod,
+needs a cluster with image volumes.
+
 ### Other 2.7 changes that touch this shape
 
 | 2.7 change | Here |

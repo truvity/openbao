@@ -533,4 +533,7 @@ is never downloaded at startup.
 
 **Consequences.** Pods need no route out. The digest is a reviewed pin, changed by
 pull request. Rehearsed in the library (v0.23.0); runbook in
-[server.md](../server.md#runbook-26-to-27-with-the-kms-seal-plugin).
+[server.md](../server.md#runbook-26-to-27-with-the-kms-seal-plugin). The restore
+check's scratch server installs the same plugin the same way, from the values
+`RestoreCheckValues()` renders
+([server.md](../server.md#the-restore-check-needs-the-plugin-too)).

@@ -1,0 +1,295 @@
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-restore-check
+  namespace: default
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-restore-check
+  namespace: default
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+data:
+  scratch.hcl: |
+    ui            = false
+    disable_mlock = true
+    api_addr      = "http://127.0.0.1:8200"
+    plugin_directory = "/openbao/plugins"
+    cluster_addr  = "http://127.0.0.1:8201"
+    listener "tcp" {
+      address     = "127.0.0.1:8200"
+      tls_disable = true
+    }
+    storage "raft" {
+      path    = "/data"
+      node_id = "restore-check"
+    }
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+    plugin "kms" "awskms" {
+      command = "kms-awskms-v0.1.0"
+      version = "v0.1.0"
+    }
+    # As production declares it, so the restored audit table finds its device.
+    audit "file" "to-stdout" {
+      options {
+        file_path = "stdout"
+      }
+    }
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-restore-check
+  namespace: default
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "37 5 * * 0"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-restore-check
+        spec:
+          serviceAccountName: openbao-restore-check
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            -
+              args:
+              - |
+                set -eu
+                src=/seal-plugin-src/openbao-plugin-kms-aws
+                dst=/openbao/plugins/kms-awskms-v0.1.0
+                cp "$src" "$dst.tmp"
+                chmod 0555 "$dst.tmp"
+                mv -f "$dst.tmp" "$dst"
+              command:
+              - /bin/sh
+              - -c
+              image: registry.example.com/openbao/openbao:2.7.0
+              name: seal-plugin-install
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                  - ALL
+                readOnlyRootFilesystem: true
+              volumeMounts:
+              - mountPath: /openbao/plugins
+                name: seal-plugin
+              - mountPath: /seal-plugin-src
+                name: seal-plugin-src
+                readOnly: true
+            - name: fetch
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  newest=$(aws s3api list-objects-v2 --bucket example-openbao-backups --prefix raft/ \
+                    --query 'sort_by(Contents, &LastModified)[-1].[Key, LastModified]' --output text)
+                  set -- $newest
+                  key=$1
+                  age=$(( $(date +%s) - $(date -d "$2" +%s) ))
+                  echo "newest snapshot: $key, $((age / 60)) minutes old"
+                  if [ "$age" -gt 43200 ]; then
+                    echo "the newest snapshot is older than 12 hours: the snapshot job is not running"
+                    exit 1
+                  fi
+                  aws s3 cp "s3://example-openbao-backups/$key" /work/openbao.snap --no-progress
+                  echo "$key" > /work/key
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+            - name: server
+              restartPolicy: Always
+              image: registry.example.com/openbao/openbao:2.7.0
+              command: [bao, server, -config=/etc/openbao/scratch.hcl]
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/openbao
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                - name: server-tmp
+                  mountPath: /tmp
+                - name: seal-plugin
+                  mountPath: /openbao/plugins
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: check
+              image: registry.example.com/openbao/openbao:2.7.0
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # bao status: 0 unsealed, 2 sealed or uninitialized, 1 unreachable.
+                  wait_for() {
+                    i=0
+                    while [ "$i" -lt 90 ]; do
+                      rc=0
+                      bao status >/dev/null 2>&1 || rc=$?
+                      case "$1:$rc" in any:0|any:2|unsealed:0) return 0 ;; esac
+                      i=$((i + 1))
+                      sleep 2
+                    done
+                    echo "the scratch server never became $1 (bao status exit $rc)"
+                    bao status || true
+                    return 1
+                  }
+
+                  wait_for any
+                  # Recovery shares of a throwaway install: never printed, gone with the pod.
+                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json |
+                    sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p')
+                  [ -n "$BAO_TOKEN" ] || { echo "initializing the scratch server returned no root token"; exit 1; }
+                  export BAO_TOKEN
+                  wait_for unsealed
+
+                  # -force: the snapshot carries production's keyring, not the scratch's.
+                  # Judge by exit code; 2.x prints "Error properly closing policy file" on success.
+                  bao operator raft snapshot restore -force /work/openbao.snap
+                  unset BAO_TOKEN
+                  wait_for unsealed
+
+                  # The scratch root token died with the restore; from here on only what the
+                  # snapshot itself grants.
+                  i=0
+                  until BAO_TOKEN=$(bao write -field=token auth/jwt/login role=openbao-restore-check \
+                    jwt=@/var/run/openbao/token 2>/tmp/login.err); do
+                    i=$((i + 1))
+                    if [ "$i" -ge 30 ]; then
+                      echo "cannot log in to the restored copy:"
+                      cat /tmp/login.err
+                      exit 1
+                    fi
+                    sleep 2
+                  done
+                  export BAO_TOKEN
+                  namespaces="root"
+                  bao token revoke -self >/dev/null
+
+                  echo "restore check passed: $(cat /work/key) opened; logged in to the restored copy, in:" $namespaces
+              env:
+                - name: BAO_ADDR
+                  value: http://127.0.0.1:8200
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: config
+                  mountPath: /etc/restore-check
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: data
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: server-tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: config
+              configMap:
+                name: openbao-restore-check
+            - name: seal-plugin
+              emptyDir: {}
+            -
+              image:
+                pullPolicy: IfNotPresent
+                reference: registry.example.com/openbao/openbao-plugin-kms-aws@sha256:fe9fb94872048c9474156c044ea8852bb5c2e968fc9304a3725e4d434b488541
+              name: seal-plugin-src
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token

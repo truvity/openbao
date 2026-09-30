@@ -1,0 +1,18 @@
+# An init container with no image volume to copy from is a half-configured plugin.
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary: {enabled: false}
+  sealConfig: 'seal "awskms" {}'
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealPlugin:
+    directory: /openbao/plugins
+    initContainer:
+      name: seal-plugin-install
+      image: registry.example.com/openbao/openbao:2.7.0
+      command: [/bin/sh, -c]
+      args: ["true"]
+      volumeMounts:
+        - {name: seal-plugin, mountPath: /openbao/plugins}
+        - {name: seal-plugin-src, mountPath: /seal-plugin-src}

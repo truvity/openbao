@@ -301,3 +301,45 @@ func TestSealPluginChecksum(t *testing.T) {
 	_, err = old.HCL()
 	require.Error(t, err)
 }
+
+func TestRestoreCheckValues(t *testing.T) {
+	c := sealConfig()
+
+	values, err := c.RestoreCheckValues()
+	require.NoError(t, err)
+
+	seal, err := c.SealHCL()
+	require.NoError(t, err)
+	assert.Equal(t, seal, values["sealConfig"], "the scratch server declares the seal and plugin exactly as the server does")
+
+	plugin, _ := values["sealPlugin"].(map[string]any)
+	assert.Equal(t, "/openbao/plugins", plugin["directory"])
+
+	// The very same init container and image volume the server pod gets,
+	// bound to the chart's volume name.
+	init, err := c.SealPluginInitContainer(serverpreset.RestoreCheckPluginVolume)
+	require.NoError(t, err)
+	assert.Equal(t, init, plugin["initContainer"])
+	assert.Equal(t, c.SealPluginSourceVolume(), plugin["sourceVolume"])
+}
+
+func TestRestoreCheckValuesPreinstalledIsDirectoryOnly(t *testing.T) {
+	c := sealConfig()
+	c.Seal.Plugin.Delivery = serverpreset.DeliveryPreinstalled
+
+	values, err := c.RestoreCheckValues()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"directory": "/openbao/plugins"}, values["sealPlugin"])
+}
+
+func TestRestoreCheckValuesRefusals(t *testing.T) {
+	c := sealConfig()
+	c.Seal.Plugin = nil
+	_, err := c.RestoreCheckValues()
+	require.Error(t, err)
+
+	c = sealConfig()
+	c.Seal.Plugin.Digest = ""
+	_, err = c.RestoreCheckValues()
+	require.Error(t, err)
+}

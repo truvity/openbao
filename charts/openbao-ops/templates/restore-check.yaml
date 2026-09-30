@@ -4,6 +4,38 @@
 {{- $fetch := $rc.fetch }}
 {{- $canary := $rc.canary }}
 {{- $pki := $rc.pki }}
+{{- $sp := $rc.sealPlugin }}
+{{- $spCopy := and $sp $sp.initContainer }}
+{{- if $sp }}
+{{- if not $sp.directory }}
+{{- fail "restoreCheck.sealPlugin.directory is required — plugin_directory of the scratch server (the server's own, from serverpreset)" }}
+{{- end }}
+{{- if not (hasPrefix "/" $sp.directory) }}
+{{- fail "restoreCheck.sealPlugin.directory must be an absolute path" }}
+{{- end }}
+{{- if ne (empty $sp.initContainer) (empty $sp.sourceVolume) }}
+{{- fail "restoreCheck.sealPlugin.initContainer and sourceVolume go together — the init container copies the binary out of the image volume; set both (init-copy) or neither (a binary already in the image)" }}
+{{- end }}
+{{- if $spCopy }}
+{{- $mountsPluginDir := false }}
+{{- range $sp.initContainer.volumeMounts }}
+{{- if and (eq .name "seal-plugin") (eq .mountPath $sp.directory) }}{{- $mountsPluginDir = true }}{{- end }}
+{{- end }}
+{{- if not $mountsPluginDir }}
+{{- fail (printf "restoreCheck.sealPlugin.initContainer must mount the volume \"seal-plugin\" at %s (serverpreset's RestoreCheckValues renders exactly that)" $sp.directory) }}
+{{- end }}
+{{- $mountsSource := false }}
+{{- range $sp.initContainer.volumeMounts }}
+{{- if eq .name $sp.sourceVolume.name }}{{- $mountsSource = true }}{{- end }}
+{{- end }}
+{{- if not $mountsSource }}
+{{- fail "restoreCheck.sealPlugin.initContainer must mount sourceVolume — it copies the binary out of it" }}
+{{- end }}
+{{- if eq $sp.sourceVolume.name "seal-plugin" }}
+{{- fail "restoreCheck.sealPlugin.sourceVolume.name must not be \"seal-plugin\" — that is the writable plugin directory" }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if and (not $fetch.s3.enabled) (not $fetch.command) }}
 {{- fail "restoreCheck.fetch needs either s3.enabled or an explicit command — the chart will not guess where your backups are" }}
 {{- end }}
@@ -75,6 +107,9 @@ data:
     ui            = false
     disable_mlock = true
     api_addr      = "http://127.0.0.1:8200"
+    {{- if $sp }}
+    plugin_directory = {{ $sp.directory | quote }}
+    {{- end }}
     cluster_addr  = "http://127.0.0.1:8201"
     listener "tcp" {
       address     = "127.0.0.1:8200"
@@ -138,6 +173,12 @@ spec:
           securityContext:
             {{- include "ops.podSecurityContext" $ | nindent 12 }}
           initContainers:
+            {{- if $spCopy }}
+            {{- /* The seal plugin, installed before the scratch server starts:
+                   OpenBAO 2.7 has no built-in awskms seal. Rendered by
+                   serverpreset for the server itself; see docs/server.md. */}}
+            - {{- toYaml $sp.initContainer | nindent 14 }}
+            {{- end }}
             {{- /* The newest snapshot, refused when it is older than
                    maxSnapshotAgeSeconds. */}}
             - name: fetch
@@ -226,6 +267,10 @@ spec:
                   mountPath: /data
                 - name: server-tmp
                   mountPath: /tmp
+                {{- if $spCopy }}
+                - name: seal-plugin
+                  mountPath: {{ $sp.directory }}
+                {{- end }}
               resources:
                 {{- toYaml $rc.serverResources | nindent 16 }}
               securityContext:
@@ -412,5 +457,10 @@ spec:
             - name: config
               configMap:
                 name: {{ $rc.serviceAccountName }}
+            {{- if $spCopy }}
+            - name: seal-plugin
+              emptyDir: {}
+            - {{- toYaml $sp.sourceVolume | nindent 14 }}
+            {{- end }}
             - {{- include "ops.loginVolume" $ | nindent 14 }}
 {{- end }}

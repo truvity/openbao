@@ -206,6 +206,21 @@ restoreCheck:
   # How the pass line names that seal, e.g. "the unseal key's replica in
   # <region>". Empty: not named.
   sealDescription: ""
+  # OpenBAO 2.7 removed the built-in awskms seal: it is an external KMS
+  # plugin, and the scratch server needs it installed the way the real
+  # server does. Unset (the default): nothing changes, which is right below
+  # 2.7 and for any seal that is still built in. Set it from serverpreset's
+  # Config.RestoreCheckValues() (docs/server.md), which renders sealConfig
+  # (the seal stanza AND its `plugin "kms"` block) and this together:
+  #   directory      plugin_directory of the scratch server.
+  #   initContainer  a whole container that copies the binary into the
+  #                  emptyDir this chart mounts at `directory` as the volume
+  #                  "seal-plugin" (verified against its checksum first).
+  #   sourceVolume   the pod volume that container reads: a Kubernetes image
+  #                  volume, digest-pinned, pulled by the kubelet.
+  # initContainer and sourceVolume go together. With only `directory`, the
+  # binary is already in the image (DeliveryPreinstalled).
+  sealPlugin: {}
   # Raw HCL for the scratch server's audit devices. OpenBAO refuses
   # API-created audit devices, so the restored audit table only finds its
   # device if the scratch server declares it exactly as production does.
