@@ -93,6 +93,7 @@ Last reviewed: 2026-09-30.
 | opkssh dot-delimiter shim | LIVE | temporary; remove after the upstream fix |
 | SSH user CA for machines, forced command with the `critical_options` denial | LIVE | |
 | SSH host CA and `known-hosts` | LIVE | pods; the cloud-identity renewer is built |
+| machine logins, SSH engines, host logins and groups derived from one declarative contract (`pkg/builder`) | LIVE (library) | the derivation moved from the consuming estate into this library, byte-identical there; the estate adopts it by pinning the release ([builder.md](../builder.md)) |
 | people's OpenBAO SSH role | retired | where opkssh has replaced it |
 | ES384 default with per-audience exceptions | LIVE | |
 | a managed Kubernetes API server accepting non-RS256 | to be confirmed | assumed RS256-only |
@@ -129,6 +130,15 @@ hand. They are marked in place and listed here so a reviewer can close them.
 ## Changes
 
 Newest first. One line per delivery; link the pull request once merged.
+
+- **2026-09-30** -- `pkg/builder` derives the desired state's non-PKI half --
+  workload logins, the SSH user and host CAs, host-certificate logins for
+  hosts with an IAM instance role, the groups people and jobs hold, project
+  namespaces and root's jobs -- from declarative per-engine contracts, so a
+  trust path's derivation is reviewed here once instead of in every estate.
+  No trust path changes: the consuming estate's derivation is reproduced
+  byte for byte (its state and resource-name goldens are unchanged). See
+  [builder.md](../builder.md).
 
 - **2026-09-30** -- PostgreSQL phase 1 delivered (server on the private chain,
   clients `verify-full`): the identity server (development and production), the

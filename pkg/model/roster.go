@@ -46,27 +46,27 @@ type (
 	Roster struct {
 		// Issuer is the issuer's URL: its OIDC discovery base and the bound
 		// issuer. Required.
-		Issuer string
+		Issuer string `yaml:"issuer"`
 		// Audience defaults to RosterAudience.
-		Audience string
+		Audience string `yaml:"audience,omitempty"`
 		// GroupsClaim defaults to RosterGroupsClaim.
-		GroupsClaim string
+		GroupsClaim string `yaml:"groupsClaim,omitempty"`
 		// UserClaim defaults to RosterUserClaim.
-		UserClaim string
+		UserClaim string `yaml:"userClaim,omitempty"`
 		// ClaimMappings copy claims into the alias metadata (claim ->
 		// metadata key), so an audit entry says who a login was. None by
 		// default.
-		ClaimMappings map[string]string
+		ClaimMappings map[string]string `yaml:"claimMappings,omitempty"`
 		// TTL is a login token's whole life, on both doors: a Go duration.
 		// Required.
-		TTL string
+		TTL string `yaml:"ttl"`
 		// Mount and Role default to RosterMount and RosterRole.
-		Mount string
-		Role  string
+		Mount string `yaml:"mount,omitempty"`
+		Role  string `yaml:"role,omitempty"`
 		// Description is what `sys/auth` shows for the door; empty for none.
-		Description string
+		Description string `yaml:"description,omitempty"`
 		// UI, when set, adds the web UI's door beside this one.
-		UI *RosterUI
+		UI *RosterUI `yaml:"ui,omitempty"`
 	}
 
 	// RosterUI is the web UI's door: the JWT/OIDC plugin in OIDC mode,
@@ -79,18 +79,18 @@ type (
 		// Mount defaults to RosterUIMount; ClientID to RosterUIClient. The
 		// client's secret is an input of the apply
 		// (apply.Options.OIDCClientSecrets), never desired state.
-		Mount    string
-		ClientID string
+		Mount    string `yaml:"mount,omitempty"`
+		ClientID string `yaml:"clientId,omitempty"`
 		// RedirectURIs are the UI's callbacks ([UICallback]). Required: one
 		// serves every namespace, because the mount keeps the namespace in
 		// the OIDC state.
-		RedirectURIs []string
+		RedirectURIs []string `yaml:"redirectUris"`
 		// Scopes default to profile and email. OpenBAO adds openid itself,
 		// and access-roster puts groups in every token it mints, so no
 		// groups scope is asked for.
-		Scopes []string
+		Scopes []string `yaml:"scopes,omitempty"`
 		// Description is what `sys/auth` shows for the door; empty for none.
-		Description string
+		Description string `yaml:"description,omitempty"`
 	}
 )
 

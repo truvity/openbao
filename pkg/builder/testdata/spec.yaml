@@ -1,0 +1,180 @@
+# The authored contract of a small estate: a `hub` cluster that runs the
+# server and its own workloads, and two environments, `dev` and `prod`, each
+# on a cluster of its own. Every name is a placeholder; a real estate derives
+# this from its own rows (docs/builder.md).
+roster:
+  issuer: https://issuer.example.com
+  ttl: 1h
+  claimMappings: {email: email, name: name}
+  description: tokens from the issuer, for people and jobs
+  ui:
+    redirectUris: [https://openbao.example.com/ui/vault/auth/oidc/oidc/callback]
+    description: web UI sign-in through the issuer, people only
+operators: operators
+operatorsTtl: 15m
+metadata: {source: builder example}
+credentialMaxTtl: 1h
+root:
+  jobs:
+    mount: jwt-hub
+    description: tokens minted by cluster hub
+    issuer: https://oidc.hub.example.com
+    workloads:
+      - role: snapshot
+        subject: system:serviceaccount:openbao:snapshot
+        ttl: 15m
+        access:
+          - {op: rules, rules: [{path: sys/storage/raft/snapshot, capabilities: [read]}]}
+      - role: restore-check
+        subject: system:serviceaccount:openbao:restore-check
+        ttl: 15m
+        access:
+          - {op: rules, rules: [{path: sys/namespaces, capabilities: [list]}]}
+          - {op: ca, mount: pki-root, issuer: example-root}
+          - {op: canary, namespace: hub, mount: kv, path: canary}
+          - {op: canary, namespace: dev, mount: kv, path: canary}
+          - {op: canary, namespace: prod, mount: kv, path: canary}
+          # Two issuers in one mount name the mount's certificate twice; a
+          # stanza repeated exactly is written once.
+          - {op: ca, namespace: dev, mount: pki, issuer: example-dev}
+          - {op: ca, namespace: dev, mount: pki, issuer: example-dev-2}
+  kv:
+    - {path: kv-operator, description: credentials kept out of every environment's reach}
+environments:
+  - name: hub
+    kv: {path: kv, description: the hub environment's secrets, canary: canary}
+    trusts:
+      - mount: jwt-hub
+        description: tokens minted by cluster hub
+        issuer: https://oidc.hub.example.com
+        workloads:
+          # A store: a login that reads one prefix.
+          - role: store-a
+            subject: system:serviceaccount:secrets:reader
+            ttl: 1h
+            policy: read-store-a
+            access: [{op: read, prefix: store-a}]
+          # A push job, for prefixes it owns in another namespace too.
+          - role: uploader
+            subject: system:serviceaccount:uploads:uploader
+            ttl: 1h
+            access: [{op: push, prefix: uploads}]
+    grants:
+      - name: hub:kv:writer
+        access: [{op: all}]
+    secrets:
+      - policy: hub:ci:deploy-key
+        path: ci/deploy-key
+        groups: [hub:ci:release]
+    reserved:
+      - {prefix: canary, owner: the restore canary}
+      - {prefix: uploads, owner: uploader}
+  - name: dev
+    kv: {path: kv, description: the dev environment's secrets, canary: canary}
+    # `billing` keeps its secrets in a namespace of its own; `search` still
+    # keeps them in the shared mount, and the grants below follow either.
+    projects:
+      - name: billing
+        kv: {path: kv, description: the billing project's own secrets}
+    trusts:
+      - mount: jwt-dev
+        description: tokens minted by cluster dev
+        issuer: https://oidc.dev.example.com
+        workloads:
+          - role: store-a
+            subject: system:serviceaccount:secrets:reader
+            ttl: 1h
+            policy: read-store-a
+            access: [{op: read, prefix: store-a}]
+          - role: runner
+            subject: system:serviceaccount:runners:runner
+            ttl: 15m
+            policy: dev:ssh:user
+          - role: builder-host
+            subject: system:serviceaccount:builders:builder
+            ttl: 5m
+            policy: builder-host-sign
+            access: [{op: sign, mount: ssh-host, role: builder}]
+      - mount: jwt-hub
+        description: tokens minted by cluster hub
+        issuer: https://oidc.hub.example.com
+        # Declared only because somebody logs in on it.
+        optional: true
+        workloads:
+          - role: uploader
+            subject: system:serviceaccount:uploads:uploader
+            ttl: 1h
+            access: [{op: push, prefix: uploads}]
+    ssh:
+      shape:
+        userKeyType: ed25519
+        hostKeyType: ed25519
+        keyIdFormat: "{{token_display_name}}"
+        extension: permit-pty
+        userTtl: 30m
+        userMaxTtl: 1h
+        hostTtl: 24h
+        hostMaxTtl: 24h
+      user:
+        mount: ssh
+        description: the dev SSH user CA
+        keyType: ed25519
+        roles:
+          - {name: user, principal: builder, policy: "dev:ssh:user"}
+          - {name: ci, principal: ci, forceCommand: run-job --stdio, policy: "dev:ssh:ci"}
+      host:
+        mount: ssh-host
+        description: the dev SSH host CA
+        keyType: ed25519
+        roles:
+          - {name: builder, domains: [builder.internal.example], bare: true}
+    hostAuth:
+      mount: aws
+      pluginVersion: v0.1.1
+      description: the dev fleet's own instance role, for its SSH host certificate
+      serverId: openbao-dev
+      ttl: 5m
+    hostLogins:
+      - role: edge-host
+        instanceRoleArn: arn:aws:iam::111122223333:role/dev-edge
+        signingRole: edge
+        domain: edge.example.net
+        policy: edge-host-sign
+    grants:
+      - name: dev:kv:writer
+        access: [{op: all}]
+      - name: dev:billing:deployer
+        access: [{op: secrets, project: billing, write: true}]
+      - name: dev:search:viewer
+        access: [{op: secrets, project: search}]
+      - name: dev:db:client
+        access: [{op: sign, mount: pki, role: db-client}]
+  - name: prod
+    kv: {path: kv, description: the prod environment's secrets, canary: canary}
+    trusts:
+      - mount: jwt-prod
+        description: tokens minted by cluster prod
+        issuer: https://oidc.prod.example.com
+      - mount: jwt-hub
+        description: tokens minted by cluster hub
+        issuer: https://oidc.hub.example.com
+        optional: true
+    ssh:
+      shape:
+        userKeyType: ed25519
+        hostKeyType: ed25519
+        keyIdFormat: "{{token_display_name}}"
+        extension: permit-pty
+        userTtl: 30m
+        userMaxTtl: 1h
+        hostTtl: 24h
+        hostMaxTtl: 24h
+      user:
+        mount: ssh
+        description: the prod SSH user CA
+        keyType: ed25519
+        roles:
+          - {name: user, principal: builder}
+    grants:
+      - name: prod:kv:writer
+        access: [{op: all}]

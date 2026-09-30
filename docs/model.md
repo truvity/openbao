@@ -14,6 +14,11 @@ your sources ──derive──▶ model.Desired ──Validate──▶ apply.D
                               └── yaml golden, reviewed in every change
 ```
 
+The derivation itself need not be yours: [`pkg/pki`](pki.md) derives the PKI
+from an authored contract, and [`pkg/builder`](builder.md) derives the
+logins, SSH engines, groups, project namespaces and root jobs from
+declarative per-engine contracts.
+
 ## The shape
 
 ```

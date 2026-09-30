@@ -1,0 +1,599 @@
+bootstrap:
+  auth:
+    - path: jwt-roster
+      description: tokens from the issuer, for people and jobs
+      discoveryUrl: https://issuer.example.com
+      roles:
+        - name: roster
+          boundAudiences:
+            - openbao
+          userClaim: sub
+          groupsClaim: groups
+          claimMappings:
+            email: email
+            name: name
+          ttl: 15m
+  policies:
+    - name: operators
+      rules:
+        - path: '*'
+          capabilities:
+            - create
+            - read
+            - update
+            - patch
+            - delete
+            - list
+            - sudo
+  groups:
+    - name: operators
+      policies:
+        - operators
+      doors:
+        - jwt-roster
+root:
+  kv:
+    - path: kv-operator
+      description: credentials kept out of every environment's reach
+  auth:
+    - path: jwt-hub
+      description: tokens minted by cluster hub
+      discoveryUrl: https://oidc.hub.example.com
+      roles:
+        - name: snapshot
+          boundAudiences:
+            - openbao
+          boundSubject: system:serviceaccount:openbao:snapshot
+          userClaim: sub
+          policies:
+            - snapshot
+          ttl: 15m
+        - name: restore-check
+          boundAudiences:
+            - openbao
+          boundSubject: system:serviceaccount:openbao:restore-check
+          userClaim: sub
+          policies:
+            - restore-check
+          ttl: 15m
+    - path: oidc
+      type: oidc
+      description: web UI sign-in through the issuer, people only
+      clientId: openbao-ui
+      defaultRole: roster
+      discoveryUrl: https://issuer.example.com
+      roles:
+        - name: roster
+          type: oidc
+          boundAudiences:
+            - openbao-ui
+          userClaim: sub
+          groupsClaim: groups
+          claimMappings:
+            email: email
+            name: name
+          allowedRedirectUris:
+            - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+          oidcScopes:
+            - profile
+            - email
+          ttl: 15m
+  policies:
+    - name: snapshot
+      rules:
+        - path: sys/storage/raft/snapshot
+          capabilities:
+            - read
+    - name: restore-check
+      rules:
+        - path: sys/namespaces
+          capabilities:
+            - list
+        - path: pki-root/cert/ca
+          capabilities:
+            - read
+        - path: pki-root/issuer/example-root/json
+          capabilities:
+            - read
+        - path: hub/kv/data/canary
+          capabilities:
+            - read
+        - path: dev/kv/data/canary
+          capabilities:
+            - read
+        - path: prod/kv/data/canary
+          capabilities:
+            - read
+        - path: dev/pki/cert/ca
+          capabilities:
+            - read
+        - path: dev/pki/issuer/example-dev/json
+          capabilities:
+            - read
+        - path: dev/pki/issuer/example-dev-2/json
+          capabilities:
+            - read
+  groups:
+    - name: operators
+      policies:
+        - operators
+      doors:
+        - oidc
+namespaces:
+  - name: dev
+    kv:
+      - path: kv
+        description: the dev environment's secrets
+        canary: canary
+    ssh:
+      - path: ssh
+        description: the dev SSH user CA
+        keyType: ed25519
+        roles:
+          - name: user
+            allowedUsers:
+              - builder
+            defaultUser: builder
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions:
+              - permit-pty
+            ttl: 30m
+            maxTtl: 1h
+          - name: ci
+            allowedUsers:
+              - ci
+            defaultUser: ci
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions: []
+            forceCommand: run-job --stdio
+            ttl: 30m
+            maxTtl: 1h
+    sshHost:
+      - path: ssh-host
+        description: the dev SSH host CA
+        keyType: ed25519
+        roles:
+          - name: builder
+            allowedDomains:
+              - builder.internal.example
+            allowBareDomains: true
+            allowSubdomains: false
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            ttl: 24h
+            maxTtl: 24h
+          - name: edge
+            allowedDomains:
+              - edge.example.net
+            allowBareDomains: false
+            allowSubdomains: true
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            ttl: 24h
+            maxTtl: 24h
+    auth:
+      - path: jwt-dev
+        description: tokens minted by cluster dev
+        discoveryUrl: https://oidc.dev.example.com
+        roles:
+          - name: store-a
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:secrets:reader
+            userClaim: sub
+            policies:
+              - read-store-a
+            ttl: 1h
+          - name: runner
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:runners:runner
+            userClaim: sub
+            policies:
+              - dev:ssh:user
+            ttl: 15m
+          - name: builder-host
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:builders:builder
+            userClaim: sub
+            policies:
+              - builder-host-sign
+            ttl: 5m
+      - path: jwt-hub
+        description: tokens minted by cluster hub
+        discoveryUrl: https://oidc.hub.example.com
+        roles:
+          - name: uploader
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:uploads:uploader
+            userClaim: sub
+            policies:
+              - uploader
+            ttl: 1h
+      - path: jwt-roster
+        description: tokens from the issuer, for people and jobs
+        discoveryUrl: https://issuer.example.com
+        roles:
+          - name: roster
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+              name: name
+            ttl: 1h
+      - path: oidc
+        type: oidc
+        description: web UI sign-in through the issuer, people only
+        clientId: openbao-ui
+        defaultRole: roster
+        discoveryUrl: https://issuer.example.com
+        roles:
+          - name: roster
+            type: oidc
+            boundAudiences:
+              - openbao-ui
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+              name: name
+            allowedRedirectUris:
+              - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+            oidcScopes:
+              - profile
+              - email
+            ttl: 1h
+    awsAuth:
+      - path: aws
+        description: the dev fleet's own instance role, for its SSH host certificate
+        iamServerIdHeaderValue: openbao-dev
+        roles:
+          - name: edge-host
+            boundIamPrincipalArns:
+              - arn:aws:iam::111122223333:role/dev-edge
+            resolveAwsUniqueIds: false
+            policies:
+              - edge-host-sign
+            ttl: 5m
+            maxTtl: 5m
+        pluginVersion: v0.1.1
+    projects:
+      - name: billing
+        kv:
+          - path: kv
+            description: the billing project's own secrets
+    policies:
+      - name: builder-host-sign
+        rules:
+          - path: ssh-host/sign/builder
+            capabilities:
+              - update
+      - name: dev:billing:deployer
+        rules:
+          - path: billing/kv/data/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: billing/kv/metadata/*
+            capabilities:
+              - delete
+              - list
+              - read
+      - name: dev:db:client
+        rules:
+          - path: pki/sign/db-client
+            capabilities:
+              - update
+      - name: dev:kv:writer
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: kv/metadata/*
+            capabilities:
+              - delete
+              - list
+              - read
+          - path: billing/kv/data/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: billing/kv/metadata/*
+            capabilities:
+              - delete
+              - list
+              - read
+      - name: dev:search:viewer
+        rules:
+          - path: kv/data/search/*
+            capabilities:
+              - read
+          - path: kv/metadata/search/*
+            capabilities:
+              - list
+              - read
+      - name: dev:ssh:ci
+        rules:
+          - path: ssh/sign/ci
+            capabilities:
+              - update
+            deniedParameters:
+              - critical_options
+      - name: dev:ssh:user
+        rules:
+          - path: ssh/sign/user
+            capabilities:
+              - update
+      - name: read-store-a
+        rules:
+          - path: kv/data/store-a/*
+            capabilities:
+              - read
+          - path: kv/metadata/store-a/*
+            capabilities:
+              - list
+              - read
+      - name: uploader
+        rules:
+          - path: kv/data/uploads/*
+            capabilities:
+              - create
+              - read
+              - update
+          - path: kv/metadata/uploads/*
+            capabilities:
+              - create
+              - read
+              - update
+      - name: edge-host-sign
+        rules:
+          - path: ssh-host/sign/edge
+            capabilities:
+              - update
+    groups:
+      - name: dev:billing:deployer
+        policies:
+          - dev:billing:deployer
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:db:client
+        policies:
+          - dev:db:client
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:kv:writer
+        policies:
+          - dev:kv:writer
+        doors:
+          - jwt-roster
+          - oidc
+      - name: dev:search:viewer
+        policies:
+          - dev:search:viewer
+        doors:
+          - jwt-roster
+          - oidc
+  - name: hub
+    kv:
+      - path: kv
+        description: the hub environment's secrets
+        canary: canary
+    auth:
+      - path: jwt-hub
+        description: tokens minted by cluster hub
+        discoveryUrl: https://oidc.hub.example.com
+        roles:
+          - name: store-a
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:secrets:reader
+            userClaim: sub
+            policies:
+              - read-store-a
+            ttl: 1h
+          - name: uploader
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:uploads:uploader
+            userClaim: sub
+            policies:
+              - uploader
+            ttl: 1h
+      - path: jwt-roster
+        description: tokens from the issuer, for people and jobs
+        discoveryUrl: https://issuer.example.com
+        roles:
+          - name: roster
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+              name: name
+            ttl: 1h
+      - path: oidc
+        type: oidc
+        description: web UI sign-in through the issuer, people only
+        clientId: openbao-ui
+        defaultRole: roster
+        discoveryUrl: https://issuer.example.com
+        roles:
+          - name: roster
+            type: oidc
+            boundAudiences:
+              - openbao-ui
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+              name: name
+            allowedRedirectUris:
+              - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+            oidcScopes:
+              - profile
+              - email
+            ttl: 1h
+    policies:
+      - name: hub:ci:deploy-key
+        rules:
+          - path: kv/data/ci/deploy-key
+            capabilities:
+              - read
+      - name: hub:kv:writer
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: kv/metadata/*
+            capabilities:
+              - delete
+              - list
+              - read
+      - name: read-store-a
+        rules:
+          - path: kv/data/store-a/*
+            capabilities:
+              - read
+          - path: kv/metadata/store-a/*
+            capabilities:
+              - list
+              - read
+      - name: uploader
+        rules:
+          - path: kv/data/uploads/*
+            capabilities:
+              - create
+              - read
+              - update
+          - path: kv/metadata/uploads/*
+            capabilities:
+              - create
+              - read
+              - update
+    groups:
+      - name: hub:ci:release
+        policies:
+          - hub:ci:deploy-key
+        doors:
+          - jwt-roster
+      - name: hub:kv:writer
+        policies:
+          - hub:kv:writer
+        doors:
+          - jwt-roster
+          - oidc
+  - name: prod
+    kv:
+      - path: kv
+        description: the prod environment's secrets
+        canary: canary
+    ssh:
+      - path: ssh
+        description: the prod SSH user CA
+        keyType: ed25519
+        roles:
+          - name: user
+            allowedUsers:
+              - builder
+            defaultUser: builder
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions:
+              - permit-pty
+            ttl: 30m
+            maxTtl: 1h
+    auth:
+      - path: jwt-prod
+        description: tokens minted by cluster prod
+        discoveryUrl: https://oidc.prod.example.com
+        roles: []
+      - path: jwt-roster
+        description: tokens from the issuer, for people and jobs
+        discoveryUrl: https://issuer.example.com
+        roles:
+          - name: roster
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+              name: name
+            ttl: 1h
+      - path: oidc
+        type: oidc
+        description: web UI sign-in through the issuer, people only
+        clientId: openbao-ui
+        defaultRole: roster
+        discoveryUrl: https://issuer.example.com
+        roles:
+          - name: roster
+            type: oidc
+            boundAudiences:
+              - openbao-ui
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+              name: name
+            allowedRedirectUris:
+              - https://openbao.example.com/ui/vault/auth/oidc/oidc/callback
+            oidcScopes:
+              - profile
+              - email
+            ttl: 1h
+    policies:
+      - name: prod:kv:writer
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: kv/metadata/*
+            capabilities:
+              - delete
+              - list
+              - read
+    groups:
+      - name: prod:kv:writer
+        policies:
+          - prod:kv:writer
+        doors:
+          - jwt-roster
+          - oidc
+identity:
+  primaryDoor: jwt-roster
+  metadata:
+    source: builder example
+credentialMaxTtl: 1h
