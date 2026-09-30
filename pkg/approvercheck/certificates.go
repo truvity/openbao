@@ -183,6 +183,12 @@ func generateKey(spec *cmapi.CertificatePrivateKey) (crypto.Signer, error) {
 		if size == 0 {
 			size = 2048
 		}
+		// cert-manager refuses RSA keys below 2048 bits, so no real
+		// request could carry one: refuse it here too rather than
+		// generate a weak key for a request that cannot exist.
+		if size < 2048 {
+			return nil, fmt.Errorf("privateKey.size %d is below RSA's minimum of 2048", size)
+		}
 		return rsa.GenerateKey(rand.Reader, size)
 	case cmapi.ECDSAKeyAlgorithm:
 		var curve elliptic.Curve

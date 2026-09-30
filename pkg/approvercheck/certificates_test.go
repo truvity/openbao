@@ -131,6 +131,7 @@ const certificateHead = "apiVersion: cert-manager.io/v1\nkind: Certificate\nmeta
 func TestRequestsForCertificatesRefuseWhatItCannotBuild(t *testing.T) {
 	for name, body := range map[string]string{
 		"bad curve":   "privateKey: {algorithm: ECDSA, size: 100}",
+		"weak rsa":    "privateKey: {algorithm: RSA, size: 1024}",
 		"bad alg":     "privateKey: {algorithm: DSA}",
 		"bad address": "ipAddresses: [not-an-ip]",
 	} {
