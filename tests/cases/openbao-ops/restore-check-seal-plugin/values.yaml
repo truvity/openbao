@@ -1,0 +1,55 @@
+# OpenBAO 2.7: the awskms seal is an external plugin, so the scratch server
+# installs it like the real server does. These sealConfig / sealPlugin values
+# are what serverpreset's Config.RestoreCheckValues() renders.
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary:
+    enabled: false
+  image:
+    repository: registry.example.com/openbao/openbao
+    tag: "2.7.0"
+  sealConfig: |
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+    plugin "kms" "awskms" {
+      command = "kms-awskms-v0.1.0"
+      version = "v0.1.0"
+    }
+  sealPlugin:
+    directory: /openbao/plugins
+    sourceVolume:
+      name: seal-plugin-src
+      image:
+        reference: registry.example.com/openbao/openbao-plugin-kms-aws@sha256:fe9fb94872048c9474156c044ea8852bb5c2e968fc9304a3725e4d434b488541
+        pullPolicy: IfNotPresent
+    initContainer:
+      name: seal-plugin-install
+      image: registry.example.com/openbao/openbao:2.7.0
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -eu
+          src=/seal-plugin-src/openbao-plugin-kms-aws
+          dst=/openbao/plugins/kms-awskms-v0.1.0
+          cp "$src" "$dst.tmp"
+          chmod 0555 "$dst.tmp"
+          mv -f "$dst.tmp" "$dst"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: seal-plugin
+          mountPath: /openbao/plugins
+        - name: seal-plugin-src
+          mountPath: /seal-plugin-src
+          readOnly: true
+  fetch:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1

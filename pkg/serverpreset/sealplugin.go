@@ -124,3 +124,50 @@ echo "seal-plugin-install: installed $dst"
 
 	return b.String()
 }
+
+// RestoreCheckPluginVolume is the name charts/openbao-ops gives the
+// restore check's writable plugin directory (an emptyDir). The init container
+// RestoreCheckValues renders mounts it by this name.
+const RestoreCheckPluginVolume = "seal-plugin"
+
+// RestoreCheckValues is the part of charts/openbao-ops' values that gives the
+// restore check's scratch server the same seal the real server has, on
+// OpenBAO 2.7, where the awskms seal is an external plugin. The scratch
+// server is a second `bao server` on the same image, so without this it
+// exits "unknown wrapper: awskms".
+//
+// It returns, ready to merge under `restoreCheck`:
+//
+//   - sealConfig: SealHCL, the `seal` stanza and the `plugin "kms"` block;
+//   - sealPlugin.directory: plugin_directory (which the chart writes);
+//   - with DeliveryInitCopy, sealPlugin.initContainer and
+//     sealPlugin.sourceVolume: exactly the init container and image volume
+//     the server pod gets (SealPluginInitContainer, SealPluginSourceVolume),
+//     mounting the emptyDir the chart names RestoreCheckPluginVolume.
+//
+// Errors without a Seal.Plugin: a restore check with a built-in seal needs
+// none of this and sets only sealConfig.
+func (c *Config) RestoreCheckValues() (map[string]any, error) {
+	if c.Seal.Plugin == nil {
+		return nil, fmt.Errorf("RestoreCheckValues: Seal.Plugin is nil — a built-in seal needs no plugin values")
+	}
+
+	seal, err := c.SealHCL()
+	if err != nil {
+		return nil, err
+	}
+
+	plugin := map[string]any{"directory": c.pluginDirectory()}
+
+	if c.Seal.Plugin.delivery() == DeliveryInitCopy {
+		init, err := c.SealPluginInitContainer(RestoreCheckPluginVolume)
+		if err != nil {
+			return nil, err
+		}
+
+		plugin["initContainer"] = init
+		plugin["sourceVolume"] = c.SealPluginSourceVolume()
+	}
+
+	return map[string]any{"sealConfig": seal, "sealPlugin": plugin}, nil
+}

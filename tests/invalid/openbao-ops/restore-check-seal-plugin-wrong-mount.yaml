@@ -1,0 +1,21 @@
+# The init container must install into the directory the server reads.
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary: {enabled: false}
+  sealConfig: 'seal "awskms" {}'
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealPlugin:
+    directory: /openbao/plugins
+    sourceVolume:
+      name: seal-plugin-src
+      image: {reference: "registry.example.com/p@sha256:fe9fb94872048c9474156c044ea8852bb5c2e968fc9304a3725e4d434b488541"}
+    initContainer:
+      name: seal-plugin-install
+      image: registry.example.com/openbao/openbao:2.7.0
+      command: [/bin/sh, -c]
+      args: ["true"]
+      volumeMounts:
+        - {name: seal-plugin, mountPath: /elsewhere}
+        - {name: seal-plugin-src, mountPath: /seal-plugin-src}

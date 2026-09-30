@@ -1,0 +1,21 @@
+# The plugin image volume is pinned by digest, never a tag.
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary: {enabled: false}
+  sealConfig: 'seal "awskms" {}'
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealPlugin:
+    directory: /openbao/plugins
+    sourceVolume:
+      name: seal-plugin-src
+      image: {reference: "registry.example.com/openbao/openbao-plugin-kms-aws:v0.1.0"}
+    initContainer:
+      name: seal-plugin-install
+      image: registry.example.com/openbao/openbao:2.7.0
+      command: [/bin/sh, -c]
+      args: ["true"]
+      volumeMounts:
+        - {name: seal-plugin, mountPath: /openbao/plugins}
+        - {name: seal-plugin-src, mountPath: /seal-plugin-src}

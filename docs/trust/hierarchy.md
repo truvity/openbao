@@ -341,6 +341,10 @@ reviewed change to a digest, rolled standby first like any configuration
 change. Why the delivery is shaped this way, what the render refuses, the
 rehearsal that proves it and the 2.6 to 2.7 runbook are in
 [server.md](../server.md#the-seal-as-a-plugin-openbao-27).
+The weekly restore check opens a snapshot with its own scratch server, so it
+installs the same pinned plugin the same way
+([server.md](../server.md#the-restore-check-needs-the-plugin-too)); a restore
+check that cannot start on 2.7 proves nothing.
 
 ## Where each part is used
 

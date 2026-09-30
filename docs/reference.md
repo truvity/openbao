@@ -93,6 +93,7 @@ Every part is off until enabled, so one install can carry any subset.
 | `image` | `openbao/openbao:2.6.2` | The scratch server and the check. Keep it equal to the server's image. |
 | `sealConfig` | *required* | Raw HCL of the scratch server's seal. A snapshot opens only under the seal that wrapped its keyring — the same key, or a replica of it; a replica in another region proves a snapshot opens without the primary region. |
 | `sealDescription` | `""` | How the pass line names that seal. |
+| `sealPlugin` | `{}` | OpenBAO 2.7 only, opt-in: installs the external KMS seal plugin into the scratch server. `directory` (plugin_directory), `initContainer` (copies the binary into the emptyDir this chart mounts as `seal-plugin`) and `sourceVolume` (the digest-pinned image volume it reads); the last two go together. Generate it, and `sealConfig` with the `plugin "kms"` block, with `serverpreset.Config.RestoreCheckValues()`; see [server.md](server.md#the-restore-check-needs-the-plugin-too). Unset: the render is unchanged. |
 | `auditConfig` | a `file` device to stdout | Raw HCL of the scratch server's audit devices. OpenBAO refuses API-created audit devices, so declare them exactly as production does. |
 | `serverEnv` | none | The scratch server's environment (e.g. the seal's region). |
 | `serverResources` | 50m / 128Mi, limit 512Mi | |
