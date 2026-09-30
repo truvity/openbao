@@ -84,6 +84,14 @@ restating from [model.md](model.md#pki-mounts-issuers-roles): OpenBAO
 2.6.2 silently ignores `permitted_uri_domains` on those endpoints, the
 same way it already ignores `excludedIpRanges`.
 
+> **Custody cross-check.** With `--contract`, every command below that
+> signs (`create-root`, `sign-intermediate`, `sign-emergency-server`) also
+> takes `--custody-outputs <file>` (the custody side's published key, region,
+> replica and role) and refuses to go on when the key, its region or replica,
+> the generation, the role or the profile disagree with it or with the
+> contract; `--skip-custody-check "<reason>"` is the printed, logged
+> exception. See [pki.md](pki.md#the-custody-cross-check).
+
 ## 1. The root
 
 The KMS key must exist first ([custody.md](custody.md)), and its Sign

@@ -309,8 +309,10 @@ this package derives from the contract:
    `EnvironmentCASpec` to build the `ceremony.IntermediateSpec`, then
    `ceremony.PrepareIntermediate` + `--print-template` to review the exact
    certificate and its hash, and once confirmed, `ceremony.SignIntermediate`
-   with the KMS root. The result is committed under `ArtifactDir`, next to
-   its `.attempt` reservation.
+   with the KMS root, after the key, role, regions and generation have been
+   cross-checked against the custody outputs ([the custody
+   cross-check](#the-custody-cross-check)). The result is committed under
+   `ArtifactDir`, next to its `.attempt` reservation.
 3. **Phase B -- the artifact gates everything downstream.**
    `Contract.LoadSignedIntermediate` proves the committed artifact against
    the contract and the committed root, offline, and returns the chain
@@ -353,6 +355,75 @@ The root itself is a one-time ceremony
 existing generation: `CreateRoot` re-verifies an existing artifact instead
 of signing again, so a rerun (a redeploy, a new team member's first apply)
 is always safe.
+
+### The custody cross-check
+
+`openbaoctl pki create-root`, `sign-intermediate` (which also signs an
+environment's own CA, `--environment`/`--zone`) and `sign-emergency-server`
+take the key, the role and the profile as flags, so a mistyped ARN, a
+generation's neighbour or a key in the wrong region would otherwise reach
+KMS. With `--contract` they therefore check the flags against the
+**custody outputs** the custody side publishes -- a public YAML file
+(`pki.LoadCustodyOutputs`; the shape `pkg/custody`'s Pulumi exports
+naturally take) synced next to the contract:
+
+```yaml
+adminRoleArn: arn:aws:iam::111122223333:role/root-admin
+ceremonyRoleArn: arn:aws:iam::111122223333:role/root-ceremony
+generations:
+  example-root-2026-01:
+    alias: alias/private-pki/root/example-root-2026-01
+    primaryKeyArn: arn:aws:kms:eu-central-1:111122223333:key/mrk-...
+    primaryRegion: eu-central-1
+    replicaKeyArn: arn:aws:kms:eu-north-1:111122223333:key/mrk-...
+    replicaRegion: eu-north-1
+    ceremonyRoleArn: arn:aws:iam::111122223333:role/root-ceremony
+```
+
+```sh
+openbaoctl pki sign-intermediate --contract private-pki.yaml --generation example-root-2026-01 \
+  --trust-domain private --csr private.csr --custody-outputs custody-outputs.yaml \
+  --print-template
+```
+
+`--custody-outputs FILE` verifies, offline and before anything is reserved
+or signed (`Contract.VerifyCustody`), and refuses with both sides named on
+the first disagreement:
+
+- the outputs are consistent with themselves: two different IAM roles (admin
+  and ceremony) in one account; per generation an alias ending in the
+  generation ID, two different regions, a multi-region key in each that is
+  the same key, in the roles' account, with the stack's ceremony role;
+- every generation the contract authors is published, and no other one is;
+- for every authored generation: the key's account is the authored
+  `custody.accountId`, the primary region is `custody.region`, and the
+  replica region is `custody.disasterRecovery.region` (when the contract
+  states one);
+- the key about to sign -- `--key-arn`, or the committed root artifact's --
+  is exactly the published primary key of `--generation`, and so is the
+  root artifact's `keyArn`;
+- `--role-arn`, when given, is the published ceremony role, and
+  `--aws-profile`, when given, is the contract's `custody.profile`. Neither
+  needs to be given: the published role and the authored profile are used
+  when it is not, so the command cannot sign with a role or profile of its
+  own choosing.
+
+What was verified is printed with the template review (`--print-template`
+needs no credential, and neither does this check) and again with the signing
+result, and the rerun line `--print-template` prints repeats the flag. The
+template hash flow is unchanged: the hash is over the certificate, not over
+this check.
+
+The check is **required** with `--contract`, because a contract always
+declares custody. `--skip-custody-check "<reason>"` signs without it (a
+drill on a scratch account, custody outputs not synced yet); the reason must
+not be blank, is printed with the review as `custody check: SKIPPED`,
+repeated in the rerun line, and logged as a warning when signing. It is
+recorded in the terminal and the log of the ceremony, not in the artifact
+(an artifact has no room for it, and its content is what the hash covers),
+so name the reason in the commit that adds the artifact. The two flags
+exclude each other. `--hierarchy` declares no custody, so both flags are
+refused there rather than ignored.
 
 ## Break-glass
 
