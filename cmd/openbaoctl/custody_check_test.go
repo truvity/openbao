@@ -162,8 +162,8 @@ func TestCustodyCheckRefusals(t *testing.T) {
 		},
 		{
 			name:    "a key in another account",
-			outputs: strings.NewReplacer("111122223333", "999988887777").Replace(custodyOutputsYAML()),
-			want:    "the published key is in account 999988887777, the contract's custody account is 111122223333",
+			outputs: strings.NewReplacer("111122223333", "444455556666").Replace(custodyOutputsYAML()),
+			want:    "the published key is in account 444455556666, the contract's custody account is 111122223333",
 		},
 		{
 			name:    "--role-arn that is not the ceremony role",
