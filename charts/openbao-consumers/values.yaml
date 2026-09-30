@@ -226,6 +226,32 @@ approverPolicy:
   namespacedIssuers:
     enabled: false
     name: namespaced-issuers
+  # Policies for issuers that are NOT in pki.issuers: a SelfSigned or CA
+  # Issuer, or a ClusterIssuer backed by something other than OpenBAO (a
+  # per-database CA, a bootstrap self-signer). Written out as given: no
+  # `defaults`, no allow-all; a field the policy does not name is refused.
+  # Each entry gets its own ClusterRole and binding for `use`, named
+  # <roleName>-<name> (or `roleName` here), for the same requesters.
+  # `syncWave` (optional) puts the policy at that wave and its role and
+  # binding one wave earlier, so the grant exists before the policy.
+  # Default empty: the render is unchanged.
+  extraPolicies: []
+  #  - name: example-db-ca
+  #    issuerRef: {group: cert-manager.io, kind: Issuer, name: example-db-ca}
+  #    selector:
+  #      namespace: {matchNames: [example-db]}   # or matchLabels
+  #    allowed:
+  #      commonName: {value: example-db, required: true}
+  #      # dnsNames / uris / ipAddresses / emailAddresses: {values: [...], required: false}
+  #      isCA: false
+  #      usages: [digital signature, key encipherment]
+  #    constraints:
+  #      privateKey: {algorithm: ECDSA, minSize: 256, maxSize: 384}
+  #      minDuration: 1h
+  #      maxDuration: 2160h
+  #    syncWave: 32
+  #    annotations: {}
+  #    roleName: ""
 
 # Alerts for the issuance chain, OFF by default. When certificate issuance
 # breaks nothing fails loudly: a workload just stops getting a certificate,

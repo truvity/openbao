@@ -1,0 +1,17 @@
+# approverPolicy.extraPolicies with no pki.issuers at all, scoped by
+# namespace labels, with a custom role name.
+approverPolicy:
+  enabled: true
+  extraPolicies:
+    - name: example-ca-labelled
+      roleName: example-ca-labelled-use
+      issuerRef: {group: cert-manager.io, kind: ClusterIssuer, name: example-ca}
+      selector:
+        namespace:
+          matchLabels: {example.com/ca: "true"}
+      allowed:
+        dnsNames: {values: ["*.example.internal"], required: true}
+        ipAddresses: {values: ["10.*"]}
+        emailAddresses: {values: ["*@example.com"]}
+        usages: [server auth]
+      constraints: {minDuration: 1h, maxDuration: 720h}

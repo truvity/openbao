@@ -2,8 +2,8 @@
 {{- $ap := .Values.approverPolicy }}
 {{- $pki := .Values.pki }}
 {{- $ns := $pki.certManager.namespace }}
-{{- if not (and $pki.enabled $pki.issuers) }}
-{{- fail "approverPolicy.enabled needs pki.enabled and pki.issuers — there is no issuer to write a policy for" }}
+{{- if and (not (and $pki.enabled $pki.issuers)) (not $ap.extraPolicies) }}
+{{- fail "approverPolicy.enabled needs pki.enabled and pki.issuers, or approverPolicy.extraPolicies — there is no issuer to write a policy for" }}
 {{- end }}
 {{- $registry := dict }}
 {{- $names := list }}
@@ -241,4 +241,115 @@ roleRef:
   name: {{ $role }}
 subjects:
   {{- toYaml $requesters | nindent 2 }}
+{{- /* Policies for issuers that are NOT in pki.issuers: a SelfSigned or CA
+       Issuer, or a ClusterIssuer backed by something other than OpenBAO.
+       Written out as given (no `defaults`, no allow-all: what is not named
+       is refused), each with its own `use` grant. */}}
+{{- range $p := $ap.extraPolicies }}
+{{- if not $p.name }}
+{{- fail "approverPolicy.extraPolicies[] needs a name" }}
+{{- end }}
+{{- if not (and $p.issuerRef $p.issuerRef.name $p.issuerRef.kind $p.issuerRef.group) }}
+{{- fail (printf "approverPolicy.extraPolicies.%s needs issuerRef with group, kind and name — a policy that selects no issuer never fires" $p.name) }}
+{{- end }}
+{{- $a := $p.allowed | default dict }}
+{{- if not (or $a.commonName $a.dnsNames $a.uris $a.ipAddresses $a.emailAddresses) }}
+{{- fail (printf "approverPolicy.extraPolicies.%s.allowed names no commonName, dnsNames, uris, ipAddresses or emailAddresses — a policy that names nothing refuses every request" $p.name) }}
+{{- end }}
+{{- range $u := (($a.uris | default dict).values | default list) }}
+{{- if hasPrefix "spiffe:" (lower $u) }}
+{{- fail (printf "approverPolicy.extraPolicies.%s allows the URI %q: SPIFFE identities belong to csi-driver-spiffe's own approver, never to a CertificateRequestPolicy (see docs/approver.md)" $p.name $u) }}
+{{- end }}
+{{- end }}
+{{- $by := printf "approverPolicy.extraPolicies.%s" $p.name }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "CertificateRequestPolicy" "namespace" "" "name" $p.name "by" $by) }}
+{{- $xrole := $p.roleName | default (printf "%s-%s" $role $p.name) }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "ClusterRole" "namespace" "" "name" $xrole "by" $by) }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "ClusterRoleBinding" "namespace" "" "name" $xrole "by" $by) }}
+{{- $extra := deepCopy ($p.annotations | default dict) }}
+{{- $roleExtra := deepCopy $extra }}
+{{- if not (kindIs "invalid" $p.syncWave) }}
+{{- $_ := set $extra "argocd.argoproj.io/sync-wave" (toString $p.syncWave) }}
+{{- $_ := set $roleExtra "argocd.argoproj.io/sync-wave" (toString (sub (int $p.syncWave) 1)) }}
+{{- end }}
+---
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: {{ $p.name }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" (merge (deepCopy $extra) (deepCopy ($ap.annotations | default dict)))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    issuerRef:
+      {{- toYaml $p.issuerRef | nindent 6 }}
+    {{- with $p.selector }}
+    {{- with .namespace }}
+    namespace:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- end }}
+  allowed:
+    {{- with $a.commonName }}
+    commonName:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $a.dnsNames }}
+    dnsNames:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $a.uris }}
+    uris:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $a.ipAddresses }}
+    ipAddresses:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $a.emailAddresses }}
+    emailAddresses:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    isCA: {{ $a.isCA | default false }}
+    {{- with $a.usages }}
+    usages:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- with $p.constraints }}
+  constraints:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $xrole }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" (merge (deepCopy $roleExtra) (deepCopy ($ap.annotations | default dict)))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - {{ $p.name | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $xrole }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" (merge (deepCopy $roleExtra) (deepCopy ($ap.annotations | default dict)))) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $xrole }}
+subjects:
+  {{- toYaml $requesters | nindent 2 }}
+{{- end }}
 {{- end }}

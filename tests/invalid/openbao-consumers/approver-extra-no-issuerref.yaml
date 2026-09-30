@@ -1,0 +1,7 @@
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+approverPolicy:
+  enabled: true
+  extraPolicies:
+    - name: x
+      allowed: {commonName: {value: x}}

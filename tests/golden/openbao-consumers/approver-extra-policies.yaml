@@ -1,0 +1,258 @@
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-issuer
+  namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: root
+  namespace: cert-manager
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    ZXhhbXBsZS1yb290
+    -----END CERTIFICATE-----
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-consumers-approver-use
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - "example-private"
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-consumers-approver-use-example-db-ca
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - "example-db-ca"
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-consumers-approver-use-example-selfsigned-bootstrap
+  annotations:
+    argocd.argoproj.io/sync-wave: "31"
+    example.com/owner: platform
+rules:
+  - apiGroups: ["policy.cert-manager.io"]
+    resources: ["certificaterequestpolicies"]
+    verbs: ["use"]
+    resourceNames:
+      - "example-selfsigned-bootstrap"
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-consumers-approver-use
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-consumers-approver-use
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-consumers-approver-use-example-db-ca
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-consumers-approver-use-example-db-ca
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-consumers-approver-use-example-selfsigned-bootstrap
+  annotations:
+    argocd.argoproj.io/sync-wave: "31"
+    example.com/owner: platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-consumers-approver-use-example-selfsigned-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["openbao-issuer"]
+    verbs: ["create"]
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-issuer-token
+  namespace: cert-manager
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-issuer-token
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: openbao-private-ca
+spec:
+  sources:
+    - configMap:
+        name: root
+        key: ca.crt
+  target:
+    configMap:
+      key: ca-certificates.crt
+    namespaceSelector:
+      {}
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: example-private
+spec:
+  selector:
+    issuerRef:
+      name: "example-private"
+      kind: ClusterIssuer
+      group: cert-manager.io
+  allowed:
+    dnsNames:
+      required: true
+      values:
+        - '*.east.example.internal'
+    isCA: false
+  constraints:
+    minDuration: 1h
+    maxDuration: 2160h
+    privateKey:
+      algorithm: ECDSA
+      maxSize: 384
+      minSize: 256
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: example-db-ca
+spec:
+  selector:
+    issuerRef:
+      group: cert-manager.io
+      kind: Issuer
+      name: example-db-ca
+    namespace:
+      matchNames:
+      - example-db
+  allowed:
+    commonName:
+      required: true
+      value: example-db-*
+    isCA: false
+    usages:
+      - digital signature
+      - key encipherment
+      - client auth
+  constraints:
+    maxDuration: 2160h
+    privateKey:
+      algorithm: ECDSA
+      maxSize: 384
+      minSize: 256
+
+---
+# Source: openbao-consumers/templates/approver.yaml
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: example-selfsigned-bootstrap
+  annotations:
+    argocd.argoproj.io/sync-wave: "32"
+    example.com/owner: platform
+spec:
+  selector:
+    issuerRef:
+      group: cert-manager.io
+      kind: ClusterIssuer
+      name: example-selfsigned-bootstrap
+    namespace:
+      matchNames:
+      - example-app
+  allowed:
+    commonName:
+      required: true
+      value: example-app
+    isCA: false
+    usages:
+      - digital signature
+      - key encipherment
+
+---
+# Source: openbao-consumers/templates/pki.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: example-private
+spec:
+  vault:
+    server: "https://openbao.example.internal:8200"
+    path: pki/sign/private
+    caBundle: "Zm9v"
+    auth:
+      kubernetes:
+        role: example-private
+        mountPath: /v1/auth/jwt
+        serviceAccountRef:
+          name: openbao-issuer
