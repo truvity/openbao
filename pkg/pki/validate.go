@@ -68,6 +68,20 @@ func (c *Contract) Validate() error {
 				return err
 			}
 		}
+
+		// Issuer names are unique across a server (the apply names its
+		// resources after them), so the issuer of each root-signed
+		// environment CA must not be another authority's name either.
+		for _, environment := range domain.Environments {
+			if !domain.IsRootSigned(environment) {
+				continue
+			}
+
+			owner := "trustDomains.uri[" + domain.Name + "].environmentCA issuer for " + environment
+			if err := claimName(usedNames, domain.EnvironmentCAIssuerName(environment), owner); err != nil {
+				return err
+			}
+		}
 	}
 
 	for i := range c.Generations {
