@@ -11,8 +11,9 @@
 {{- if not $rc.sealConfig }}
 {{- fail "restoreCheck.sealConfig is required — a snapshot opens only under the seal that wrapped its keyring (the same key, or a replica of it)" }}
 {{- end }}
-{{- if and (not $canary.enabled) (not $pki.enabled) }}
-{{- fail "restoreCheck needs canary.enabled or pki.enabled — a restore judged on nothing but the process exiting zero proves only that a process ran" }}
+{{- $loginOnly := and $rc.loginOnly (not $canary.enabled) (not $pki.enabled) }}
+{{- if and (not $canary.enabled) (not $pki.enabled) (not $rc.loginOnly) }}
+{{- fail "restoreCheck needs canary.enabled or pki.enabled — a restore judged on nothing but the process exiting zero proves only that a process ran (or set loginOnly: true to accept the login to the restored copy as the whole proof, for an install with no KV mount and no PKI)" }}
 {{- end }}
 {{- if $pki.enabled }}
 {{- if not $pki.trustAnchor.certificate }}
@@ -296,7 +297,7 @@ spec:
                     fi
                   done
                   {{- else }}
-                  namespaces={{ join " " $pki.namespaces | quote }}
+                  namespaces={{ if $loginOnly }}"root"{{ else }}{{ join " " $pki.namespaces | quote }}{{ end }}
                   {{- end }}
                   {{- if $pki.enabled }}
 
@@ -373,7 +374,7 @@ spec:
                   {{- end }}
                   bao token revoke -self >/dev/null
 
-                  echo "restore check passed: $(cat /work/key) opened{{ with $rc.sealDescription }} with {{ . }}{{ end }};{{ if $canary.enabled }} canaries read{{ end }}{{ if and $canary.enabled $pki.enabled }} and{{ end }}{{ if $pki.enabled }} the chain verified from {{ $anchorName }} to a fresh leaf{{ end }}, in:" $namespaces
+                  echo "restore check passed: $(cat /work/key) opened{{ with $rc.sealDescription }} with {{ . }}{{ end }};{{ if $loginOnly }} logged in to the restored copy{{ end }}{{ if $canary.enabled }} canaries read{{ end }}{{ if and $canary.enabled $pki.enabled }} and{{ end }}{{ if $pki.enabled }} the chain verified from {{ $anchorName }} to a fresh leaf{{ end }}, in:" $namespaces
               env:
                 - name: BAO_ADDR
                   value: http://127.0.0.1:8200

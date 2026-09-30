@@ -88,6 +88,7 @@
         "tolerations": { "type": "array", "items": { "type": "object" } },
         "maxSnapshotAgeSeconds": { "type": "integer", "minimum": 60 },
         "image": { "$ref": "#/definitions/image" },
+        "loginOnly": { "type": "boolean" },
         "sealConfig": { "type": "string" },
         "sealDescription": { "type": "string" },
         "auditConfig": { "type": "string" },

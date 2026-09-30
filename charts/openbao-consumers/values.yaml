@@ -89,6 +89,10 @@ pki:
   issuerServiceAccount: openbao-issuer
   # Default for every issuer: the top-level vaultNamespace when empty.
   vaultNamespace: ""
+  # The auth mount cert-manager's issuers log in on. Empty: auth.mountPath,
+  # the mount the stores use. Set it when the issuers sign in a namespace
+  # whose mount is named differently from the stores'.
+  authMountPath: ""
 
   # The ROOTS that verify what OpenBAO issues, one ConfigMap each in
   # certManager.namespace, and every one of them in the bundle. Public
