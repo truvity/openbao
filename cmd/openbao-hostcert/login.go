@@ -47,7 +47,8 @@ const (
 	// a login against by default (no sts_endpoint/sts_region override on
 	// AWSAuthMount's client configuration). A regional endpoint would
 	// need the mount configured to match; this tool assumes the default.
-	stsEndpoint      = "https://sts.amazonaws.com/"
+	stsEndpoint = "https://sts.amazonaws.com/"
+	// Not configurable: AWS signs the global STS endpoint in us-east-1, always.
 	stsSigningRegion = "us-east-1"
 	// stsBody is the one request AWS's IAM auth method ever asks a
 	// caller to sign, in the exact wire form OpenBAO forwards to AWS for
