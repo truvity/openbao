@@ -587,6 +587,17 @@ func LoadFS(fsys fs.FS, name, dir string) (*Contract, error) {
 	return &contract, nil
 }
 
+// WithFS returns a copy of the contract whose committed artifacts are read
+// through fsys, rooted at dir (see [LoadFS]) -- for a caller that holds the
+// same contract and a different tree of artifacts (a test's, a checkout's).
+func (c *Contract) WithFS(fsys fs.FS, dir string) *Contract {
+	clone := *c
+	clone.fsys = fsys
+	clone.dir = path.Clean(dir)
+
+	return &clone
+}
+
 func readYAMLStrict(raw []byte, into any) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
@@ -644,11 +655,11 @@ func IntermediateArtifactName(generationID, trustDomain string, environment stri
 	return name + ".yaml"
 }
 
-// environmentCAArtifactName is the file name of one environment's
+// EnvironmentCAArtifactName is the file name of one environment's
 // root-signed CA artifact under this domain: [EnvironmentCA.ArtifactPattern]
 // with its placeholders substituted, or the library default,
 // [IntermediateArtifactName], when the domain sets no pattern.
-func (d *URITrustDomain) environmentCAArtifactName(generationID, environment string) string {
+func (d *URITrustDomain) EnvironmentCAArtifactName(generationID, environment string) string {
 	if d.EnvironmentCA == nil || d.EnvironmentCA.ArtifactPattern == "" {
 		return IntermediateArtifactName(generationID, d.Name, environment)
 	}
