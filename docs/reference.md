@@ -419,12 +419,12 @@ Durations are Go durations (`15m`, `720h`).
 | `Desired` | `Bootstrap` (`bootstrap`) | yes | the root door the apply logs in through; validated, never applied |
 | | `Root` (`root`) | yes | what the apply owns in root; no name |
 | | `Namespaces` (`namespaces`) | no | one per environment, a plain name each |
-| | `Identity` (`identity`) | yes | `primaryDoor`, and `metadata` every identity group carries |
+| | `Identity` (`identity`) | yes | `primaryDoor` (required only when a namespace declares a group), and `metadata` every identity group carries |
 | | `CredentialMaxTTL` (`credentialMaxTtl`) | no | the ceiling on every SSH user-certificate role and every PKI credential role; does not reach `SSHHostMount` roles, which are capped at 30 days instead |
 | `Namespace` | `Name`, `KV`, `PKI`, `SSH`, `SSHHost`, `Auth`, `Projects`, `Policies`, `Groups` | name outside root | the engines below; `Projects` only on an environment |
 | `ProjectNamespace` | `Name`, `KV`, `PKI` | name | one project, `<environment>/<project>`; no `Auth`, `Policies`, `Groups`, `SSH` or `SSHHost` -- the type has no such field |
 | `KVMount` | `Path`, `Description`, `Canary` | path | a KV v2 mount; the canary is written as `{"namespace": <name>}` |
-| `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `SupportedAlgorithms`, `Roles` | path, issuer | one auth mount; the discovery URL is also the bound issuer; `SupportedAlgorithms` empty resolves to `DefaultSupportedAlgorithms` (`Algorithms()`) |
+| `JWTMount` | `Path`, `Type` (empty or `oidc`), `Description`, `ClientID` (oidc), `DefaultRole`, `DiscoveryURL`, `JWKSURL`, `ValidationPubKeys`, `BoundIssuer`, `SupportedAlgorithms`, `Roles` | path, exactly one of discovery URL, JWKS URL, public keys | one auth mount; the discovery URL is also the bound issuer unless `BoundIssuer` is set (an oidc mount needs the discovery URL); `SupportedAlgorithms` empty resolves to `DefaultSupportedAlgorithms` (`Algorithms()`) |
 | `Role` | `Name`, `Type`, `BoundAudiences`, `BoundSubject`, `UserClaim`, `GroupsClaim`, `ClaimMappings`, `AllowedRedirectURIs`, `OIDCScopes` (oidc), `Policies`, `TTL` | name, audience, user claim, TTL, and a subject or a groups claim | `TTL` is also the maximum |
 | `Group` | `Name`, `Policies`, `Doors` | all | one identity group per door, aliased there by `Name` |
 | `Policy`, `Rule` | `Name`, `Rules`; `Path`, `Capabilities`, `DeniedParameters` | all but `DeniedParameters` | rendered in rule order (`Policy.HCL`); `DeniedParameters` renders `denied_parameters = {"<name>" = []}`, refusing a request that carries that parameter at all |
