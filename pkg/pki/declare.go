@@ -1,7 +1,9 @@
 package pki
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
@@ -131,6 +133,11 @@ func (c *Contract) URIIntermediateSpec(domainName, generationID string) (ceremon
 			domainName, domain.RootGeneration, generationID)
 	}
 
+	if !domain.hasSharedIntermediate() {
+		return ceremony.IntermediateSpec{}, fmt.Errorf(
+			"pki: trust domain %s has no shared domainIntermediate: sign one environment's own CA instead (EnvironmentCASpec)", domainName)
+	}
+
 	generation, err := c.ceremonyGeneration(generationID)
 	if err != nil {
 		return ceremony.IntermediateSpec{}, err
@@ -194,7 +201,7 @@ func (c *Contract) EnvironmentCASpec(domainName, environment, value, generationI
 			environment, domainName, domainName)
 	}
 
-	if !slices.Contains(domain.RootSignedEnvironments, environment) {
+	if !domain.IsRootSigned(environment) {
 		return ceremony.IntermediateSpec{}, fmt.Errorf(
 			"pki: environment %q is not in trustDomains.uri[%s].rootSignedEnvironments", environment, domainName)
 	}
@@ -304,9 +311,37 @@ func (c *Contract) EmergencyServerSpec(generationID, dnsName string, notBefore t
 // committed root, offline, and returns the chain OpenBAO imports. Pass a
 // spec from [Contract.DNSIntermediateSpec], [Contract.URIIntermediateSpec]
 // or [Contract.EnvironmentCASpec]: every artifact path on it already
-// resolves relative to the contract's own directory.
+// resolves relative to the contract's own directory. A contract read with
+// [LoadFS] reads both artifacts through that file system.
 func (c *Contract) LoadSignedIntermediate(spec ceremony.IntermediateSpec) (*ceremony.SignedIntermediate, error) {
-	return ceremony.LoadSignedIntermediate(spec, "")
+	if c.fsys == nil {
+		return ceremony.LoadSignedIntermediate(spec, "")
+	}
+
+	root, err := c.loadRootArtifact(spec.RootArtifactPath)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := c.readArtifactFile(spec.ArtifactPath)
+	if err != nil {
+		return nil, fmt.Errorf("read the %s intermediate artifact %s: %w", spec.TrustDomain, spec.ArtifactPath, err)
+	}
+
+	artifact, err := ceremony.ParseIntermediateArtifact(raw)
+	if err != nil {
+		return nil, fmt.Errorf("read the %s intermediate artifact %s: %w", spec.TrustDomain, spec.ArtifactPath, err)
+	}
+
+	return ceremony.VerifySignedIntermediate(spec, root, artifact)
+}
+
+// LoadSignedIntermediateAt is [Contract.LoadSignedIntermediate] from the
+// local disk, with the spec's artifact paths taken relative to baseDir
+// instead of the working directory -- for a caller that holds the artifacts
+// in a checkout rather than in the tree the contract was read from.
+func (c *Contract) LoadSignedIntermediateAt(spec ceremony.IntermediateSpec, baseDir string) (*ceremony.SignedIntermediate, error) {
+	return ceremony.LoadSignedIntermediate(spec, baseDir)
 }
 
 // IntermediateSigned reports whether a trust domain intermediate's (or one
@@ -316,14 +351,59 @@ func (c *Contract) LoadSignedIntermediate(spec ceremony.IntermediateSpec) (*cere
 // nothing imported) on this, the same way before running the ceremony's
 // second phase (signing, committing, and only then installing the result).
 func IntermediateSigned(spec ceremony.IntermediateSpec) (bool, error) {
-	_, err := os.Stat(spec.ArtifactPath)
+	return statReports(os.Stat(spec.ArtifactPath))
+}
+
+// IntermediateSigned is the package function of the same name, reading
+// through the file system a contract read with [LoadFS] was given.
+func (c *Contract) IntermediateSigned(spec ceremony.IntermediateSpec) (bool, error) {
+	if c.fsys == nil {
+		return IntermediateSigned(spec)
+	}
+
+	return statReports(fs.Stat(c.fsys, c.fsRelative(spec.ArtifactPath)))
+}
+
+func statReports(_ fs.FileInfo, err error) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
 
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 
 	return false, err
+}
+
+// fsRelative turns a path relative to the caller's working directory (what
+// [Contract.ArtifactPath] returns) into one relative to the root of the
+// file system the contract was read from.
+func (c *Contract) fsRelative(p string) string {
+	if c.dir == "" || c.dir == "." {
+		return p
+	}
+
+	return strings.TrimPrefix(p, c.dir+"/")
+}
+
+func (c *Contract) readArtifactFile(p string) ([]byte, error) {
+	if c.fsys == nil {
+		return os.ReadFile(p)
+	}
+
+	return fs.ReadFile(c.fsys, c.fsRelative(p))
+}
+
+func (c *Contract) loadRootArtifact(p string) (ceremony.RootArtifact, error) {
+	if c.fsys == nil {
+		return ceremony.LoadRootArtifact(p)
+	}
+
+	raw, err := c.readArtifactFile(p)
+	if err != nil {
+		return ceremony.RootArtifact{}, fmt.Errorf("read root artifact %s: %w", p, err)
+	}
+
+	return ceremony.ParseRootArtifact(raw)
 }

@@ -11,6 +11,14 @@ that keep the whole hierarchy self-consistent as it grows. `Load` and
 into the `ceremony.RootSpec` / `IntermediateSpec` / `EmergencyServerSpec`
 values `pkg/ceremony` signs from.
 
+`pkg/pki` is also the one place the contract becomes a
+[`model.Desired`](model.md): `Contract.Derive` turns it, with the few facts a
+contract cannot know, into every domain intermediate, issuing CA, leaf role
+and credential role an estate serves -- with the mount, issuer and role
+names a deployed estate is already registered under ([Deriving the desired
+state](#deriving-the-desired-state)). An estate needs no PKI logic of its
+own beside the contract file and its own legacy state.
+
 Nothing in `pkg/pki` signs anything or holds a credential. A program that
 already has its own contract shape can skip this package and build those
 three spec types directly, exactly as `pkg/pki` itself does; this package
@@ -123,6 +131,13 @@ leave out `alerts`, `signAlerts.notify`, `migration.trustedGenerations` and
 state is still checked, and with any trust domain they are all required as
 above. `alerts.enabled` still may not be `true`.
 
+The example omits the fields that place and name what the contract
+declares -- they are all optional, and defaults exist -- and are described in
+[Placement, names and credential roles](#placement-names-and-credential-roles)
+below. [`pkg/pki/testdata/contract-estate.yaml`](../pkg/pki/testdata/contract-estate.yaml)
+is a contract that spells every one of them, the shape of an estate that
+adopted the package over a PKI that was already deployed.
+
 `serialNamespace` (top level, optional, default `private-pki`) prefixes the
 label every deterministic serial is derived from. The example omits it
 because the default is right for a new root; an estate whose root already
@@ -162,6 +177,37 @@ name to that list is the entire change needed to reach another
 environment; nothing else in a consumer's desired-state code should
 special-case which environment it is building for.
 
+## Placement, names and credential roles
+
+A trust domain's authorities live in mounts, and what the mounts are called
+is deployed state: a mount that changes path is a new mount and the old one
+is deleted with its CAs. So the paths are authored once, in the contract,
+and every consumer reads them from there. All are optional.
+
+| Field (DNS and URI domains) | Meaning | Default |
+|---|---|---|
+| `domainMount` | the root-namespace mount that holds the domain intermediate; two domains may name one mount, which is then created once and holds each intermediate as a further issuer | `pki-<domain name>` |
+| `issuingMount` | the mount, inside every environment's namespace, that holds that environment's issuing CA and roles | `pki-<domain name>` |
+| `domainMountDescription`, `issuingMountDescription` | what `sys/mounts` shows; templates over `{commonName}`, `{domain}` and, for the issuing mount only, `{environment}` | a generic sentence |
+| `issuingCA.commonNameSuffix` | an issuing CA's subject is the environment's `{zone}` value and this | `Issuing CA` |
+
+The issuer under a domain intermediate is named
+`<domainIntermediate.name>-<environment>`; its path length is one less than
+the intermediate's, its lifetime is `lifetimes.clusterIntermediate`, and its
+name constraint is the environment's zone plus whatever the intermediate
+permits beside the domain's suffix (a domain whose intermediate is
+unconstrained gives an unconstrained issuing CA). A role's `allowedDomains`
+are its `names` resolved for the environment.
+
+**`credentialRoles`** (a DNS domain) are roles on each environment's issuing
+CA that sign a caller's own CSR -- a person's database client certificate,
+never a workload's: `name`, `subjectMount` (the auth mount in the same
+namespace whose alias name the common name must equal), `cnValidations`
+(`email` or `hostname`), `usage`, `keyCurve`, and `lifetimes` (`default` and
+`maximum`; `renewBefore` is refused, a credential is minted for one use and
+must sit inside the domain's own leaf lifetimes). Nothing grants them: which
+groups may sign with one is the consumer's policy.
+
 ## Per-environment identity CAs, and why
 
 A URI trust domain's ordinary shape is one shared intermediate
@@ -193,6 +239,23 @@ root-signed CA is a two-phase ceremony, the same shape the domain
 intermediate's own birth is (below): nothing downstream may treat the new
 CA as live until its artifact is committed, and the OLD issuer keeps
 signing, unconditionally, until every leaf it ever issued has expired.
+
+**No shared intermediate at all.** A URI domain whose every environment has
+its own root-signed CA has nothing to put a shared intermediate under, so
+`domainIntermediate` (and `lifetimes.domainIntermediate`) may be left out
+entirely -- a half-authored intermediate is refused. Every environment is
+then root-signed: `rootSignedEnvironments` may be omitted (or must equal
+`environments`), `environmentCA.maxPathLen` is checked against the root's own
+path length instead of the intermediate's, and the lifetime ordering is
+root > cluster intermediate > leaf. The domain declares no intermediate to
+sign, so `URIIntermediateSpec` refuses it and only `EnvironmentCASpec`
+applies.
+
+`EnvironmentCA.IssuerNamePattern` names the OpenBAO issuer (and key) of each
+environment's root-signed CA (it must contain `{environment}`; the default is
+`<domain name>-<environment>`), for the same reason `ArtifactPattern` exists:
+an estate that adopted deployed CAs keeps the names they carry, because the
+apply's resources are named after the issuer.
 
 `EnvironmentCA.ArtifactPattern` names the per-environment CA's committed
 artifact when the library default (`<generation>-intermediate-<domain
@@ -302,6 +365,90 @@ nothing), and `dnsName` must sit under a `dns` trust domain that
 this leaf -- see [ceremony.md](ceremony.md#break-glass) for the signing
 steps.
 
+## Deriving the desired state
+
+```go
+contract, err := pki.LoadFS(cfg.Content, "private-pki.yaml", "cfg")
+
+derivation, err := contract.Derive([]pki.Environment{{
+    Name:  "dev",
+    Zones: map[string]string{"private": "dev.example.internal", "origin": "dev.example.com", "identity": "dev.example.internal"},
+    Catalog: map[string][]string{pki.CatalogKey("origin", "origin"): originHosts},
+    PendingCAs: nil,
+}})
+
+err = derivation.Apply(desired) // a *model.Desired
+```
+
+`Derive` needs what a contract does not author: per environment, the value
+each trust domain substitutes for `{zone}` (`Environment.Zones`, keyed by
+trust domain), the allowed names of every `catalog` role
+(`Environment.Catalog`, keyed by `pki.CatalogKey(domain, role)`; an empty
+answer is refused -- a role that could sign nothing), and the URI domains
+whose root-signed CA for that environment is not committed yet
+(`Environment.PendingCAs`; nothing is derived for one, and its mount and
+key come from `apply.BootstrapEnvironmentCA` until the artifact exists).
+Every environment gets every DNS domain; a URI domain reaches only the
+environments it lists. It refuses a domain declared below a generation that
+is not the active one.
+
+The result is a `Derivation`: `Domains` (the domain intermediates, `external`
+issuers whose committed artifact is at `ArtifactPath`) and `Issuing` (each
+environment's issuing CA with its leaf roles and credential roles), and the
+model's mounts built from them --
+
+- `RootMounts()`: one mount per `domainMount`, the first authority creating
+  it and the rest joining it as further issuers; the intermediate's lease is
+  its lifetime.
+- `EnvironmentMounts(env)`: the environment's `issuingMount`s; a mount's
+  lease bounds are the longest default and longest maximum any role on it
+  declares.
+- `Apply(desired)`: adds both to a `model.Desired`. A mount the desired
+  state already holds -- the mount a retiring chain lives in, while both are
+  trusted -- keeps its own description, lease bounds and default issuer and
+  receives the derived issuers and roles after what it has.
+
+Each derived issuer carries the name constraint its shape implies (DNS or
+URI subtrees, and no IP address at all), `signedBy` its domain intermediate
+or `external` when the root signs it, and every derived role names its
+issuer. Because the names come only from the contract, a consumer that
+applies the result is registered under the names its contract spells; the
+worked example's derivation is
+[`pkg/pki/testdata/derive-estate.yaml`](../pkg/pki/testdata/derive-estate.yaml).
+
+### Reading a contract from a file system
+
+`Load` reads from disk. `LoadFS(fsys, name, dir)` reads the contract from a
+file system that is not the working directory -- an embedded configuration
+tree -- where `dir` is that file system's root relative to the working
+directory (`cfg` for a repository that keeps its configuration in `cfg/`).
+`ArtifactPath` still names paths a command run from the repository root can
+open (`cfg/pki-roots/...`), while `TrustAnchors`, `IntermediateSigned` and
+`LoadSignedIntermediate` read the committed artifacts through `fsys`, so a
+render and a ceremony agree on one fact from one file. `LoadSignedIntermediateAt`
+proves the artifacts of a checkout on disk instead.
+
+### Adopting a deployed estate: the schema stays at version 1
+
+Everything above is additive: every field is optional, and a contract that
+validated before validates and derives the same now. The schema version is
+therefore unchanged. An estate that already has its own contract file maps
+it by field, not by rewriting anything it has signed:
+
+- one map of trust domains becomes the two lists (`trustDomains.dns[]` with
+  a `name`, `trustDomains.uri[]`), and the per-domain fixed shape becomes
+  what the domain declares;
+- `permittedDNSDomains` is `permittedDnsDomains`, `minimumTLSVersion` is
+  `minimumTlsVersion`; a root's `artifactPath` becomes the contract's
+  `artifactDir` (its `<generation>.yaml` name is fixed);
+- a name source `cluster-local` is `static` and `gateway-catalog` is
+  `catalog`;
+- an existing serial label is `serialNamespace`, existing artifact names are
+  `environmentCA.artifactPattern`, and existing issuer names are
+  `environmentCA.issuerNamePattern` and the domain intermediates' own
+  `name`; existing mounts and their descriptions are `domainMount`,
+  `issuingMount` and the description templates.
+
 ## Trust anchors and the distributed bundle
 
 `Contract.TrustAnchors()` resolves `migration.trustedGenerations` to the
@@ -316,10 +463,10 @@ returning an incomplete bundle.
 ## What this package deliberately does not do
 
 - **No estate-specific glue.** Which environments exist, which AWS
-  account's Pulumi stack output resolves to a generation's KMS key ARN, how
-  a role's `environment-zone` pattern gets a real zone substituted -- all
-  of that is a consuming estate's own configuration, read by the program
-  that calls this package. `pkg/pki` only carries the invariants that hold
+  account's Pulumi stack output resolves to a generation's KMS key ARN, what
+  zone an environment has and what names an external catalog supplies (the
+  inputs of `Derive`) -- all of that is a consuming estate's own
+  configuration, read by the program that calls this package. `pkg/pki` only carries the invariants that hold
   for ANY estate's private PKI.
 - **No fixed role list.** A DNS trust domain may declare any set of roles;
   this package does not require an estate to offer exactly some fixed list
@@ -328,10 +475,11 @@ returning an incomplete bundle.
   own thin wrapper, the same way `Global.AdditionalLeafKeyCurves` lets a
   contract admit an exception without this package silently allowing every
   curve everywhere.
-- **No OpenBAO login, no Pulumi resource.** Building the desired state
-  ([pkg/model](../pkg/model)) and applying it ([pkg/apply](../pkg/apply))
-  from a contract's roles and environments is the calling program's job;
-  see [model.md](model.md) and [ceremony.md](ceremony.md) for those layers.
+- **No OpenBAO login, no Pulumi resource, no policy.** `Derive` produces
+  the PKI half of a desired state ([pkg/model](../pkg/model)); applying it
+  ([pkg/apply](../pkg/apply)), the login cert-manager (or anything else)
+  signs in with, and which groups may sign with which role are the calling
+  program's. See [model.md](model.md) and [ceremony.md](ceremony.md).
 
 See [adoption.md](adoption.md#adopting-an-existing-ceremony-and-custody)
 for adopting a hierarchy that predates this package, and CHANGELOG.md for

@@ -216,6 +216,13 @@ three says who signs its certificate:
 | `signedBy: {namespace, mount, issuer}` | an issuer of a mount declared **earlier** | has that mount sign the request, after its URLs exist |
 | `external: true` | a signer outside OpenBAO — a root whose key is in a KMS ([ceremony.md](ceremony.md)) | exports the request and imports the chain you supply |
 
+A private PKI does not have to be written mount by mount: the authored
+contract ([pki.md](pki.md)) derives the domain intermediates, the
+per-environment issuing CAs, their roles and credential roles into exactly
+these types (`Contract.Derive`, `Derivation.Apply`), with the mount, issuer and
+role names the contract spells -- so an estate's PKI is one reviewed file, and
+what is applied is what that file says.
+
 `defaultIssuer` is pinned as the mount's default and never follows the
 latest issuer. Every role names its own `issuer`, so the default never
 decides what a role signs — which is what lets an old and a new CA share a
