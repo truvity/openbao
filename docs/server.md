@@ -360,6 +360,17 @@ always used. Diffing the two is the adoption check: a real difference
 means an input was carried over wrong, not that the preset renders
 something new.
 
+`Config.HCL()` and `Config.Values()` refuse an empty `Listener.Address`, a
+Raft with peers but no `Path` or a peer with no `LeaderAPIAddr`, and a
+Config with no Raft peers unless `ExternalStorage` is set (the storage
+backend is configured outside the preset): a server with no storage block
+does not start. `PluginHCL`, `SealHCL` and `EgressDomains` need neither and
+stay usable on a bare Config. `Config.CheckMounts(desired)` is an opt-in
+cross-check of the two plugin registration paths: a mount's `pluginVersion`
+must be a declarative `Plugin`'s `Version`, and an unpinned mount needs a
+`Desired.Plugins` entry (those are registered unversioned, so they cannot
+satisfy a pin).
+
 What moves out of the hand-authored values at the same time:
 `server.volumes`/`server.volumeMounts` for the plugin directory become
 `Config.Values(volumeName)`'s output, merged in the same place; and the
