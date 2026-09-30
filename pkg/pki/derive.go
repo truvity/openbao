@@ -405,7 +405,7 @@ func (c *Contract) uriIssuingAuthority(domain *URITrustDomain, generation *RootG
 		maxPathLength = domain.EnvironmentCA.MaxPathLen
 		keyCurve = domain.EnvironmentCA.KeyCurve
 		external = true
-		artifact = c.ArtifactPath(domain.environmentCAArtifactName(generation.ID, environment.Name))
+		artifact = c.ArtifactPath(domain.EnvironmentCAArtifactName(generation.ID, environment.Name))
 	} else {
 		issuer = domain.DomainIntermediate.Name + "-" + environment.Name
 		commonName = value + " " + issuingSuffix(domain.IssuingCA)

@@ -239,7 +239,7 @@ func (c *Contract) EnvironmentCASpec(domainName, environment, value, generationI
 		// constrains to that environment's value alone.
 		PermittedURIDomains: []string{value},
 		RootArtifactPath:    c.RootArtifactPath(generationID),
-		ArtifactPath:        c.ArtifactPath(domain.environmentCAArtifactName(generationID, environment)),
+		ArtifactPath:        c.ArtifactPath(domain.EnvironmentCAArtifactName(generationID, environment)),
 		SerialNamespace:     c.SerialNamespace,
 	}, nil
 }
@@ -406,4 +406,29 @@ func (c *Contract) loadRootArtifact(p string) (ceremony.RootArtifact, error) {
 	}
 
 	return ceremony.ParseRootArtifact(raw)
+}
+
+// EnvironmentCASigned reports whether one environment's root-signed CA under
+// the named URI trust domain has been through the ceremony's second phase:
+// its artifact is committed. Nothing downstream of that CA (the installed
+// issuer, its roles, a trust bundle entry) may render before it does; see
+// [Environment.PendingCAs].
+func (c *Contract) EnvironmentCASigned(domainName, environment string) (bool, error) {
+	domain := c.URITrustDomain(domainName)
+	if domain == nil {
+		return false, fmt.Errorf("pki: no uri trust domain named %q", domainName)
+	}
+
+	if !domain.IsRootSigned(environment) {
+		return false, fmt.Errorf("pki: environment %q has no root-signed CA under trust domain %s", environment, domainName)
+	}
+
+	generation := c.RootGeneration(domain.RootGeneration)
+	if generation == nil {
+		return false, fmt.Errorf("pki: trust domain %s is declared below unknown root generation %q", domainName, domain.RootGeneration)
+	}
+
+	return c.IntermediateSigned(ceremony.IntermediateSpec{
+		ArtifactPath: c.ArtifactPath(domain.EnvironmentCAArtifactName(generation.ID, environment)),
+	})
 }

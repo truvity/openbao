@@ -66,10 +66,18 @@ func TestEstateRoundTripThroughDiskAndFS(t *testing.T) {
 		t.Fatalf("IntermediateSigned before the ceremony = %v, %v", signed, err)
 	}
 
+	if signed, err := disk.EnvironmentCASigned("identity", "dev"); err != nil || signed {
+		t.Fatalf("EnvironmentCASigned before the ceremony = %v, %v", signed, err)
+	}
+
 	signTestIntermediate(t, client, spec, root)
 
 	if signed, err := disk.IntermediateSigned(spec); err != nil || !signed {
 		t.Fatalf("IntermediateSigned after the ceremony = %v, %v", signed, err)
+	}
+
+	if signed, err := disk.EnvironmentCASigned("identity", "dev"); err != nil || !signed {
+		t.Fatalf("EnvironmentCASigned after the ceremony = %v, %v", signed, err)
 	}
 
 	// The same tree, read as if embedded in a repository's cfg/ directory.
