@@ -177,6 +177,9 @@ func TestEstateRefusals(t *testing.T) {
 		{"an issuer name pattern without the environment", edit(func(c *Contract) {
 			c.uri().EnvironmentCA.IssuerNamePattern = "example-identity"
 		}), "issuerNamePattern must contain"},
+		{"an environment CA issuer named like another authority", edit(func(c *Contract) {
+			c.dns().DomainIntermediate.Name = "example-identity-2026-09-dev-root-signed"
+		}), "is used by both"},
 		{"a mount path with a slash", edit(func(c *Contract) { c.dns().Placement.IssuingMount = "a/b" }), "lowercase mount path"},
 		{"an unknown description placeholder", edit(func(c *Contract) { c.dns().Placement.DomainMountDescription = "{nope}" }), "placeholder other than"},
 		{"the environment in the domain mount's description", edit(func(c *Contract) {
