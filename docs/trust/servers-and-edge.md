@@ -224,6 +224,15 @@ public SSH and no public private-exposure address.** The tailnet policy states w
 reaches which CIDR and port as data. See [people.md](people.md#network-reach) and
 [truvity/tailscale](https://github.com/truvity/tailscale).
 
+## Pin the server image tag
+
+A Helm chart's `server.image` without an explicit tag silently runs the chart's
+`appVersion`, whatever version the rest of the estate was told to use. A security
+release can be "rolled" in the values and never reach the pods. Pin the tag from
+the same version source as everything else (one place, not a chart default), and check the running version after a roll, not the value
+that was applied. OpenBAO 2.6.3, which carries nine security advisories including
+a cross-namespace policy-cache traversal, is on the management cluster.
+
 ## What is deliberately absent
 
 - **No service mesh.** Three hops, three mechanisms (client to gateway, gateway to

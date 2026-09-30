@@ -66,14 +66,17 @@ own CA Secret carries the private roots (every trusted generation).
   it accepts any certificate. Rollback of a `verify-full` step is one connection
   string, with no database-side change.
 
-**Status: IN PROGRESS.** The server certificate from the private chain is live,
-and the chart labels its server-TLS and server-CA Secrets for reload. `verify-full`
-is being adopted client by client: an identity server using the Java PostgreSQL
-driver is on it in development and production (its own ServiceAccount, the
-fully qualified host, the private root mounted as a directory); the url-shortener
-example chart in truvity/policy gains an off-by-default
-`database.tls.mode: require|verify-full` with the same shape. Others are to be
-confirmed per consumer.
+**Status: LIVE (phase 1, 2026-09-30).** The server certificate from the private
+chain is live, and the chart labels its server-TLS and server-CA Secrets for
+reload (truvity/cnpg-cluster v2.0.1 and v1.2.2). Clients verify with `verify-full`:
+an identity server using the Java PostgreSQL driver in development and production
+(its own ServiceAccount, the fully qualified host, the private root mounted as a
+directory); the url-shortener example chart in truvity/policy
+(`database.tls.mode: require|verify-full`) in development; the platform's audit
+and dashboard databases on the management cluster; and the document service's
+database servers, on the private chain in every environment, with clients
+verifying where the chart version allows (development today). Phases 2 and 3
+(per-database CA, client certificates) remain PLANNED.
 
 ## Why the database's own clients get their own CA
 
