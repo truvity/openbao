@@ -97,7 +97,10 @@ func (c *Config) TLSReloadSidecarContainer(opts TLSReloadOptions) (map[string]an
 		dir = c.pluginDirectory()
 	}
 
-	ro := RetrySidecarOptions{APIPort: opts.APIPort, HealthTimeoutSeconds: opts.HealthTimeoutSeconds, Attempts: opts.Attempts, IntervalSeconds: opts.IntervalSeconds}
+	ro := RetrySidecarOptions{
+		APIPort: opts.APIPort, HealthTimeoutSeconds: opts.HealthTimeoutSeconds,
+		Attempts: opts.Attempts, IntervalSeconds: opts.IntervalSeconds,
+	}
 
 	watch := opts.WatchIntervalSeconds
 	if watch == 0 {
@@ -175,6 +178,8 @@ func humanSeconds(n int) string {
 
 // tlsReloadScript is a POSIX /bin/sh script: the server's image carries
 // sh, wget, cksum, tr and kill and nothing else this needs.
+//
+//nolint:lll // shell lines of the rendered script are not wrapped
 const tlsReloadScript = `@COMMENT@plugin=@PLUGIN@
 
 # Never signal bao before it is serving: SIGHUP's
