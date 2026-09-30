@@ -1,0 +1,5 @@
+exempt:
+  C13:
+    reason: the STS signing region is AWS's fixed region for the global STS endpoint, a protocol constant rather than an estate fact
+    checks: [region]
+    paths: [cmd/openbao-hostcert/login.go]
