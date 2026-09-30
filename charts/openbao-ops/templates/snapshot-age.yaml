@@ -211,7 +211,7 @@ spec:
 
                   # A span in the unit a reader would use: minutes under an
                   # hour, hours above. "under the 0h limit" read like an
-                  # impossible bar for a thirty-minute limit (INF-865).
+                  # impossible bar for a thirty-minute limit.
                   span() {
                     if [ "$1" -lt 3600 ]; then echo "$(( $1 / 60 ))m"; else echo "$(( $1 / 3600 ))h"; fi
                   }
