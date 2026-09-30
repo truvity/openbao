@@ -39,6 +39,8 @@ decision was taken.
 | [T-23](#t-23-passwords-are-an-explicit-fallback) | Passwords are an explicit fallback | accepted |
 | [T-24](#t-24-cnpg-secrets-always-carry-cnpgioreload) | CNPG Secrets always carry `cnpg.io/reload` | accepted |
 | [T-25](#t-25-people-ladder-roles-avoid-the-reserved-pg_-prefix) | People ladder roles avoid the reserved `pg_` prefix | accepted, names to be decided |
+| [T-26](#t-26-heavy-lifting-lives-in-the-library-consumers-keep-rows-values-and-thin-adapters) | Heavy lifting lives in the library; consumers keep rows, values and thin adapters | accepted |
+| [T-27](#t-27-the-kms-seal-plugin-arrives-by-init-container-from-a-digest-pinned-image-volume) | The KMS seal plugin arrives by init container from a digest-pinned image volume | accepted |
 
 ---
 
@@ -492,3 +494,43 @@ With the label a renewal was served in under 10 seconds, with no restart.
 **Why.** PostgreSQL reserves the prefix for its predefined roles and refuses to create
 one, so a ladder named with it cannot exist. **Consequences.**
 [databases.md](databases.md#people).
+
+---
+
+### T-26: Heavy lifting lives in the library; consumers keep rows, values and thin adapters
+
+**Date:** 2026-09-30. **Status:** accepted.
+
+**Choice.** Logic that more than one estate would otherwise copy (the PKI contract
+in `pkg/pki`, approver policies rendered by `openbao-consumers`, `approvercheck`,
+the server preset, the custody cross-check) lives in this library and is consumed
+as published. A consuming estate keeps its own rows (which environments, which
+hosts), its values, and thin adapters that call the library.
+
+| Alternative | Pros | Cons |
+|---|---|---|
+| each consumer keeps its own copy | no coordination | copies drift; a fix has to be found and made in each; a hand-written policy is the first to miss a request shape |
+| a wrapper chart or framework in the consumer | one place per estate | the logic is still not shared, and the estate owns a second interface |
+
+**Consequences.** A move onto the library must not change what exists: the PKI
+contract move was proved by a name-set golden and a zero-diff preview. See [issuance.md](issuance.md#the-policies).
+
+---
+
+### T-27: The KMS seal plugin arrives by init container from a digest-pinned image volume
+
+**Date:** 2026-09-30. **Status:** accepted.
+
+**Choice.** On OpenBAO 2.7 the KMS seal is an external plugin. An init container
+installs it from an OCI image volume pinned by digest before the server starts. It
+is never downloaded at startup.
+
+| Alternative | Pros | Cons |
+|---|---|---|
+| download at startup | no image to build | needs egress from the pod, trusts the network at the moment the seal must open, and a failed fetch is an outage |
+| bake the plugin into a custom server image | one artefact | a rebuild of the server image per plugin change; the server is no longer the upstream image |
+| mount from a tag | readable | a tag moves; the bytes that unseal the cluster are not the bytes reviewed |
+
+**Consequences.** Pods need no route out. The digest is a reviewed pin, changed by
+pull request. Rehearsed in the library (v0.23.0); runbook in
+[server.md](../server.md#runbook-26-to-27-with-the-kms-seal-plugin).
