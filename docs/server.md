@@ -526,6 +526,16 @@ install to rediscover:
    SAME declarative download and registration from the server's current
    config, and succeeds once egress has caught up.
 
+A pod that already runs a certificate-watching sidecar beside the server
+does not need a second one for the retry: `Config.TLSReloadSidecarContainer`
+renders one container that does both. It waits for the listener, SIGHUPs on
+the same timer until the plugin file exists, then idles on the certificate
+checksum, SIGHUPping again whenever the serving certificate changes (the
+chart's `/bin/sh -ec` wrapper swallows SIGHUP, so nothing else reloads a
+renewed certificate). It takes the same `shareProcessNamespace: true`, follows
+exactly one declared plugin, and its resources and security context are
+opt-in. `Config.PluginVolumeSizeLimit` (opt-in) caps the plugin emptyDir.
+
 `Config.HCL()` renders the whole configuration in one deterministic pass,
 and [`conformance/server_preset_test.go`](../conformance/server_preset_test.go)
 boots a real, non-dev `bao server` from it — with a local plugin directory

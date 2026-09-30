@@ -292,6 +292,10 @@ type (
 		// emptyDir (PluginVolume/PluginVolumeMount) must mount at.
 		// Empty: DefaultPluginDirectory.
 		PluginDirectory string
+		// PluginVolumeSizeLimit, when set (a Kubernetes quantity such as
+		// "256Mi"), caps the plugin emptyDir PluginVolume renders. Empty
+		// renders an unbounded emptyDir, as before.
+		PluginVolumeSizeLimit string
 		// DownloadBehavior is "fail" or "continue". Empty:
 		// DefaultDownloadBehavior. Any other value is refused, not
 		// silently accepted the way the server itself accepts and
@@ -945,9 +949,14 @@ func (c *Config) HCL() (string, error) {
 // package importing a Kubernetes types dependency it otherwise has no use
 // for.
 func (c *Config) PluginVolume(name string) map[string]any {
+	emptyDir := map[string]any{}
+	if c.PluginVolumeSizeLimit != "" {
+		emptyDir["sizeLimit"] = c.PluginVolumeSizeLimit
+	}
+
 	return map[string]any{
 		"name":     name,
-		"emptyDir": map[string]any{},
+		"emptyDir": emptyDir,
 	}
 }
 

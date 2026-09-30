@@ -7,6 +7,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Added
+
+- **`pkg/serverpreset`: `Config.TLSReloadSidecarContainer`, and `Config.PluginVolumeSizeLimit`** (both opt-in; every existing render is byte for byte unchanged). `TLSReloadSidecarContainer` renders the one sidecar a server pod needs for both signalling jobs: a health-gated SIGHUP retry of the declarative plugin download (as `RetrySidecarContainer`), then a watch on the serving certificate's checksum that SIGHUPs `bao server` when it changes. `TLSReloadOptions` carries the image, the certificate file and its volume, the plugin volume, the retry bounds (defaults 300 s / 20 attempts / 30 s / 60 s) and optional resources and security context. `PluginVolumeSizeLimit` adds a `sizeLimit` to the plugin emptyDir that `PluginVolume` renders.
+
 ## v0.25.0
 
 ### Added
