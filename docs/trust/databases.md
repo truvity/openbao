@@ -1,7 +1,7 @@
 # PostgreSQL: server identity, application clients, replication and people
 
 PostgreSQL is run by the CloudNativePG operator (chart:
-[truvity/cnpg-cluster](https://github.com/truvity/cnpg-cluster)). This page is
+[truvity/cnpg](https://github.com/truvity/cnpg)). This page is
 the decided plan for how every party proves who it is to a database and how the
 database proves who it is to them. **Most of it is PLANNED** (decided, not
 built); each section says which. The status of each phase is in
@@ -68,7 +68,7 @@ own CA Secret carries the private roots (every trusted generation).
 
 **Status: LIVE (phase 1, 2026-09-30).** The server certificate from the private
 chain is live, and the chart labels its server-TLS and server-CA Secrets for
-reload (truvity/cnpg-cluster v2.0.1 and v1.2.2). Clients verify with `verify-full`:
+reload (truvity/cnpg v2.0.1 and v1.2.2). Clients verify with `verify-full`:
 an identity server using the Java PostgreSQL driver in development and production
 (its own ServiceAccount, the fully qualified host, the private root mounted as a
 directory); the url-shortener example chart in truvity/policy
