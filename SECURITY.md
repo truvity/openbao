@@ -13,16 +13,19 @@ Only the latest release is supported with security updates.
 
 ## What is in scope
 
-This repository publishes contracts, schemas, small configuration loaders and
-a worked example. Reports that matter most:
+This repository publishes:
 
-- A loader that accepts a configuration it should refuse, or that reports a
-  secret's value in an error or a log line.
-- A contract or a schema whose defaults are unsafe for anyone who follows
-  them.
-- Anything in the example that would be a vulnerability in a real service,
-  since the example is what people copy.
+- The Go packages: `pkg/model`, `pkg/apply`, `pkg/serverpreset`, `pkg/ceremony`, `pkg/custody`, `pkg/pki`, `pkg/kmssigner` and `pkg/approvercheck`.
+- The commands: `openbaoctl` (the CA ceremony), `approvercheck` (the approver-layer proof) and `openbao-hostcert` (the EC2 host-certificate renewer, which runs as root).
+- The charts `openbao-ops` and `openbao-consumers`, and the examples, including the access-roster preset (`model.Roster`).
+- The documentation, where it tells an adopter to do something unsafe.
 
-This repository holds no credentials and its CI runs on hosted runners with
-no access to any private infrastructure. A finding that depends on a
-particular deployment belongs with that deployment's owner.
+Reports that matter most:
+
+- A chart default or a preset that weakens TLS, trust, network policy or who may read, write or issue.
+- A refusal that accepts input it should reject: a policy the approver check calls approved when it is not, a hierarchy or template the ceremony signs without the review it promises, a model that applies wider access than it states.
+- A key, token, seed or other secret reaching a log line, an error, a rendered manifest or a committed artifact, or a CA key custody policy that lets administration sign.
+- `openbao-hostcert` or `openbaoctl` doing more than their documentation says with the credentials they hold.
+
+A finding that depends on how a particular deployment uses this repository
+belongs with that deployment's owner.
