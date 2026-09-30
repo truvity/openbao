@@ -155,7 +155,11 @@ Policies the bootstrap declares may be referenced by name from `root`
 ### Auth: workloads and people
 
 A `jwt` mount accepts tokens from one issuer (`discoveryUrl`, also the
-bound issuer). Two kinds of role live on it:
+bound issuer). An issuer with no discovery document is named by `jwksUrl`
+or by static `validationPubkeys` (PEM) instead: exactly one of the three,
+as OpenBAO takes them. `boundIssuer` overrides the bound `iss`; with a JWKS
+or key mount and no `boundIssuer`, no issuer is checked. An `oidc` mount
+signs in through discovery and needs `discoveryUrl`. Two kinds of role live on it:
 
 - **A workload role** binds one token subject — for a Kubernetes workload,
   `model.ServiceAccountSubject(namespace, serviceAccount)` — and carries
@@ -195,7 +199,8 @@ OpenBAO gives an identity group **one** alias: writing a second alias for
 the same group silently replaces the first. So a group admitted through two
 doors — the CLI's `jwt` mount and the UI's `oidc` mount — becomes two
 identity groups, one aliased on each mount, carrying the same policies.
-Through `identity.primaryDoor` the identity group keeps the group's bare
+(`identity.primaryDoor` is required only when some namespace declares a
+group.) Through `identity.primaryDoor` the identity group keeps the group's bare
 name; through any other door it is `<name>@<door>`, and records the door in
 its metadata.
 

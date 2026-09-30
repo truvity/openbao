@@ -542,3 +542,33 @@ func TestLeafRolesAcceptP256AndP384KeepCAKeys(t *testing.T) {
 	assert.NotZero(t, roles)
 	assert.NotZero(t, requests)
 }
+
+// A JWKS or public-key mount registers that one key source and no
+// discovery URL; a discovery mount is unchanged.
+func TestJWTMountKeySourcesReachTheProvider(t *testing.T) {
+	desired := example(t)
+	desired.Namespaces[0].Auth[0].DiscoveryURL = ""
+	desired.Namespaces[0].Auth[0].JWKSURL = "https://issuer.example.org/jwks"
+	desired.Namespaces[0].Auth[0].BoundIssuer = "https://issuer.example.org"
+
+	m, _, err := deploy(t, desired, options(), false)
+	require.NoError(t, err)
+
+	mount, ok := m.named("dev-auth-jwt-dev")
+	require.True(t, ok)
+	assert.Equal(t, "https://issuer.example.org/jwks", mount.Inputs["jwksUrl"])
+	assert.Equal(t, "https://issuer.example.org", mount.Inputs["boundIssuer"])
+	assert.NotContains(t, mount.Inputs, "oidcDiscoveryUrl")
+
+	desired = example(t)
+	desired.Namespaces[0].Auth[0].DiscoveryURL = ""
+	desired.Namespaces[0].Auth[0].ValidationPubKeys = []string{"-----BEGIN PUBLIC KEY-----\nexample\n-----END PUBLIC KEY-----\n"}
+
+	m, _, err = deploy(t, desired, options(), false)
+	require.NoError(t, err)
+
+	mount, ok = m.named("dev-auth-jwt-dev")
+	require.True(t, ok)
+	assert.NotEmpty(t, mount.Inputs["jwtValidationPubkeys"])
+	assert.NotContains(t, mount.Inputs, "boundIssuer", "no issuer is bound when none is named")
+}

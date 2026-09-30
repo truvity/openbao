@@ -269,15 +269,29 @@ func (a *applier) door(s *scope, mount *model.JWTMount, policies map[string]*vau
 	authType := model.MethodJWT
 
 	args := &jwt.AuthBackendArgs{
-		Namespace:        s.arg,
-		Path:             pulumi.String(mount.Path),
-		Type:             pulumi.String(authType),
-		OidcDiscoveryUrl: pulumi.String(mount.DiscoveryURL),
-		BoundIssuer:      pulumi.String(mount.DiscoveryURL),
+		Namespace: s.arg,
+		Path:      pulumi.String(mount.Path),
+		Type:      pulumi.String(authType),
 		// The plugin's own default is RS256 alone for an oidc role ("all"
 		// for a jwt role); state the algorithms explicitly so an ES256 or
 		// ES384 issuer is not refused on a mount this library applies.
 		JwtSupportedAlgs: pulumi.ToStringArray(mount.Algorithms()),
+	}
+
+	if mount.DiscoveryURL != "" {
+		args.OidcDiscoveryUrl = pulumi.String(mount.DiscoveryURL)
+	}
+
+	if mount.JWKSURL != "" {
+		args.JwksUrl = pulumi.String(mount.JWKSURL)
+	}
+
+	if len(mount.ValidationPubKeys) > 0 {
+		args.JwtValidationPubkeys = pulumi.ToStringArray(mount.ValidationPubKeys)
+	}
+
+	if issuer := mount.EffectiveBoundIssuer(); issuer != "" {
+		args.BoundIssuer = pulumi.String(issuer)
 	}
 
 	if mount.Description != "" {

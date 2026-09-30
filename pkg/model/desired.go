@@ -156,7 +156,23 @@ func (d *Desired) Validate() error {
 		return err
 	}
 
-	return d.Identity.Validate()
+	// The primary door names identity groups; a desired state with no group
+	// has nothing to name, so identity stands alone without one.
+	if d.hasGroups() {
+		return d.Identity.Validate()
+	}
+
+	return d.Identity.validateGroupless()
+}
+
+func (d *Desired) hasGroups() bool {
+	for _, namespace := range d.Applied() {
+		if len(namespace.Groups) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Applied is every namespace the apply owns, root first: the order in

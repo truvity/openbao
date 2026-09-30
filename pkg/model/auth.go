@@ -56,8 +56,23 @@ type (
 		// DefaultRole is the role a login that names none gets.
 		DefaultRole string `yaml:"defaultRole,omitempty"`
 		// DiscoveryURL is the issuer's OIDC discovery base, which is also
-		// the bound issuer.
-		DiscoveryURL string `yaml:"discoveryUrl"`
+		// the bound issuer unless BoundIssuer says otherwise.
+		//
+		// Exactly one of DiscoveryURL, JWKSURL and ValidationPubKeys names
+		// where the mount gets the keys its tokens are verified with (the
+		// three are mutually exclusive on an OpenBAO jwt mount). An oidc
+		// mount signs in through the issuer's discovery document, so it
+		// needs DiscoveryURL.
+		DiscoveryURL string `yaml:"discoveryUrl,omitempty"`
+		// JWKSURL is the issuer's JWKS endpoint, for an issuer with no OIDC
+		// discovery document.
+		JWKSURL string `yaml:"jwksUrl,omitempty"`
+		// ValidationPubKeys are PEM public keys tokens are verified with,
+		// for an issuer that publishes neither discovery nor JWKS.
+		ValidationPubKeys []string `yaml:"validationPubkeys,omitempty"`
+		// BoundIssuer is the `iss` a token must carry. It defaults to
+		// DiscoveryURL and is otherwise unset (no issuer check).
+		BoundIssuer string `yaml:"boundIssuer,omitempty"`
 		// SupportedAlgorithms is the signing algorithms this mount accepts
 		// from a token, whether the login is a jwt role's or an oidc role's
 		// browser callback. Empty means DefaultSupportedAlgorithms; call
@@ -123,8 +138,8 @@ func (m *JWTMount) Validate() error {
 		return fmt.Errorf("auth mount %q has type %q, want empty (jwt) or %s", m.Path, m.Type, MethodOIDC)
 	}
 
-	if strings.TrimSpace(m.DiscoveryURL) == "" {
-		return fmt.Errorf("auth mount %q has no issuer", m.Path)
+	if err := m.validateKeySource(); err != nil {
+		return err
 	}
 
 	if m.Type == MethodOIDC && strings.TrimSpace(m.ClientID) == "" {
@@ -159,6 +174,55 @@ func (m *JWTMount) Validate() error {
 	}
 
 	return nil
+}
+
+// validateKeySource refuses a mount that names no source for its
+// verification keys, or more than one: OpenBAO takes exactly one of
+// discovery URL, JWKS URL and public keys.
+func (m *JWTMount) validateKeySource() error {
+	sources := 0
+
+	if strings.TrimSpace(m.DiscoveryURL) != "" {
+		sources++
+	}
+
+	if strings.TrimSpace(m.JWKSURL) != "" {
+		sources++
+	}
+
+	if len(m.ValidationPubKeys) > 0 {
+		sources++
+
+		for _, key := range m.ValidationPubKeys {
+			if strings.TrimSpace(key) == "" {
+				return fmt.Errorf("auth mount %q has an empty validation public key", m.Path)
+			}
+		}
+	}
+
+	switch {
+	case sources == 0:
+		return fmt.Errorf("auth mount %q has no issuer: set discoveryUrl, jwksUrl or validationPubkeys", m.Path)
+	case sources > 1:
+		return fmt.Errorf("auth mount %q names more than one of discoveryUrl, jwksUrl and validationPubkeys; set exactly one", m.Path)
+	}
+
+	if m.Type == MethodOIDC && strings.TrimSpace(m.DiscoveryURL) == "" {
+		return fmt.Errorf("oidc mount %q signs in through discovery and needs discoveryUrl", m.Path)
+	}
+
+	return nil
+}
+
+// EffectiveBoundIssuer is the `iss` the mount binds: BoundIssuer if set,
+// else the discovery URL (empty for a JWKS or public-key mount that names
+// none, which then checks no issuer).
+func (m *JWTMount) EffectiveBoundIssuer() string {
+	if m.BoundIssuer != "" {
+		return m.BoundIssuer
+	}
+
+	return m.DiscoveryURL
 }
 
 // validateAlgorithms refuses a name jwtSigningAlgorithms does not list --

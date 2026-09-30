@@ -618,3 +618,50 @@ func TestPKIRoleIdentityShape(t *testing.T) {
 		require.ErrorContains(t, role.Validate(), "not a URI with a host")
 	})
 }
+
+// Identity stands alone: with no group anywhere the primary door has
+// nothing to name, so it may be left out; with a group it is still required.
+func TestIdentityWithoutGroupsNeedsNoPrimaryDoor(t *testing.T) {
+	desired := read(t, examplePath)
+	desired.Identity.PrimaryDoor = ""
+
+	require.ErrorContains(t, desired.Validate(), "no primary door", "the example has groups")
+
+	for i := range desired.Applied() {
+		desired.Applied()[i].Groups = nil
+	}
+
+	require.NoError(t, desired.Validate())
+
+	desired.Identity.Metadata = map[string]string{model.MetadataDoorKey: "x"}
+	require.ErrorContains(t, desired.Validate(), "may not set")
+}
+
+// A mount takes exactly one source of verification keys.
+func TestJWTMountKeySources(t *testing.T) {
+	edit := func(f func(m *model.JWTMount)) error {
+		desired := read(t, examplePath)
+		m := &desired.Namespaces[0].Auth[0]
+		f(m)
+
+		return desired.Validate()
+	}
+
+	key := "-----BEGIN PUBLIC KEY-----\nexample\n-----END PUBLIC KEY-----\n"
+
+	require.NoError(t, edit(func(m *model.JWTMount) { m.DiscoveryURL, m.JWKSURL = "", "https://issuer.example.org/jwks" }))
+	require.NoError(t, edit(func(m *model.JWTMount) { m.DiscoveryURL, m.ValidationPubKeys = "", []string{key} }))
+	require.ErrorContains(t, edit(func(m *model.JWTMount) { m.JWKSURL = "https://issuer.example.org/jwks" }), "more than one")
+	require.ErrorContains(t, edit(func(m *model.JWTMount) { m.DiscoveryURL, m.ValidationPubKeys = "", []string{" "} }), "empty validation")
+	require.ErrorContains(t, edit(func(m *model.JWTMount) { m.DiscoveryURL, m.JWKSURL = "", "" }), "no issuer")
+
+	desired := read(t, examplePath)
+	oidc := &desired.Namespaces[0].Auth[2]
+	oidc.DiscoveryURL, oidc.JWKSURL = "", "https://issuer.example.org/jwks"
+	require.ErrorContains(t, desired.Validate(), "needs discoveryUrl")
+
+	m := model.JWTMount{DiscoveryURL: "https://issuer.example.org"}
+	assert.Equal(t, "https://issuer.example.org", m.EffectiveBoundIssuer())
+	m.BoundIssuer = "https://iss.example.org"
+	assert.Equal(t, "https://iss.example.org", m.EffectiveBoundIssuer())
+}

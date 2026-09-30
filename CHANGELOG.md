@@ -20,6 +20,7 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ### Fixed
 
+- fix(model): identity and auth stand alone. `identity.primaryDoor` is required only when some namespace declares a group (it only names identity groups); a desired state with none validates without it. A `jwt` mount may name its keys by `jwksUrl` or static `validationPubkeys` instead of `discoveryUrl` (exactly one of the three, as OpenBAO takes them; an `oidc` mount still needs `discoveryUrl`), with an optional `boundIssuer` that defaults to the discovery URL. Every existing configuration validates and applies byte-for-byte as before.
 - fix(apply): BootstrapEnvironmentCA names match Deploy's (with aliases from the old names). The mount is now registered as `<namespace>-<mount>` (slashes become `-`; the bare mount path in root) and the certificate request as `<KeyName>-csr`, exactly what `Deploy` derives, so moving from phase A to phase B creates and deletes neither. `ResourceName` is now optional: a stack already created under the old scheme (mount `<ResourceName>-mount`, request `<ResourceName>`) keeps setting it, and those names become Pulumi aliases, so the state moves to the new names in place. New `Rename` option takes the same `Options.Rename` given to `Deploy`.
 
 ### Changed

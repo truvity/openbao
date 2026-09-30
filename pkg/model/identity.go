@@ -69,6 +69,17 @@ func (i Identity) Validate() error {
 		return fmt.Errorf("model: identity names no primary door")
 	}
 
+	return i.validateMetadata()
+}
+
+// validateGroupless is [Identity.Validate] for a desired state that declares
+// no group anywhere: the primary door only decides how a group is named, so
+// with no group it may stay empty.
+func (i Identity) validateGroupless() error {
+	return i.validateMetadata()
+}
+
+func (i Identity) validateMetadata() error {
 	if _, ok := i.Metadata[MetadataDoorKey]; ok {
 		return fmt.Errorf("model: identity metadata may not set %q; the apply writes it", MetadataDoorKey)
 	}
