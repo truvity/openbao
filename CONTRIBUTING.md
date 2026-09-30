@@ -8,51 +8,48 @@ incident or internal ticket — in code, documents, tests, commit messages or
 pull request text. Say "a consuming estate", "an environment", "the source
 estate".
 
-`hack/leak-canary.sh` catches the mechanical half of that and runs on every
-commit through lefthook, and again in CI. It cannot read prose, so the rest is
-a review rule. Quote a placeholder, never a real value, including in a commit
-message: a message is as public as a file and cannot be edited after the push.
+`hack/leak-canary.sh` catches the mechanical half of that and runs as part of `just check` and again in CI. It
+cannot read prose, so the rest is a review rule. Quote a placeholder, never a
+real value, including in a commit message: a message is as public as a file and
+cannot be edited after the push.
 
-## What a contract is
+## The gate
 
-A contract in `docs/contracts/` is normative and testable. It says "must",
-it is short enough to read in a sitting, and it carries a conformance section
-naming how it is checked mechanically — a lint rule, a golden, a schema. A
-rule with no way to check it is a preference, and belongs in a guide.
+`just check` is the gate and needs no credentials and no cluster. It runs:
 
-A canon in `docs/canon/` is an allowed list. It states its scope as a rule,
-never as an enumeration of repositories, because an enumeration goes stale
-and a stale canon is one people stop trusting.
+- `build` compiles every package and command, `openbaoctl` included
+- `lint` runs golangci-lint and govulncheck, and lints and renders both charts
+- `test` runs the Go tests, the golden renders and the alert-rule checks (it needs `bao` and `promtool` from devbox and fails rather than skips without them)
+- `leak-canary`
 
-A guide in `docs/guides/` is not normative and may change without a version
-bump. It walks the example.
+`just admission-conformance` proves the admission policy on a throwaway kind cluster; it needs docker and kind, so it is not part of `just check`.
+
+A change to a chart or to a rendered output regenerates the golden renders with `just golden`; review that diff in the pull request. Every render-time refusal has a fixture under `tests/invalid/` that must fail to render.
+
+## Component contract
+
+This repository is held to the
+[component contract](https://github.com/truvity/policy/blob/master/docs/contracts/component.md);
+its `policy-conformance` check runs in CI. A change that breaks a rule of the
+contract fails there.
 
 ## Decisions
 
-Every decision a stranger adopting these contracts would also face is
-recorded under `docs/decisions/`. A decision that applies to only one
-deployment is not recorded here. Decisions are never edited after acceptance;
-they are superseded by a new one that links back.
+A decision that changes what an adopter must do or may rely on is recorded under
+`docs/decisions/`. Decisions are never edited after acceptance; they are
+superseded by a new one that links back.
 
-## Changing a contract
+## Changelog
 
-A pull request that changes what a consumer must do adds its bullet to the
-CHANGELOG under the version it will be tagged as, creating the heading if it
-is the first. A breaking bullet starts with **Breaking:** and names the
-adoption step.
-
-The example in `examples/` is how a contract is proven. A contract that the
-example does not satisfy is not finished, and a change to a contract changes
-the example in the same pull request.
+A pull request that changes what a consumer sees adds its bullet to
+`CHANGELOG.md` under the version it will be tagged as, creating the heading if
+it is the first. Every tag cut by hand has exactly one heading. A breaking
+bullet starts with **Breaking:** and names the adoption step.
 
 ## Tooling
 
 Tools come from `devbox.json` through direnv. Never hand-roll a PATH; add a
 missing tool with `devbox add <pkg>@<version>`.
-
-`just check` is the gate and needs no credentials, no container and no
-cluster. Recipes that need more are separate, and CI runs them as their own
-jobs.
 
 ## Commits and pull requests
 
