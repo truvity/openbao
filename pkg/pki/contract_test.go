@@ -336,3 +336,57 @@ func TestValidateRequireTrustedNeedsGenerationTrusted(t *testing.T) {
 	err := contract.Validate()
 	wantErr(t, err, "is not in migration.trustedGenerations, but the domain requires it")
 }
+
+// A contract with no trust domain leaves alerting, the trust bundle and the
+// DR replica out; the same contract with a trust domain still requires them.
+func TestContractWithoutTrustDomainsNeedsNoAlertingOrDR(t *testing.T) {
+	bare := func(c *Contract) {
+		c.TrustDomains = TrustDomains{}
+		c.Alerts = Alerts{}
+		c.SignAlerts = SignAlerts{}
+		c.Migration = Migration{}
+		c.Generations[0].Custody.DisasterRecovery = DisasterRecovery{}
+	}
+
+	if err := mutate(bare).Validate(); err != nil {
+		t.Fatalf("a contract with no trust domain and no alerting should validate: %v", err)
+	}
+
+	for name, tc := range map[string]struct {
+		edit func(*Contract)
+		want string
+	}{
+		"a dr mode with no region": {func(c *Contract) {
+			bare(c)
+			c.Generations[0].Custody.DisasterRecovery.Mode = "multi-region-replica"
+		}, "disasterRecovery.region must be set"},
+		"a dr region with no mode": {func(c *Contract) {
+			bare(c)
+			c.Generations[0].Custody.DisasterRecovery.Region = "eu-north-1"
+		}, "disasterRecovery.mode is required"},
+		"a stated bad notify address": {func(c *Contract) {
+			bare(c)
+			c.SignAlerts.Notify = []string{"nobody"}
+		}, "is not an email address"},
+		"a stated unknown trusted generation": {func(c *Contract) {
+			bare(c)
+			c.Migration.TrustedGenerations = []string{"nope"}
+		}, "unknown generation"},
+		"a stated partial threshold set": {func(c *Contract) {
+			bare(c)
+			c.Alerts.Thresholds.Leaf = "24h"
+		}, "alerts.thresholds"},
+		"alerts enabled": {func(c *Contract) {
+			bare(c)
+			c.Alerts.Enabled = true
+		}, "alerts.enabled must remain false"},
+		"a trust domain with no notify":              {func(c *Contract) { c.SignAlerts = SignAlerts{} }, "signAlerts.notify"},
+		"a trust domain with no trusted generations": {func(c *Contract) { c.Migration = Migration{} }, "migration.trustedGenerations"},
+		"a trust domain with no thresholds":          {func(c *Contract) { c.Alerts = Alerts{} }, "alerts.thresholds"},
+		"a trust domain with no dr": {func(c *Contract) {
+			c.Generations[0].Custody.DisasterRecovery = DisasterRecovery{}
+		}, "disasterRecovery.mode is required"},
+	} {
+		t.Run(name, func(t *testing.T) { wantErr(t, mutate(tc.edit).Validate(), tc.want) })
+	}
+}

@@ -447,3 +447,19 @@ func TestDeployRefusals(t *testing.T) {
 		})
 	}
 }
+
+// An empty ReplicaRegion is a single-region key: no replica, no replica
+// alias, no second region's sign alert, no second provider.
+func TestDeployWithoutAReplicaRegionCreatesThePrimaryAlone(t *testing.T) {
+	args := testArgs()
+	args.Generations = []Generation{{ID: testGeneration, Region: testPrimary}}
+
+	resources := deploy(t, args)
+
+	require.Len(t, resources["aws:kms/key:Key"], 1)
+	require.Empty(t, resources["aws:kms/replicaKey:ReplicaKey"])
+	require.Len(t, resources["aws:kms/alias:Alias"], 1)
+	require.Len(t, resources["aws:sns/topic:Topic"], 1)
+	require.Len(t, resources["aws:cloudwatch/metricAlarm:MetricAlarm"], 1)
+	require.Len(t, resources["pulumi:providers:aws"], 2, "the roles and the one region")
+}

@@ -95,7 +95,9 @@ type (
 		// ID names the generation (and its key, alias and alarm).
 		ID string
 		// Region holds the multi-region primary; ReplicaRegion the
-		// disaster-recovery replica. They must differ.
+		// disaster-recovery replica. They must differ. An empty
+		// ReplicaRegion creates the primary alone: no replica key, alias or
+		// second-region sign alert.
 		Region        string
 		ReplicaRegion string
 	}
@@ -162,9 +164,12 @@ func Deploy(ctx *pulumi.Context, args Args, opts ...pulumi.ResourceOption) (*Cus
 		if err != nil {
 			return nil, err
 		}
-		replicaProvider, err := args.provider(ctx, generation.ID+"-replica", generation.ReplicaRegion, opts)
-		if err != nil {
-			return nil, err
+		var replicaProvider *awspulumi.Provider
+		if generation.ReplicaRegion != "" {
+			replicaProvider, err = args.provider(ctx, generation.ID+"-replica", generation.ReplicaRegion, opts)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		keys, err := deployGeneration(ctx, args, generation, adminRole.Arn, ceremonyRole.Arn, provider, replicaProvider, opts)
@@ -217,7 +222,10 @@ func (a Args) validate() error {
 			return fmt.Errorf("root generation IDs must be present and unique, got %q", generation.ID)
 		}
 		seen[generation.ID] = true
-		if generation.Region == "" || generation.ReplicaRegion == "" || generation.Region == generation.ReplicaRegion {
+		if generation.Region == "" {
+			return fmt.Errorf("root generation %s needs a primary region", generation.ID)
+		}
+		if generation.ReplicaRegion != "" && generation.Region == generation.ReplicaRegion {
 			return fmt.Errorf("root generation %s needs two different regions, got %q and %q",
 				generation.ID, generation.Region, generation.ReplicaRegion)
 		}
@@ -323,32 +331,42 @@ func deployGeneration(
 		return nil, fmt.Errorf("create root key alias %s: %w", generation.ID, err)
 	}
 
-	replica, err := kms.NewReplicaKey(ctx, generation.ID+"-replica", &kms.ReplicaKeyArgs{
-		PrimaryKeyArn:        key.Arn,
-		Description:          pulumi.String(args.DescriptionPrefix + " " + generation.ID + " (DR replica)"),
-		DeletionWindowInDays: pulumi.Int(args.DeletionWindowDays),
-		Policy:               policy,
-		Tags:                 tags,
-	}, with(pulumi.Provider(replicaProvider), pulumi.Protect(true), pulumi.RetainOnDelete(true))...)
-	if err != nil {
-		return nil, fmt.Errorf("create root replica %s: %w", generation.ID, err)
+	scopes := []signAlertScope{
+		{generation: generation.ID, region: generation.Region, alias: alias, keyARN: key.Arn, keyID: key.KeyId, provider: provider},
 	}
 
-	if _, err := kms.NewAlias(ctx, generation.ID+"-replica-alias", &kms.AliasArgs{
-		Name:        pulumi.String(alias),
-		TargetKeyId: replica.KeyId,
-	}, with(pulumi.Provider(replicaProvider), pulumi.Protect(true))...); err != nil {
-		return nil, fmt.Errorf("create root replica alias %s: %w", generation.ID, err)
+	var replica *kms.ReplicaKey
+
+	if replicaProvider != nil {
+		replica, err = kms.NewReplicaKey(ctx, generation.ID+"-replica", &kms.ReplicaKeyArgs{
+			PrimaryKeyArn:        key.Arn,
+			Description:          pulumi.String(args.DescriptionPrefix + " " + generation.ID + " (DR replica)"),
+			DeletionWindowInDays: pulumi.Int(args.DeletionWindowDays),
+			Policy:               policy,
+			Tags:                 tags,
+		}, with(pulumi.Provider(replicaProvider), pulumi.Protect(true), pulumi.RetainOnDelete(true))...)
+		if err != nil {
+			return nil, fmt.Errorf("create root replica %s: %w", generation.ID, err)
+		}
+
+		if _, err := kms.NewAlias(ctx, generation.ID+"-replica-alias", &kms.AliasArgs{
+			Name:        pulumi.String(alias),
+			TargetKeyId: replica.KeyId,
+		}, with(pulumi.Provider(replicaProvider), pulumi.Protect(true))...); err != nil {
+			return nil, fmt.Errorf("create root replica alias %s: %w", generation.ID, err)
+		}
+
+		scopes = append(scopes, signAlertScope{
+			generation: generation.ID, region: generation.ReplicaRegion, alias: alias,
+			keyARN: replica.Arn, keyID: replica.KeyId, provider: replicaProvider,
+		})
 	}
 
-	// Both regions, separately: the primary and the replica are one
+	// Every region, separately: the primary and the replica are one
 	// multi-region key, and a Sign with either is the same incident, but
 	// CloudTrail, EventBridge and CloudWatch are regional and an alarm in
 	// one region sees nothing of the other.
-	for _, scope := range []signAlertScope{
-		{generation: generation.ID, region: generation.Region, alias: alias, keyARN: key.Arn, keyID: key.KeyId, provider: provider},
-		{generation: generation.ID, region: generation.ReplicaRegion, alias: alias, keyARN: replica.Arn, keyID: replica.KeyId, provider: replicaProvider},
-	} {
+	for _, scope := range scopes {
 		if err := deploySignAlerts(ctx, args, scope, extra); err != nil {
 			return nil, err
 		}
