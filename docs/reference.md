@@ -393,7 +393,7 @@ every resource and provider ([custody.md](custody.md)).
 | `TrustedPrincipalARNPattern` | required | `ArnLike` pattern of the human administrators: assume both roles, administer the keys directly |
 | `AdminRoleName`, `CeremonyRoleName` | required, distinct | the two roles |
 | `PermissionsBoundaryPolicyName` | none | a customer-managed policy in the account, attached to both roles as their boundary |
-| `Generations[]` | at least one | `ID`, `Region` (primary), `ReplicaRegion` (must differ); oldest first, additive |
+| `Generations[]` | at least one | `ID`, `Region` (primary), `ReplicaRegion` (must differ when set; empty creates the primary alone, no replica); oldest first, additive |
 | `Notify` | none | e-mail addresses subscribed to every generation's Sign alarm, in both regions |
 | `AliasPrefix` | `alias/private-pki/root/` | alias `<prefix><ID>`, the same in both regions |
 | `SignAlertPrefix` | `private-pki-root-sign-` | topic, rule and alarm `<prefix><ID>` |

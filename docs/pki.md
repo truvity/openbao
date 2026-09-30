@@ -117,6 +117,12 @@ migration:
   trustedGenerations: [example-root-2026-01]
 ```
 
+A contract that declares no trust domain at all (just root custody) may
+leave out `alerts`, `signAlerts.notify`, `migration.trustedGenerations` and
+`disasterRecovery`: they serve trust domains. Whatever such a contract does
+state is still checked, and with any trust domain they are all required as
+above. `alerts.enabled` still may not be `true`.
+
 `serialNamespace` (top level, optional, default `private-pki`) prefixes the
 label every deterministic serial is derived from. The example omits it
 because the default is right for a new root; an estate whose root already

@@ -29,7 +29,7 @@ func (c *Contract) Validate() error {
 		return err
 	}
 
-	generationLifetimes, err := validateGenerations(c.Generations)
+	generationLifetimes, err := validateGenerations(c.Generations, c.hasTrustDomains())
 	if err != nil {
 		return err
 	}
@@ -73,15 +73,20 @@ func (c *Contract) Validate() error {
 		}
 	}
 
-	if err := c.Alerts.validate(generationLifetimes, c.TrustDomains); err != nil {
+	// Alerts, sign alerts and the trust bundle serve trust domains. A
+	// contract with none may leave them out; anything it does state is
+	// still checked.
+	needed := c.hasTrustDomains()
+
+	if err := c.Alerts.validate(generationLifetimes, c.TrustDomains, needed); err != nil {
 		return err
 	}
 
-	if err := c.SignAlerts.validate(); err != nil {
+	if err := c.SignAlerts.validate(needed); err != nil {
 		return err
 	}
 
-	if err := c.Migration.validate(generationLifetimes); err != nil {
+	if err := c.Migration.validate(generationLifetimes, needed); err != nil {
 		return err
 	}
 
@@ -99,6 +104,10 @@ func (c *Contract) Validate() error {
 	}
 
 	return nil
+}
+
+func (c *Contract) hasTrustDomains() bool {
+	return len(c.TrustDomains.DNS)+len(c.TrustDomains.URI) > 0
 }
 
 // claimName records that a name (a trust domain's own name or its domain
@@ -138,7 +147,7 @@ func (g Global) validate() error {
 	return nil
 }
 
-func validateGenerations(generations []RootGeneration) (map[string]generationInfo, error) {
+func validateGenerations(generations []RootGeneration, needDR bool) (map[string]generationInfo, error) {
 	if len(generations) == 0 {
 		return nil, fmt.Errorf("pki: at least one rootGeneration is required")
 	}
@@ -169,7 +178,7 @@ func validateGenerations(generations []RootGeneration) (map[string]generationInf
 
 		infos[generation.ID] = generationInfo{Lifetime: lifetime, MaxPathLen: generation.Certificate.MaxPathLen}
 
-		if err := generation.Custody.validate(path + ".custody"); err != nil {
+		if err := generation.Custody.validate(path+".custody", needDR); err != nil {
 			return nil, err
 		}
 
@@ -227,7 +236,7 @@ func (rc RootCertificate) validate(path string, lifetime time.Duration) error {
 	return nil
 }
 
-func (rc RootCustody) validate(path string) error {
+func (rc RootCustody) validate(path string, needDR bool) error {
 	if rc.Provider != custodyProviderAWSKMS {
 		return fmt.Errorf("pki: %s.provider must be %q", path, custodyProviderAWSKMS)
 	}
@@ -248,12 +257,18 @@ func (rc RootCustody) validate(path string) error {
 		return fmt.Errorf("pki: %s.trustedPrincipalArnPattern is required", path)
 	}
 
-	if rc.DisasterRecovery.Mode == "" {
-		return fmt.Errorf("pki: %s.disasterRecovery.mode is required", path)
-	}
+	// A contract with no trust domain has no leaf to protect against a
+	// regional loss, so the replica is optional there: but stated at all,
+	// it is stated whole.
+	dr := rc.DisasterRecovery
+	if needDR || dr.Mode != "" || dr.Region != "" {
+		if dr.Mode == "" {
+			return fmt.Errorf("pki: %s.disasterRecovery.mode is required", path)
+		}
 
-	if rc.DisasterRecovery.Region == "" || rc.DisasterRecovery.Region == rc.Region {
-		return fmt.Errorf("pki: %s.disasterRecovery.region must be set and differ from the primary region", path)
+		if dr.Region == "" || dr.Region == rc.Region {
+			return fmt.Errorf("pki: %s.disasterRecovery.region must be set and differ from the primary region", path)
+		}
 	}
 
 	return nil
@@ -743,9 +758,13 @@ func checkGenerationRef(path, generationID string, generations map[string]genera
 	return info.Lifetime, info.MaxPathLen, nil
 }
 
-func (a Alerts) validate(generations map[string]generationInfo, domains TrustDomains) error {
+func (a Alerts) validate(generations map[string]generationInfo, domains TrustDomains, needed bool) error {
 	if a.Enabled {
 		return fmt.Errorf("pki: alerts.enabled must remain false until an alert consumer exists")
+	}
+
+	if !needed && a.Thresholds == (AlertThresholds{}) {
+		return nil
 	}
 
 	rootThreshold, err := parsePositiveDuration("alerts.thresholds.rootGeneration", a.Thresholds.RootGeneration)
@@ -797,7 +816,11 @@ func (a Alerts) validate(generations map[string]generationInfo, domains TrustDom
 	return nil
 }
 
-func (s SignAlerts) validate() error {
+func (s SignAlerts) validate(needed bool) error {
+	if len(s.Notify) == 0 && !needed {
+		return nil
+	}
+
 	if len(s.Notify) == 0 {
 		return fmt.Errorf("pki: signAlerts.notify must name at least one recipient of every root-key Sign")
 	}
@@ -825,7 +848,11 @@ func (s SignAlerts) validate() error {
 	return nil
 }
 
-func (m Migration) validate(generations map[string]generationInfo) error {
+func (m Migration) validate(generations map[string]generationInfo, needed bool) error {
+	if len(m.TrustedGenerations) == 0 && !needed {
+		return nil
+	}
+
 	if len(m.TrustedGenerations) == 0 {
 		return fmt.Errorf("pki: migration.trustedGenerations must not be empty")
 	}
