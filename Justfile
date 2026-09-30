@@ -54,6 +54,17 @@ test:
 rehearse-bootstrap-tls:
     OPENBAO_CONFORMANCE=required go test ./conformance/... -run TestBootstrapTLS -v
 
+# The OpenBAO 2.7 seal-as-plugin rehearsal (conformance/seal_plugin_test.go):
+# real `bao server`s on the exact rendered HCL, on a Docker network with no
+# route out, the KMS emulated by a sibling container, the seal plugin
+# installed by the preset's own init container. Proves a cold start, a
+# restart and a three-voter Raft cluster rolled 2.6.3 to 2.7.0 one node at a
+# time, and prints the timings. Needs a Docker daemon (28+, for image
+# mounts) and network for the image pulls; it is not part of `just test`
+# because CI has no container runtime for it.
+rehearse-seal-plugin:
+    OPENBAO_SEAL_REHEARSAL=required go test ./conformance/ -run TestSealPluginRehearsal -count=1 -v
+
 # Regenerate the golden renders, the ceremony's template goldens, the
 # model's example, the apply's registered resources and the access-roster
 # example — review the diff before committing.

@@ -73,6 +73,9 @@ server:
           }
           # ... one retry_join per replica
         }
+        # Up to OpenBAO 2.6 the seal is built in. From 2.7 it is an external
+        # plugin, installed before the server starts: see "The seal as a
+        # plugin (OpenBAO 2.7)" below for the extra stanza and init container.
         seal "awskms" {
           region     = "eu-example-1"
           kms_key_id = "alias/openbao-unseal"
@@ -105,6 +108,248 @@ the smallest Raft quorum that survives losing a node, and it is the
 seal's budget. A replica added for headroom keeps spending its 192
 requests a day for as long as it exists, whether or not anything reads
 from it.
+
+## The seal as a plugin (OpenBAO 2.7)
+
+From OpenBAO 2.7.0 the `awskms` seal is no longer built into the binary. It
+is an external KMS plugin (`kms-aws` in
+[openbao-plugins](https://github.com/openbao/openbao-plugins)), and a server
+whose config still says `seal "awskms" {}` alone exits at startup with
+`Error configuring seal "awskms": unknown wrapper: awskms`. 2.6 already
+supports the plugin form (a plugin shadows the built-in seal), so the change
+can be staged.
+
+A seal is different from every other plugin in one way that decides the
+design: **it cannot wait for the server to be Ready.** The auth plugin's
+download can fail, be retried by a sidecar and land minutes after the pod
+started; the server is sealed, unusable and never becomes Ready until the seal
+plugin's binary is on disk and running. So the binary must be in
+`plugin_directory` before `bao server` starts, and nothing about getting it
+there may depend on the network, on a retry, or on the server being up.
+
+### What the preset renders
+
+`Seal.Plugin` (a `serverpreset.SealPlugin`) switches the mode. It is
+explicit, not inferred from a version: `Config.ServerVersion` is only a guard
+(from 2.7 a seal with no `Plugin` is refused; below 2.6 a `Plugin` is
+refused). With `Seal.Plugin` nil the 2.6 rendering is byte for byte what it
+was. With it set, the HCL gains a `plugin "kms"` block (plus
+`plugin_directory`, once, whatever else declares plugins), and the values
+gain an init container and an image volume:
+
+```hcl
+seal "awskms" {
+  region     = "eu-example-1"
+  kms_key_id = "alias/openbao-unseal"
+}
+plugin "kms" "awskms" {
+  command = "kms-awskms-v0.1.0"      # a file in plugin_directory; <kind>-<seal>-<version>
+  version = "v0.1.0"
+}
+plugin_directory = "/openbao/plugins"
+```
+
+```yaml
+server:
+  extraInitContainers:
+    - name: seal-plugin-install
+      image: openbao/openbao:2.7.0          # the server's own image: it has sh, cp, chmod, mv
+      command: [/bin/sh, -c]
+      args: [ "...copy, verify, rename..." ]  # see examples/server/values-2.7.yaml
+      securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+      volumeMounts:
+        - { name: openbao-plugins, mountPath: /openbao/plugins }               # the emptyDir the server also mounts
+        - { name: seal-plugin-src, mountPath: /seal-plugin-src, readOnly: true }
+  volumes:
+    - name: openbao-plugins
+      emptyDir: {}
+    - name: seal-plugin-src                 # mounted by the init container only
+      image:
+        reference: ghcr.io/openbao/openbao-plugin-kms-aws@sha256:<manifest-list digest>
+        pullPolicy: IfNotPresent
+```
+
+[`examples/server`](../examples/server) has the whole thing
+(`Config27`, `Values27`), with
+[`values-2.7.yaml`](../examples/server/values-2.7.yaml) as its golden, and
+`values.yaml` (2.6) unchanged beside it.
+
+### Why an init container over an image volume, and not the alternatives
+
+The plugin's image is `FROM scratch`: the binary and nothing else, no shell.
+So the init container cannot run *from* it; it runs from the server's own
+image and reads the plugin image through an **image volume** that only it
+mounts. The kubelet pulls that image by digest, through whatever mirror the
+node is configured with, and the pod itself needs no egress for it.
+
+| Delivery | Verdict |
+|---|---|
+| **Init container copying from an image volume** (the default, `DeliveryInitCopy`) | No network from the pod, so the network-policy-agent race that broke the first OCI download of the auth plugin cannot happen; pinned by manifest-list digest (the kubelet resolves the node's architecture); runs on every pod start against a fresh `emptyDir`; leaves a writable plugin directory the OCI-downloaded auth plugins can share. |
+| Image volume mounted **as the plugin directory itself** | Rejected, and shown wrong on a real kubelet: the image ships the binary as mode `0644`, so `exec` fails with `Permission denied`; the volume is read-only, so it cannot share `plugin_directory` with the auth plugin's downloads (there is one directory); and it fixes the on-disk name to the image's own. (A single-FILE `subPath` from an image volume is refused by containerd outright.) |
+| The server downloads it (`plugin "kms" { image = ... }`, `plugin_auto_download`) | Rejected: it needs pod egress to a registry at the one moment the network policy has not caught up, and a failed download with `plugin_download_behavior = "continue"` starts a server that can never unseal, while `"fail"` crash-loops it. There is nothing to retry into: the retry sidecar signals a server that must already be running. `Config.Validate` refuses a `kms` entry in `Plugins`. |
+| An init container running `bao plugin init` | Would work (not rehearsed), but needs pod egress to the registry (or an in-cluster mirror) at start, which is what the default deliberately avoids. |
+| The binary baked into a custom server image (`DeliveryPreinstalled`) | Supported: the preset renders only the HCL and the plugin directory, and the server refuses to start if the file is not there. Nothing here verifies it; the adopter owns that. |
+
+The init container writes the copy beside its destination and renames it,
+sets it executable (the image's mode is `0644`), and, when
+`SealPlugin.SHA256ByArch` is set, verifies the checksum before it installs
+anything. It exits non-zero if the image lacks the binary; the pod then never
+starts a server that could not unseal.
+
+**Cluster requirement.** Image volumes: a Kubernetes release with the
+`ImageVolume` feature (beta since 1.33, off by default until it is enabled by
+default in later releases; check `kubectl explain pod.spec.volumes.image`)
+and a container runtime that supports it (containerd 2.1 or later). On a cluster without it the pod is not admitted, which is the loud,
+early failure a seal wants; use `DeliveryPreinstalled` there.
+
+### Startup requirements the preset refuses to violate
+
+`Config.Validate`, `HCL`, `Values` and `SealHCL` refuse, at render time, a
+seal plugin that cannot be satisfied at startup:
+
+- a plugin directory that is not an absolute path (it must exist when the
+  server starts; the emptyDir plus the init container guarantee it);
+- an image with a tag, a digest inside it, or none; a digest that is not
+  `sha256:<64 hex>` (a tag alone is never enough);
+- no `CopyImage` (the init container's image), no `Version`;
+- a `Plugins` entry of kind `kms` (a KMS plugin is never downloaded by the
+  server);
+- a server below 2.7 with no checksum for `Config.Arch` (2.6 refuses a
+  manually installed plugin with no checksum: `error verifying checksum: no
+  checksum provided`), and any checksum map that lacks `Config.Arch`;
+- `ServerVersion` 2.7 or later with a seal and no `Plugin`.
+
+`plugin_download_behavior` is unchanged and applies to the auth plugins only;
+the seal plugin is not in the download set, so `"continue"` cannot hide a
+missing seal plugin. The retry sidecar does not watch it either, for the same
+reason: it would signal a server that has to be running already.
+
+### Egress and configuration reload
+
+- The pod's egress does not change: KMS (`Seal.Endpoint`'s host when set,
+  else `kms.<region>.amazonaws.com`), plus whatever the auth plugins need.
+  The plugin image is pulled by the kubelet. Point `SealPlugin.Image` at your
+  own mirror or pull-through cache if the nodes cannot reach the public
+  registry; nothing else changes. `Config.EgressDomains()` therefore adds
+  nothing for the seal plugin.
+- The upstream chart copies the rendered HCL to a scratch file at start, and
+  the StatefulSet is `OnDelete`: a change to the seal plugin's `Version`,
+  `Digest` or `Image` reaches a pod only when it is deleted. (2.7 reloads KMS
+  plugin stanzas on `SIGHUP`, but that reads the copy, not the ConfigMap;
+  roll the pod.) The plugin file name carries the version, so a new version is
+  a new file, not an in-place overwrite of a running binary.
+
+### Other 2.7 changes that touch this shape
+
+| 2.7 change | Here |
+|---|---|
+| `file` storage removed | Not used by the preset (Raft). The conformance tests that booted `file` storage now use single-node Raft. |
+| Raft `path` created if missing | Nothing to do; the preset's emptyDir/volume paths already exist. |
+| Declarative `plugin` no longer needs `sha256sum` for a manually installed binary | Optional for the seal plugin from 2.7; required on 2.6.x (see above). |
+| `plugin_auto_register` defaults to `true` | The preset already renders it explicitly for the auth plugins. |
+| Built-in `ldap`, `kerberos`, `radius` auth and `ldap` secrets removed | Not used by this repository's model. An estate that mounts one installs the plugin from openbao-plugins. |
+| PKI refuses FQDNs ending in `.` | This repository's roles and certificates carry no trailing dot. |
+| Go module `github.com/openbao/openbao/v2` | This module imports no OpenBAO Go module; nothing to change. |
+
+### Proof
+
+`just rehearse-seal-plugin` ([`conformance/seal_plugin_test.go`](../conformance/seal_plugin_test.go);
+needs Docker 28 or later and network for the image pulls, so not part of `just
+test`) boots real `bao server`s from the exact rendered HCL on a Docker
+network with **no route out** (no internet, no registry, no DNS) and the KMS
+emulated by a sibling container only they can reach, with the plugin installed
+by the init container the preset renders, run as rendered (its image, script,
+mounts and user), a Docker image mount standing in for the kubelet's image
+volume. It proves:
+
+- a 2.7.0 server given the 2.6 rendering exits (`unknown wrapper: awskms`), and
+  one given the plugin form but no binary exits (`no such file or
+  directory`), never serving sealed;
+- a **cold start** initializes and unseals; a **container restart** and a
+  **pod restart** (empty plugin directory, init container again) unseal with
+  no help;
+- 2.6.3 runs the same plugin (`builtin: false`) and then 2.7.0 on the same
+  data, so the seal change and the version change can be two rolls;
+- a **three-voter Raft cluster rolls 2.6.3 to 2.7.0**, standbys first, the
+  active node last, snapshot first: after every node all three are unsealed,
+  Raft shows three voters and a write commits; a standby reverted to 2.6.3
+  and the 2.6 rendering rejoins and unseals; a full restart of all three at
+  once unseals unaided.
+
+The rendered pod shape was also run once on a throwaway kind cluster
+(Kubernetes 1.36, `ImageVolume` on) to confirm the kubelet mounts the image
+volume, the init container installs an executable binary as uid 100, and the
+plugin runs; that run is manual, not part of the recipe.
+
+### Runbook: 2.6 to 2.7 with the KMS seal plugin
+
+Order matters and every step has a stop condition. The StatefulSet is
+`OnDelete`, so nothing rolls until you delete a pod.
+
+**Before anything**
+
+1. Confirm the cluster supports image volumes: run a throwaway pod that
+   mounts any small image as a volume, or use `DeliveryPreinstalled`.
+2. Resolve the pins. From the plugin release
+   (`kms-aws-v<version>` in openbao-plugins) take the version, the
+   manifest-list digest of `ghcr.io/openbao/openbao-plugin-kms-aws:<version>`
+   (mirror the image if the nodes cannot reach the registry, and pin the
+   mirror's digest, which is identical for a bit-for-bit copy), and, if you
+   stage on 2.6.x, the raw-binary checksum for every architecture from
+   `checksums-kms-aws.txt`. Render `Config` with `ServerVersion` set.
+3. Read the 2.7 removals above against your configuration.
+4. **Snapshot first.** `bao operator raft snapshot save` from the active node
+   and copy it off the cluster (the snapshot job of `openbao-ops` does the
+   same); confirm the restore check is green. This is the only way back once
+   a 2.7 node has been the active node.
+5. Confirm you hold the recovery keys and that KMS access is unchanged (the
+   seal's key and IAM are untouched by this change).
+
+**Optional stage: the plugin on 2.6.x, no version change.** Merge the values
+with `Seal.Plugin` (and checksums) with the image still 2.6.x, then roll as
+below. A server that came up with the plugin logs `Auto Seal: awskms
+(builtin: false, ...)`. This proves the plugin path on the version you run
+before the version changes; the direct roll is also rehearsed, so this is
+extra caution, not a requirement.
+
+**The roll** (repeat for each pod):
+
+1. Merge the change: the 2.7 image on the server and on the init container's
+   `CopyImage`, and the seal plugin values (`extraInitContainers`, the two
+   volumes, the HCL with the plugin block).
+2. **Standbys first, the active node last.** Find the active node with
+   `bao status` (`HA Mode`); address each pod directly. Delete one standby.
+3. Wait until **all** hold, and only then go on:
+   - the init container completed: its log ends
+     `seal-plugin-install: installed /openbao/plugins/kms-awskms-<version>`;
+   - the server is unsealed by itself: `bao status` shows `Sealed false`,
+     `Seal Type awskms`, `Version 2.7.x`, and the server log has `Auto Seal:
+     awskms (builtin: false ...)`;
+   - `bao operator raft list-peers` shows every voter healthy, and a write
+     commits (`bao kv put` then `get` through another node).
+4. **Stop at the first pod that is not Ready.** Do not delete the next one.
+   What the symptoms mean:
+   | Symptom | Cause |
+   |---|---|
+   | pod stuck `Init:0/1` or `ContainerCreating`, event `ErrImagePull` or unsupported volume type | the kubelet cannot pull the plugin image (mirror, digest) or has no image volumes |
+   | init container `Error`: `does not match the pinned checksum` | the checksum belongs to another version or architecture |
+   | init container `Error`: `missing or empty` | the image has no binary at its root (wrong image) |
+   | server exits: `unknown wrapper: awskms` | the HCL was rendered for 2.6 (no `Seal.Plugin`) |
+   | server exits: `lstat ...: no such file or directory` | the plugin file or `plugin_directory` is missing (init container removed, or a different mount) |
+   | server exits: `no checksum provided` | a 2.6.x server and no `sha256sum` |
+   | unsealed but the KMS health check warns | KMS reachability or IAM, unchanged by this change; it is not the plugin |
+5. Roll the second standby the same way, then the active node last (one
+   election at the end).
+6. After the last pod: a full pass of step 3 on every node, and the alerts
+   that page on a sealed node are quiet.
+
+**Revert.** Before the active node has run 2.7, a node that misbehaves goes
+back by itself: restore the previous values (the 2.6 rendering is unchanged:
+built-in seal, 2.6 image, no init container) and delete its pod; it rejoins on
+its own data and unseals (rehearsed for a standby). Once the active node has
+run 2.7, do not run a 2.6 binary against that data: restore the snapshot into
+a fresh 2.6.x cluster (or roll forward). Stopping at the first not-Ready pod
+is what keeps the first case the only one you meet.
 
 ## Verifying one name
 

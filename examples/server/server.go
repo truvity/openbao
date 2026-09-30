@@ -137,3 +137,71 @@ func Values(arch string) (map[string]any, error) {
 
 	return values, nil
 }
+
+// ServerImage27 is ServerImage for OpenBAO 2.7: the release where the awskms
+// seal stops being built in.
+const ServerImage27 = "openbao/openbao:2.7.0"
+
+// SealPluginImage and SealPluginDigest pin the awskms seal plugin, as
+// openbao/openbao-plugins publishes it: the repository (an adopter points
+// this at its own mirror or pull-through cache) and the manifest-list digest
+// of the release, which the kubelet resolves to the node's architecture. An
+// adopter reads the digest of the version it adopts from the registry, never
+// from this file.
+const (
+	SealPluginImage   = "ghcr.io/openbao/openbao-plugin-kms-aws"
+	SealPluginDigest  = "sha256:fe9fb94872048c9474156c044ea8852bb5c2e968fc9304a3725e4d434b488541"
+	SealPluginVersion = "v0.1.0"
+)
+
+// SealPluginSHA256ByArch is the seal plugin binary's checksum per
+// architecture, from the release's checksums-kms-aws.txt. Optional on 2.7
+// (the digest already pins the image; a checksum adds a check the init
+// container makes before installing) and required below it.
+var SealPluginSHA256ByArch = map[string]string{
+	"amd64": "fa332cf1863a948d4b166ed9acb7da1608fb1dffbde4425626d787424fda5a05",
+	"arm64": "9925bd77bb644fbf8a3a479deb39768e5a230e9b2b4eafad18971b54b3b580e2",
+}
+
+// Config27 is Config for OpenBAO 2.7: the same server, with the seal run
+// as an external KMS plugin installed by an init container before the server
+// starts (docs/server.md, "The seal as a plugin (OpenBAO 2.7)").
+func Config27(arch string) *serverpreset.Config {
+	cfg := Config(arch)
+	cfg.ServerVersion = "2.7.0"
+	cfg.Seal.Plugin = &serverpreset.SealPlugin{
+		Image:     SealPluginImage,
+		Digest:    SealPluginDigest,
+		Version:   SealPluginVersion,
+		CopyImage: ServerImage27,
+		// The image digest is the pin; the checksum is a second one the
+		// init container checks before it installs.
+		SHA256ByArch: SealPluginSHA256ByArch,
+	}
+
+	return cfg
+}
+
+// Values27 is Values for OpenBAO 2.7: the fragment of [Config27] with the
+// retry sidecar on the same image as the server.
+func Values27(arch string) (map[string]any, error) {
+	cfg := Config27(arch)
+
+	values, err := cfg.Values(PluginVolumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	sidecar, err := cfg.RetrySidecarContainer(serverpreset.RetrySidecarOptions{
+		Image: ServerImage27, VolumeName: PluginVolumeName,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	server, _ := values["server"].(map[string]any)
+	server["shareProcessNamespace"] = true
+	server["extraContainers"] = []any{sidecar}
+
+	return values, nil
+}

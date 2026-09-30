@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,17 +62,29 @@ func freeAddress(t *testing.T) string {
 }
 
 // minimalHCL wraps pluginHCL with the smallest storage and listener that
-// let a non-dev `bao server` start at all: file storage (so nothing here
-// depends on Raft's own retry_join) and TLS disabled (the plugin
-// download's egress is what is under test, not the listener's
-// certificate).
+// let a non-dev `bao server` start at all: single-node Raft (the `file`
+// backend is gone in OpenBAO 2.7, and Raft is what the preset renders
+// anyway) and TLS disabled (the plugin download's egress is what is under
+// test, not the listener's certificate).
 func minimalHCL(t *testing.T, dataDir, address, pluginHCL string) string {
 	t.Helper()
 
+	// 2.7 creates a missing Raft directory, 2.6 does not.
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+
+	host, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+
+	portNumber, err := strconv.Atoi(port)
+	require.NoError(t, err)
+
 	return `
-storage "file" {
-  path = "` + dataDir + `"
+storage "raft" {
+  path    = "` + dataDir + `"
+  node_id = "rehearsal"
 }
+api_addr     = "http://` + address + `"
+cluster_addr = "http://` + net.JoinHostPort(host, strconv.Itoa(portNumber+1)) + `"
 listener "tcp" {
   address     = "` + address + `"
   tls_disable = "true"

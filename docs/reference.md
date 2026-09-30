@@ -533,26 +533,35 @@ beside it is its golden.
 | | `DownloadBehavior` | no | `"fail"` or `"continue"`; default `"continue"` (`DefaultDownloadBehavior`) — refused otherwise, where the server itself silently ignores anything but those two |
 | | `Plugins` | no | the declarative catalog; empty renders no `plugin_*` settings at all |
 | | `Seal` | no | zero value renders no seal stanza |
+| | `ServerVersion` | no | `"2.7.0"`. Only a guard: from 2.7 a `Seal` with no `Plugin` is refused (the seal is not built in), below 2.6 a `Seal.Plugin` is refused; empty renders as before |
 | | `Listener`, `Raft` | no | the `listener "tcp"` and `storage "raft"` stanzas |
 | | `UI`, `DisableStandbyReads`, `ServiceRegistration`, `AuditDevice` | no | the top-level settings docs/server.md's reference HCL sets |
 | `Plugin` | `Kind`, `Name`, `Image`, `Version`, `BinaryName` | yes | the four `plugin "<Kind>" "<Name>" {}` fields; every value must be one HCL-safe token (no quotes, no line breaks) |
 | | `SHA256ByArch` | yes | one checksum per architecture the image is published for — never a bare string |
 | | `EgressHosts` | no | every host the OCI pull needs (the registry AND its blob host, when they differ) |
 | | `RequiresSTS` | no | true for a plugin that verifies a caller against AWS STS itself |
-| `Seal` | `Type` | no | `"awskms"` only; any other value is refused, with OpenBAO 2.7's move to an external seal plugin named as why |
+| `Seal` | `Type` | no | `"awskms"` only; any other type is refused |
 | | `Region`, `KMSKeyID` | with `Type` | the `seal "awskms"` block's own fields |
+| | `Endpoint` | no | the seal's `endpoint` (a VPC endpoint); `EgressDomains` names its host instead of the public KMS host |
+| | `Plugin` | 2.7 | non-nil runs the seal as an external KMS plugin ([server.md](server.md#the-seal-as-a-plugin-openbao-27)): adds the `plugin "kms"` block, `plugin_directory`, and (default delivery) the init container and image volume; nil renders the built-in seal, byte for byte as before |
+| `SealPlugin` | `Version` | yes | the plugin's release (`v0.1.0`): the `version` line and the tail of the on-disk name `kms-<seal>-<version>` |
+| | `Delivery` | no | `init-copy` (default: an init container copies the binary from a digest-pinned image) or `preinstalled` (HCL only; the binary is already in the plugin directory) |
+| | `Image`, `Digest` | `init-copy` | the plugin image's repository (no tag, no digest: an adopter's mirror goes here) and its manifest-list digest `sha256:<64 hex>` |
+| | `CopyImage` | `init-copy` | the init container's image; needs `sh`, `cp`, `chmod`, `mv` (the server's own image) |
+| | `BinaryName`, `SourceVolume`, `PullPolicy` | no | the binary's name at the image root (`openbao-plugin-kms-aws`), the image volume's name (`seal-plugin-src`), its pull policy (`IfNotPresent`) |
 | `Listener` | `Address`, `ClusterAddress`, `TLSCertFile`, `TLSKeyFile` | with a listener | the `listener "tcp"` block |
 | `Raft` | `Path`, `Peers` | with Raft | one `retry_join` per `RaftPeer` (`LeaderAPIAddr`, `LeaderCACertFile`, `LeaderTLSServername`) |
 
 Methods: `Plugin.Command()` (`<Kind>-<Name>-<Version>`, the on-disk name
 the declarative download links — NOT `BinaryName`); `Plugin.Validate()`;
-`Config.Validate()`; `Config.PluginHCL()`, `Config.SealHCL()`,
+`Config.Validate()` (which also refuses a seal plugin that cannot be satisfied at startup: no digest, a tag instead of a digest, no copy image, a relative plugin directory, a `kms` entry in `Plugins`); `Config.SealPluginCommand()`, `Config.SealPluginSourceVolume()` and `Config.SealPluginInitContainer(pluginVolume)` (the two halves of the delivery, as plain maps); `Config.PluginHCL()`, `Config.SealHCL()`,
 `Config.ListenerHCL()`, `Config.RaftHCL()` (each stanza alone) and
 `Config.HCL()` (the whole configuration, in docs/server.md's reference
 order); `Config.PluginVolume(name)` / `Config.PluginVolumeMount(name)`
 (the plugin directory's emptyDir, as plain maps); `Config.Values(volumeName)`
-(the upstream chart's `server.ha.raft.config` plus, when `Plugins` is
-non-empty, `server.volumes`/`server.volumeMounts`);
+(the upstream chart's `server.ha.raft.config` plus, when `Plugins` or
+`Seal.Plugin` is set, `server.volumes`/`server.volumeMounts`, and with the
+default seal plugin delivery the image volume and `server.extraInitContainers`);
 `Config.EgressDomains()` (sorted, deduplicated: every plugin's
 `EgressHosts`, AWS STS for any `RequiresSTS` plugin, and the seal's KMS
 host); `Config.RetrySidecarContainer(RetrySidecarOptions)` (below);

@@ -42,6 +42,7 @@ Last reviewed: 2026-09-30.
 | per-host Cloudflare certificate packs, Total TLS | LIVE | |
 | Cloudflare root token and least-privilege children | LIVE | a legacy user token is being retired in two stages |
 | storage credentials broker | LIVE | |
+| OpenBAO 2.7 seal as an external KMS plugin (`serverpreset.SealPlugin`) | PARTIAL | the preset, its validation and a Docker rehearsal (no route out, KMS emulated: cold start, restarts, three-voter roll 2.6.3 to 2.7.0, revert of a standby) are delivered in this library; the rolled-out clusters still run the built-in seal on 2.6.x, and the pins, the image-volume requirement and the roll are the consuming estate's to adopt ([server.md](../server.md#runbook-26-to-27-with-the-kms-seal-plugin)) |
 | customer and machine exposures | PLANNED | |
 | gateway to backend with a client certificate (`BackendTLSPolicy`) | PLANNED | adopted capability, not used on the application hop; gateway identity NOT decided |
 
@@ -121,6 +122,14 @@ hand. They are marked in place and listed here so a reviewer can close them.
 ## Changes
 
 Newest first. One line per delivery; link the pull request once merged.
+
+- **2026-09-30** -- `pkg/serverpreset` supports the OpenBAO 2.7 seal as an
+  external KMS plugin: `Seal.Plugin` renders the `plugin "kms"` block and an
+  init container plus image volume that install a digest-pinned binary before
+  the server starts (no pod egress, no runtime download); the 2.6 rendering is
+  unchanged. Proven by `just rehearse-seal-plugin`; runbook in
+  [server.md](../server.md#runbook-26-to-27-with-the-kms-seal-plugin). No
+  cluster has been moved yet.
 
 - **2026-09-29** -- phase 0 database spikes recorded (all GO; findings in
   [databases.md](databases.md#the-per-database-ca)): client CA without a key,
