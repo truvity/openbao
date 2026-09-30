@@ -302,6 +302,10 @@ touches a key (see Status); it does not serve an estate on another cloud.
   per-environment roles, and per-environment identity CAs
 - [docs/custody.md](docs/custody.md) — the root key's policy, roles and
   Sign alarm
+- [docs/builder.md](docs/builder.md) — `pkg/builder`, the declarative
+  contracts that derive the rest of the desired state (logins, SSH and
+  host-certificate engines, groups, project namespaces, root jobs) from an
+  estate's rows, in a stable order
 - [docs/model.md](docs/model.md) — OpenBAO's desired state per engine,
   its apply, and the resource names an existing configuration adopts
 - [docs/integrations/access-roster.md](docs/integrations/access-roster.md)

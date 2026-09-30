@@ -171,7 +171,7 @@ before them (the hierarchy and issuance), and nothing else assumes them;
 Mechanism pages this directory builds on, and does not repeat:
 [ceremony.md](../ceremony.md), [custody.md](../custody.md),
 [pki.md](../pki.md), [approver.md](../approver.md), [model.md](../model.md),
-[server.md](../server.md), [integrations/access-roster.md](../integrations/access-roster.md),
+[builder.md](../builder.md), [server.md](../server.md), [integrations/access-roster.md](../integrations/access-roster.md),
 and the design records in [decisions/](../decisions/README.md).
 
 ## Contributing: a trust path change updates this directory
