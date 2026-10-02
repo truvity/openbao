@@ -78,7 +78,7 @@ server:
           tls_key_file    = "/openbao/userconfig/openbao-tls/tls.key"
         }
         listener "tcp" {
-          address       = "[::]:8202"
+          address       = "[::]:9101"
           tls_cert_file = "/openbao/userconfig/openbao-tls/tls.crt"
           tls_key_file  = "/openbao/userconfig/openbao-tls/tls.key"
           telemetry {

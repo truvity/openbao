@@ -134,9 +134,9 @@ func TestOpenBAOServerMetricsKeepEveryIngressRule(t *testing.T) {
 
 	for _, rule := range with {
 		if rule.Scraper {
-			assert.Equal(t, []int{8202}, rule.Ports, "the scraper reaches the metrics port only")
+			assert.Equal(t, []int{9101}, rule.Ports, "the scraper reaches the metrics port only")
 		} else {
-			assert.NotContains(t, rule.Ports, 8202, "no other rule opens the metrics port")
+			assert.NotContains(t, rule.Ports, 9101, "no other rule opens the metrics port")
 		}
 	}
 }

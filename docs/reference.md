@@ -157,7 +157,7 @@ requires and does not render.
 | `enabled` | `false` | Render the part. |
 | `podMonitor.enabled` | `true` | The PodMonitor. |
 | `podMonitor.name`, `.namespace`, `.labels`, `.annotations` | `openbao-server`, release namespace | The object. The CA Secret (`server.tlsSecretName`) must be in its namespace. |
-| `port` | `8202` | The metrics listener's port, the one `networkPolicy.serverIngress` admits the scraper to. Must be the port `Config.Telemetry.MetricsAddress` renders and differ from `server.apiPort` and `server.clusterPort`. |
+| `port` | `9101` | The metrics listener's port, the one `networkPolicy.serverIngress` admits the scraper to. Must be the port `Config.Telemetry.MetricsAddress` renders and differ from `server.apiPort` and `server.clusterPort`. |
 | `podMonitor.port` | `metrics` | The NAME of the container port the metrics listener is on; the server pods must declare it. |
 | `podMonitor.interval`, `.scrapeTimeout` | `30s`, `10s` | |
 | `scraper` | `[]` | NetworkPolicyPeer entries admitted to the metrics port, and only that port, by `networkPolicy.serverIngress`, in addition to every other rule. |

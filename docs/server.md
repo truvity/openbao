@@ -437,7 +437,7 @@ listener "tcp" {                      # the API listener: no telemetry block at 
   # ...
 }
 listener "tcp" {                      # Telemetry.MetricsAddress
-  address       = "[::]:8202"
+  address       = "[::]:9101"
   tls_cert_file = "..."               # the API listener's certificate
   tls_key_file  = "..."
   telemetry {
@@ -455,14 +455,15 @@ neither option, so on port 8200 the metrics need a token like any other path.
 that writes its own configuration; `HCL()` includes both. `MetricsAddress` must
 differ from the API and cluster addresses; the metrics listener has no
 `cluster_address` (Raft stays on the API listener's). The pods need a container
-port for it, named `metrics` for the chart's PodMonitor. The scrape verifies the
+port for it, named `metrics` for the chart's PodMonitor (the upstream chart's
+`server.extraPorts`; not 8202, which that chart already declares for replication). The scrape verifies the
 certificate like any client, from the CA in the serving certificate's Secret and
 the name in `server.tlsServerName`; nothing here skips verification.
 
 `openbao-ops` consumes it with `serverMetrics.enabled`: a `PodMonitor` for the
 pods in `server.podLabels`; an ingress rule for the scraper in
 `networkPolicy.serverIngress` (`serverMetrics.scraper`) that opens
-`serverMetrics.port` (8202) and no other port to it, added to the client, peer
+`serverMetrics.port` (9101) and no other port to it, added to the client, peer
 and job rules and removing none of them; and `serverMetrics.alerts`, a
 `VMRule`, `PrometheusRule` or plain rules file. The alerts are sealed, no active
 node, fewer than three healthy Raft voters, a follower behind the leader, audit

@@ -892,7 +892,8 @@ serverMetrics:
   # admits the scraper to. It must be the port of the listener serverpreset
   # renders (Telemetry.MetricsAddress), and differ from server.apiPort and
   # server.clusterPort.
-  port: 8202
+  # 9101, not 8202: the upstream openbao chart already declares 8202 (replication).
+  port: 9101
 
   podMonitor:
     enabled: true
