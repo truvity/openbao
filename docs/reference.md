@@ -145,6 +145,27 @@ Every part is off until enabled, so one install can carry any subset.
 | `alert.alertmanager.runbook` | `""` | The `runbook` annotation: where the way back is written down. |
 | `alert.alertmanager.image` | `curlimages/curl:8.22.0` | This preset's image, because `alert.image` defaults to the AWS CLI. Anything with a POSIX shell and curl does. |
 
+### serverMetrics
+
+The server's own metrics: a PodMonitor, the scraper's rule in the server's
+ingress policy, and alerts. See [server.md](server.md#metrics) for the
+server-side settings that make `/v1/sys/metrics` answer, which this part
+requires and does not render.
+
+| Value | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Render the part. |
+| `podMonitor.enabled` | `true` | The PodMonitor. |
+| `podMonitor.name`, `.namespace`, `.labels`, `.annotations` | `openbao-server`, release namespace | The object. The CA Secret (`server.tlsSecretName`) must be in its namespace. |
+| `podMonitor.port` | `https` | The NAME of the container port the listener is on. |
+| `podMonitor.interval`, `.scrapeTimeout` | `30s`, `10s` | |
+| `scraper` | `[]` | NetworkPolicyPeer entries admitted to the API port by `networkPolicy.serverIngress`, in addition to every other rule. |
+| `alerts.enabled` | `false` | Render the rules. |
+| `alerts.format` | `vmrule` | `vmrule`, `prometheusrule` or `configmap`. |
+| `alerts.name`, `.namespace`, `.labels`, `.annotations`, `.ruleLabels`, `.groupName`, `.interval` | | As `openbao-consumers`' alerts. |
+| `alerts.selector` | `""` | Extra matchers added to every selector after `namespace="<release namespace>"`. |
+| `alerts.rules.<rule>` | | `enabled`, `for`, `severity`, `labels`, `annotations`; rules: `sealed` (5m, critical), `noActiveNode` (3m, critical), `raftUnhealthy` (10m, warning, `minHealthyVoters: 3`), `raftCommitLag` (10m, warning, `maxIndexDelta: 500`), `auditFailures` (2m, critical), `highLatency` (15m, warning, `thresholdMilliseconds: 1000`), `scrapeDown` (10m, warning), `metricsAbsent` (15m, warning). |
+
 ### pluginCatalog
 
 Are the plugins [`pkg/serverpreset`](#pkgserverpreset) declares actually

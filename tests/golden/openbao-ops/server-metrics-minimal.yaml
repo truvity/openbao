@@ -1,0 +1,32 @@
+---
+# Source: openbao-ops/templates/server-metrics.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: openbao-server
+  namespace: default
+  labels:
+    app.kubernetes.io/name: openbao-server
+    app.kubernetes.io/part-of: openbao
+spec:
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      component: server
+  podMetricsEndpoints:
+    - port: https
+      scheme: https
+      path: /v1/sys/metrics
+      params:
+        format:
+          - prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      tlsConfig:
+        ca:
+          secret:
+            name: openbao-tls
+            key: ca.crt

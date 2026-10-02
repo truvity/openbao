@@ -69,8 +69,9 @@ func TestRestoreCheckSealPluginValues(t *testing.T) {
 					Spec struct {
 						Template struct {
 							Spec struct {
-								InitContainers []map[string]any `yaml:"initContainers"`
-								Volumes        []map[string]any `yaml:"volumes"`
+								NodeSelector   map[string]string `yaml:"nodeSelector"`
+								InitContainers []map[string]any  `yaml:"initContainers"`
+								Volumes        []map[string]any  `yaml:"volumes"`
 							} `yaml:"spec"`
 						} `yaml:"template"`
 					} `yaml:"spec"`
@@ -112,6 +113,9 @@ func TestRestoreCheckSealPluginValues(t *testing.T) {
 	assert.Contains(t, scratch, `plugin "kms" "awskms"`)
 	assert.Contains(t, scratch, `command = "kms-awskms-v0.1.0"`)
 	assert.Contains(t, scratch, seal[:len(seal)/2], "the seal stanza is the server's own")
+
+	assert.Equal(t, map[string]string{"kubernetes.io/arch": "arm64"}, job.Spec.JobTemplate.Spec.Template.Spec.NodeSelector,
+		"the pod runs on the architecture the plugin checksum belongs to")
 
 	var names []string
 	for _, init := range job.Spec.JobTemplate.Spec.Template.Spec.InitContainers {

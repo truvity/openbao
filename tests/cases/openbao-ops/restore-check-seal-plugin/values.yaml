@@ -20,6 +20,9 @@ restoreCheck:
     }
   sealPlugin:
     directory: /openbao/plugins
+    # The checksum the init container would verify belongs to this
+    # architecture; the pod is pinned to it.
+    arch: arm64
     sourceVolume:
       name: seal-plugin-src
       image:

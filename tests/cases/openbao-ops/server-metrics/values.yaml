@@ -1,0 +1,33 @@
+# The server's metrics: the PodMonitor, the alerts as a VMRule and the
+# scraper's own rule in the server's ingress policy. The policy is on, as it
+# is wherever the metrics are: the scraper rule must ADD to the client,
+# peer and job rules, never replace them.
+namespace: openbao
+server:
+  tlsServerName: openbao.example.internal
+networkPolicy:
+  enabled: true
+  clientCidrs:
+    - 10.0.0.0/16
+snapshot:
+  enabled: true
+  upload:
+    s3:
+      enabled: true
+      bucket: example-backups
+      region: eu-example-1
+serverMetrics:
+  enabled: true
+  scraper:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: metrics-agent
+  alerts:
+    enabled: true
+    format: vmrule
+    ruleLabels:
+      team: platform
+    selector: 'k8s_cluster_name="example"'

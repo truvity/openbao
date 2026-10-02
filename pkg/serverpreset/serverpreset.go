@@ -48,6 +48,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // DefaultPluginDirectory is where the emptyDir this package's Values
@@ -248,6 +249,27 @@ type (
 		TLSKeyFile     string
 	}
 
+	// Telemetry is what makes the server's metrics scrapeable: the
+	// top-level `telemetry` stanza that keeps Prometheus-format metrics,
+	// and the listener's own `telemetry` block that lets the scraper read
+	// /v1/sys/metrics without a token (the one path that setting covers).
+	// charts/openbao-ops' serverMetrics scrapes it; see docs/server.md,
+	// "Metrics".
+	Telemetry struct {
+		// PrometheusRetentionTime is how long the server keeps metrics
+		// for a Prometheus-format read, as a Go duration ("24h"). Empty:
+		// [DefaultPrometheusRetention]. Zero is refused: the server then
+		// answers a Prometheus-format read with an error, not with
+		// metrics.
+		PrometheusRetentionTime string
+		// UnauthenticatedMetricsAccess sets unauthenticated_metrics_access
+		// on the listener, so /v1/sys/metrics answers without a token.
+		// The path is on the API port: whoever can reach the API can read
+		// it, so the network policy is the only gate. The metrics carry
+		// counts and timings, never a value or a path.
+		UnauthenticatedMetricsAccess bool
+	}
+
 	// Raft is the storage backend: one voter per pod, retry-joining every
 	// peer including itself (OpenBAO ignores a retry_join to its own
 	// address once it holds a peer set).
@@ -310,6 +332,11 @@ type (
 		Seal     Seal
 		Listener Listener
 		Raft     Raft
+		// Telemetry, when set, renders the `telemetry` stanza (with
+		// disable_hostname, so a series is named by its pod label and not
+		// by a hostname prefix) and, with UnauthenticatedMetricsAccess,
+		// the listener's telemetry block. Nil renders neither.
+		Telemetry *Telemetry
 		// ExternalStorage says the storage backend is configured outside
 		// this package (another backend, or a stanza the caller appends).
 		// [Config.HCL] and [Config.Values] refuse a Config with no Raft peers
@@ -485,6 +512,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf(
 			`DownloadBehavior must be "fail" or "continue", not %q — `+
 				`the server itself accepts and silently ignores any other value, including "warn"`, behavior)
+	}
+
+	if c.Telemetry != nil {
+		if err := c.Telemetry.validate(); err != nil {
+			return err
+		}
 	}
 
 	names := map[string]bool{}
@@ -846,9 +879,76 @@ func (c *Config) ListenerHCL() string {
 	fmt.Fprintf(&b, "  cluster_address = %q\n", l.ClusterAddress)
 	fmt.Fprintf(&b, "  tls_cert_file   = %q\n", l.TLSCertFile)
 	fmt.Fprintf(&b, "  tls_key_file    = %q\n", l.TLSKeyFile)
+
+	if block := c.ListenerTelemetryHCL(); block != "" {
+		b.WriteString(block)
+	}
+
 	fmt.Fprintf(&b, "}\n")
 
 	return b.String()
+}
+
+// DefaultPrometheusRetention is the retention a Telemetry with no
+// PrometheusRetentionTime gets. A scrape every 30s needs seconds of it; a
+// day leaves room for a scraper that was down for a while to catch up on
+// the gauges the server holds.
+const DefaultPrometheusRetention = "24h"
+
+func (t *Telemetry) retention() string {
+	if t.PrometheusRetentionTime == "" {
+		return DefaultPrometheusRetention
+	}
+
+	return t.PrometheusRetentionTime
+}
+
+func (t *Telemetry) validate() error {
+	d, err := time.ParseDuration(t.retention())
+	if err != nil {
+		return fmt.Errorf("telemetry: PrometheusRetentionTime %q is not a duration (\"24h\"): %w", t.PrometheusRetentionTime, err)
+	}
+
+	if d <= 0 {
+		return fmt.Errorf("telemetry: PrometheusRetentionTime %q must be positive — with zero the server refuses a Prometheus-format read", t.PrometheusRetentionTime)
+	}
+
+	return nil
+}
+
+// TelemetryHCL renders the top-level `telemetry` stanza, or "" without a
+// Telemetry. disable_hostname keeps a hostname out of every metric name: the
+// scraper labels a series by pod already, and a hostname prefix would make
+// each pod's series a different metric.
+func (c *Config) TelemetryHCL() (string, error) {
+	if c.Telemetry == nil {
+		return "", nil
+	}
+
+	if err := c.Telemetry.validate(); err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "telemetry {\n")
+	fmt.Fprintf(&b, "  prometheus_retention_time = %q\n", c.Telemetry.retention())
+	fmt.Fprintf(&b, "  disable_hostname          = true\n")
+	fmt.Fprintf(&b, "}\n")
+
+	return b.String(), nil
+}
+
+// ListenerTelemetryHCL renders the `telemetry` block that belongs INSIDE the
+// listener stanza (indented two spaces, to paste beside address and the
+// certificate files), or "" unless Telemetry.UnauthenticatedMetricsAccess
+// is set. The setting opens /v1/sys/metrics and nothing else.
+func (c *Config) ListenerTelemetryHCL() string {
+	if c.Telemetry == nil || !c.Telemetry.UnauthenticatedMetricsAccess {
+		return ""
+	}
+
+	return "  telemetry {\n    unauthenticated_metrics_access = true\n  }\n"
 }
 
 // RaftHCL renders the `storage "raft" { ... }` stanza with one retry_join
@@ -902,6 +1002,13 @@ func (c *Config) HCL() (string, error) {
 	}
 
 	b.WriteString(c.ListenerHCL())
+
+	telemetry, err := c.TelemetryHCL()
+	if err != nil {
+		return "", err
+	}
+
+	b.WriteString(telemetry)
 
 	if raft := c.RaftHCL(); raft != "" {
 		b.WriteString(raft)

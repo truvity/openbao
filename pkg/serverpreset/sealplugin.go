@@ -140,6 +140,11 @@ const RestoreCheckPluginVolume = "seal-plugin"
 //
 //   - sealConfig: SealHCL, the `seal` stanza and the `plugin "kms"` block;
 //   - sealPlugin.directory: plugin_directory (which the chart writes);
+//   - with DeliveryInitCopy, sealPlugin.arch: Config.Arch, the architecture
+//     the init container's checksum belongs to. The chart pins the pod to
+//     it (nodeSelector kubernetes.io/arch): the image volume resolves to
+//     the node's architecture, so a pod on another one would be verified
+//     against the wrong binary's checksum and refuse it;
 //   - with DeliveryInitCopy, sealPlugin.initContainer and
 //     sealPlugin.sourceVolume: exactly the init container and image volume
 //     the server pod gets (SealPluginInitContainer, SealPluginSourceVolume),
@@ -165,6 +170,7 @@ func (c *Config) RestoreCheckValues() (map[string]any, error) {
 			return nil, err
 		}
 
+		plugin["arch"] = c.Arch
 		plugin["initContainer"] = init
 		plugin["sourceVolume"] = c.SealPluginSourceVolume()
 	}

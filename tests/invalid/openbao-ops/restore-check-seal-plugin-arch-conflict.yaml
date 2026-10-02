@@ -1,0 +1,25 @@
+# A nodeSelector that disagrees with sealPlugin.arch would put the pod where the checksum fails.
+
+restoreCheck:
+  enabled: true
+  loginOnly: true
+  canary: {enabled: false}
+  sealConfig: 'seal "awskms" {}'
+  nodeSelector: {kubernetes.io/arch: amd64}
+  fetch:
+    s3: {enabled: true, bucket: b, region: r}
+  sealPlugin:
+    directory: /openbao/plugins
+    arch: arm64
+    sourceVolume:
+      name: seal-plugin-src
+      image:
+        reference: registry.example.com/p@sha256:fe9fb94872048c9474156c044ea8852bb5c2e968fc9304a3725e4d434b488541
+    initContainer:
+      name: seal-plugin-install
+      image: registry.example.com/openbao/openbao:2.7.0
+      command: ["/bin/sh", "-c"]
+      args: ["true"]
+      volumeMounts:
+        - {name: seal-plugin, mountPath: /openbao/plugins}
+        - {name: seal-plugin-src, mountPath: /seal-plugin-src}

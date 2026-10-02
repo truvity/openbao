@@ -1,0 +1,488 @@
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-ingress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - port: 8200
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+              component: server
+      ports:
+        - port: 8200
+          protocol: TCP
+        - port: 8201
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: metrics-agent
+      ports:
+        - port: 8200
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao-snapshot
+      ports:
+        - port: 8200
+          protocol: TCP
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-snapshot
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-snapshot
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "17 */6 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-snapshot
+        spec:
+          serviceAccountName: openbao-snapshot
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: snapshot
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  date -u +%Y%m%dT%H%M%SZ > /work/taken-at
+                  BAO_TOKEN="$(bao write -field=token auth/jwt/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
+                  export BAO_TOKEN
+                  bao operator raft snapshot save /work/openbao.snap
+                  bao token revoke -self
+                  mkdir /work/check
+                  tar -xzf /work/openbao.snap -C /work/check
+                  (cd /work/check && sha256sum -c SHA256SUMS)
+                  rm -rf /work/check
+                  echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
+              env:
+                - name: BAO_ADDR
+                  value: https://openbao-active.openbao.svc:8200
+                - name: BAO_CACERT
+                  value: /tls/ca.crt
+                - name: BAO_TLS_SERVER_NAME
+                  value: "openbao.example.internal"
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  key="raft/$(cat /work/taken-at).snap"
+                  aws s3 cp /work/openbao.snap "s3://example-backups/${key}" --checksum-algorithm SHA256 --no-progress
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-snapshot-weekly
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "47 3 * * 0"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-snapshot
+        spec:
+          serviceAccountName: openbao-snapshot
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: snapshot
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  date -u +%Y%m%dT%H%M%SZ > /work/taken-at
+                  BAO_TOKEN="$(bao write -field=token auth/jwt/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
+                  export BAO_TOKEN
+                  bao operator raft snapshot save /work/openbao.snap
+                  bao token revoke -self
+                  mkdir /work/check
+                  tar -xzf /work/openbao.snap -C /work/check
+                  (cd /work/check && sha256sum -c SHA256SUMS)
+                  rm -rf /work/check
+                  echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
+              env:
+                - name: BAO_ADDR
+                  value: https://openbao-active.openbao.svc:8200
+                - name: BAO_CACERT
+                  value: /tls/ca.crt
+                - name: BAO_TLS_SERVER_NAME
+                  value: "openbao.example.internal"
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  key="weekly/$(cat /work/taken-at).snap"
+                  aws s3 cp /work/openbao.snap "s3://example-backups/${key}" --checksum-algorithm SHA256 --no-progress
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+
+---
+# Source: openbao-ops/templates/server-metrics.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: openbao-server
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-server
+    app.kubernetes.io/part-of: openbao
+spec:
+  namespaceSelector:
+    matchNames:
+      - openbao
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      component: server
+  podMetricsEndpoints:
+    - port: https
+      scheme: https
+      path: /v1/sys/metrics
+      params:
+        format:
+          - prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      tlsConfig:
+        ca:
+          secret:
+            name: openbao-tls
+            key: ca.crt
+        serverName: openbao.example.internal
+
+---
+# Source: openbao-ops/templates/server-alerts.yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: openbao-ops-server-alerts
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-server-alerts
+    app.kubernetes.io/part-of: openbao
+spec:
+  groups:
+  - name: openbao-server
+    rules:
+    - alert: OpenBAOSealed
+      annotations:
+        description: 'OpenBAO pod {{ $labels.pod }} has been sealed since before this
+          alert''s window and serves nothing. With auto-unseal it should unseal on start:
+          look at the pod''s log for the seal''s error (a KMS permission, an unreachable
+          endpoint, a missing plugin binary). Runbook: docs/server.md, "The seal as
+          a plugin".'
+        summary: OpenBAO pod {{ $labels.pod }} is sealed
+      expr: vault_core_unsealed{namespace="openbao",k8s_cluster_name="example"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        team: platform
+    - alert: OpenBAONoActiveNode
+      annotations:
+        description: 'No OpenBAO pod reports itself active: no leader is elected, or
+          none can be scraped. Every client is failing. Check for a lost Raft quorum
+          (kubectl -n openbao get pods; the pods'' log for "election") and for sealed
+          pods.'
+        summary: OpenBAO has no active node
+      expr: (sum(vault_core_active{namespace="openbao",k8s_cluster_name="example"})
+        or vector(0)) < 1
+      for: 3m
+      labels:
+        severity: critical
+        team: platform
+    - alert: OpenBAORaftUnhealthy
+      annotations:
+        description: 'Autopilot (read from the active node) counts fewer than 3 healthy
+          voters, or reports the cluster unhealthy. One more failure may cost quorum.
+          See which node: bao operator raft autopilot state (needs a token); then that
+          pod''s log and storage.'
+        summary: OpenBAO has fewer than 3 healthy Raft voters
+      expr: count(vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example"}
+        == 1) < 3 or min(vault_autopilot_healthy{namespace="openbao",k8s_cluster_name="example"})
+        < 1
+      for: 10m
+      labels:
+        severity: warning
+        team: platform
+    - alert: OpenBAORaftCommitLag
+      annotations:
+        description: Pod {{ $labels.pod }} has applied {{ $value }} fewer Raft log entries
+          than the leader for longer than this alert's window. A follower that cannot
+          keep up is a slow disk, a network problem between pods, or a node under memory
+          pressure; it cannot take over cleanly while it lags.
+        summary: OpenBAO pod {{ $labels.pod }} is {{ $value }} Raft log entries behind
+          the leader
+      expr: vault_raft_storage_follower_applied_index_delta{namespace="openbao",k8s_cluster_name="example"}
+        > 500
+      for: 10m
+      labels:
+        severity: warning
+        team: platform
+    - alert: OpenBAOAuditLogFailures
+      annotations:
+        description: An audit log request or response failed on pod {{ $labels.pod }}.
+          OpenBAO refuses the request it cannot audit, so clients see errors and no
+          audit trail exists for them. Look at the audit device the pod declares (a
+          stdout device fails when the log pipe is blocked) and at the pod's log.
+        summary: OpenBAO audit devices are failing on {{ $labels.pod }}
+      expr: increase(vault_audit_log_request_failure{namespace="openbao",k8s_cluster_name="example"}[5m])
+        > 0 or increase(vault_audit_log_response_failure{namespace="openbao",k8s_cluster_name="example"}[5m])
+        > 0
+      for: 2m
+      labels:
+        severity: critical
+        team: platform
+    - alert: OpenBAOHighRequestLatency
+      annotations:
+        description: 'The 99th percentile of non-login request handling time on pod
+          {{ $labels.pod }} has been above this alert''s threshold for longer than its
+          window. Suspects: storage latency (the Raft disk), a burst of large requests,
+          an audit device that blocks, or CPU throttling at the pod''s limit.'
+        summary: OpenBAO p99 request latency on {{ $labels.pod }} is {{ $value | printf
+          "%.0f" }} ms
+      expr: vault_core_handle_request{namespace="openbao",k8s_cluster_name="example",quantile="0.99"}
+        > 1000
+      for: 15m
+      labels:
+        severity: warning
+        team: platform
+    - alert: OpenBAOMetricsDown
+      annotations:
+        description: The scrape of pod {{ $labels.pod }} fails, so its alerts cannot
+          fire. The pod is down, its listener's certificate no longer verifies against
+          the CA the scrape reads, or the network policy no longer admits the scraper.
+        summary: OpenBAO pod {{ $labels.pod }} cannot be scraped
+      expr: up{namespace="openbao",k8s_cluster_name="example",job=~".+/openbao-server"}
+        == 0
+      for: 10m
+      labels:
+        severity: warning
+        team: platform
+    - alert: OpenBAOMetricsAbsent
+      annotations:
+        description: 'No vault_core_unsealed series exists for namespace openbao: every
+          OpenBAO alert is blind. The server''s telemetry (unauthenticated_metrics_access
+          on the listener) may be off, or nothing scrapes the pods.'
+        summary: No OpenBAO metrics are being scraped
+      expr: absent(vault_core_unsealed{namespace="openbao",k8s_cluster_name="example"})
+      for: 15m
+      labels:
+        severity: warning
+        team: platform

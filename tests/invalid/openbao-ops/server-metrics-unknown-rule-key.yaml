@@ -1,0 +1,8 @@
+# A typo in a rule's key must fail the schema, not silently keep a default.
+serverMetrics:
+  enabled: true
+  alerts:
+    enabled: true
+    rules:
+      sealed:
+        enbled: false
