@@ -17,7 +17,7 @@ spec:
       app.kubernetes.io/name: openbao
       component: server
   podMetricsEndpoints:
-    - port: https
+    - port: metrics
       scheme: https
       path: /v1/sys/metrics
       params:

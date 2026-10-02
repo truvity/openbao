@@ -70,7 +70,7 @@
 {{- $rules = append $rules (dict "cfg" $r.metricsAbsent "alert" "OpenBAOMetricsAbsent"
   "expr" (printf `absent(vault_core_unsealed{%s})` $s)
   "summary" `No OpenBAO metrics are being scraped`
-  "description" (printf `No vault_core_unsealed series exists for namespace %s: every OpenBAO alert is blind. The server's telemetry (unauthenticated_metrics_access on the listener) may be off, or nothing scrapes the pods.` $ns)) }}
+  "description" (printf `No vault_core_unsealed series exists for namespace %s: every OpenBAO alert is blind. The server's metrics listener (metrics_only and unauthenticated_metrics_access) may be off, or nothing scrapes the pods.` $ns)) }}
 {{- end }}
 {{- if not $rules }}
 {{- fail "serverMetrics.alerts.enabled renders no rule: every serverMetrics.alerts.rules.*.enabled is off, and an empty rule group is refused by the rulers this chart renders for" }}

@@ -876,16 +876,23 @@ pluginCatalog:
 # ---------------------------------------------------------------------------
 # The server's own metrics: a PodMonitor, and alerts on what they say.
 #
-# The metrics are served by the API listener itself at /v1/sys/metrics, and
-# answer without a token only when that listener's telemetry block sets
-# unauthenticated_metrics_access (and the server's telemetry stanza sets
-# prometheus_retention_time): serverpreset renders both (docs/server.md,
-# "Metrics"). Without them the scrape gets 403 and every alert here is blind.
+# The metrics are served by a listener of their own at /v1/sys/metrics: it
+# sets metrics_only (every other path is refused) and
+# unauthenticated_metrics_access (no token), and the API listener sets
+# neither. The server's telemetry stanza sets prometheus_retention_time.
+# serverpreset renders all of it (docs/server.md, "Metrics"). Without it the
+# scrape gets 403 or a refused connection and every alert here is blind.
 #
 # Both objects need a CRD the cluster may not have, so the whole part is off
 # until enabled.
 serverMetrics:
   enabled: false
+
+  # The metrics listener's port: the one port networkPolicy.serverIngress
+  # admits the scraper to. It must be the port of the listener serverpreset
+  # renders (Telemetry.MetricsAddress), and differ from server.apiPort and
+  # server.clusterPort.
+  port: 8202
 
   podMonitor:
     enabled: true
@@ -895,17 +902,17 @@ serverMetrics:
     namespace: ""
     labels: {}
     annotations: {}
-    # The NAME of the container port the listener is on.
-    port: https
+    # The NAME of the container port the metrics listener is on (serverMetrics.
+    # port). The server pods must declare a container port of this name.
+    port: metrics
     interval: 30s
     scrapeTimeout: 10s
 
   # Who may scrape, for networkPolicy.serverIngress: one ingress rule on the
-  # API port for these peers (raw NetworkPolicyPeer entries, e.g. a
-  # namespaceSelector with a podSelector for the metrics agent). The metrics
-  # share the API port, so this is NOT a narrower door than the client
-  # ranges: it is the explicit one, which keeps the scrape working if
-  # clientCidrs is ever narrowed. Empty: no rule.
+  # metrics port (serverMetrics.port, and only that port) for these peers
+  # (raw NetworkPolicyPeer entries, e.g. a namespaceSelector with a
+  # podSelector for the metrics agent). The API and cluster ports stay as
+  # the other rules leave them: the scraper gets neither. Empty: no rule.
   scraper: []
 
   alerts:

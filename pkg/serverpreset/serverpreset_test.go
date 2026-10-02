@@ -341,28 +341,58 @@ func TestTelemetryRendersTheStanzaAndTheListenerBlock(t *testing.T) {
 			TLSCertFile: "/tls/tls.crt", TLSKeyFile: "/tls/tls.key",
 		},
 		ExternalStorage: true,
-		Telemetry:       &serverpreset.Telemetry{UnauthenticatedMetricsAccess: true},
+		Telemetry:       &serverpreset.Telemetry{MetricsAddress: "[::]:8202"},
 	}
 
 	stanza, err := c.TelemetryHCL()
 	require.NoError(t, err)
 	assert.Equal(t, "telemetry {\n  prometheus_retention_time = \"24h\"\n  disable_hostname          = true\n}\n", stanza)
 
-	assert.Equal(t, "  telemetry {\n    unauthenticated_metrics_access = true\n  }\n", c.ListenerTelemetryHCL())
+	assert.Equal(t, `listener "tcp" {
+  address       = "[::]:8202"
+  tls_cert_file = "/tls/tls.crt"
+  tls_key_file  = "/tls/tls.key"
+  telemetry {
+    metrics_only                   = true
+    unauthenticated_metrics_access = true
+  }
+}
+`, c.MetricsListenerHCL())
 
 	hcl, err := c.HCL()
 	require.NoError(t, err)
 
-	// The listener's block is inside the listener, the stanza outside it.
-	_, afterOpen, found := strings.Cut(hcl, `listener "tcp" {`)
-	require.True(t, found)
+	// Two listeners: the API's carries no telemetry block at all, the
+	// metrics one carries the cluster_address of nothing.
+	parts := strings.Split(hcl, `listener "tcp" {`)
+	require.Len(t, parts, 3)
 
-	listener, _, found := strings.Cut(afterOpen, "\n}\n")
+	api, _, found := strings.Cut(parts[1], "\n}\n")
 	require.True(t, found)
+	assert.Contains(t, api, `cluster_address = "[::]:8201"`)
+	assert.NotContains(t, api, "unauthenticated_metrics_access")
+	assert.NotContains(t, api, "metrics_only")
 
-	assert.Contains(t, listener, "unauthenticated_metrics_access = true")
-	assert.NotContains(t, listener, "prometheus_retention_time")
+	metrics, _, found := strings.Cut(parts[2], "\n}\n")
+	require.True(t, found)
+	assert.Contains(t, metrics, "metrics_only                   = true")
+	assert.Contains(t, metrics, "unauthenticated_metrics_access = true")
+	assert.NotContains(t, metrics, "cluster_address")
+	assert.NotContains(t, metrics, "prometheus_retention_time")
 	assert.Contains(t, hcl, stanza)
+}
+
+func TestTelemetryMetricsAddressNeedsItsOwnPort(t *testing.T) {
+	c := serverpreset.Config{
+		Arch:            "arm64",
+		Listener:        serverpreset.Listener{Address: "[::]:8200", ClusterAddress: "[::]:8201"},
+		ExternalStorage: true,
+		Telemetry:       &serverpreset.Telemetry{MetricsAddress: "[::]:8200"},
+	}
+	require.ErrorContains(t, c.Validate(), "port of its own")
+
+	c.Telemetry.MetricsAddress = "[::]:8201"
+	require.ErrorContains(t, c.Validate(), "port of its own")
 }
 
 func TestTelemetryOffRendersNothing(t *testing.T) {
@@ -371,11 +401,11 @@ func TestTelemetryOffRendersNothing(t *testing.T) {
 	stanza, err := c.TelemetryHCL()
 	require.NoError(t, err)
 	assert.Empty(t, stanza)
-	assert.Empty(t, c.ListenerTelemetryHCL())
+	assert.Empty(t, c.MetricsListenerHCL())
 
 	// Retention alone does not open the endpoint.
 	c.Telemetry = &serverpreset.Telemetry{PrometheusRetentionTime: "1h"}
-	assert.Empty(t, c.ListenerTelemetryHCL())
+	assert.Empty(t, c.MetricsListenerHCL())
 
 	stanza, err = c.TelemetryHCL()
 	require.NoError(t, err)

@@ -2,17 +2,20 @@
 {{- $m := .Values.serverMetrics }}
 {{- $pm := $m.podMonitor }}
 {{- $ns := include "ops.namespace" . }}
+{{- if or (eq (int $m.port) (int $.Values.server.apiPort)) (eq (int $m.port) (int $.Values.server.clusterPort)) }}
+{{- fail "serverMetrics.port must differ from server.apiPort and server.clusterPort — the metrics listener is a port of its own, so the scraper can be admitted to it and to nothing else" }}
+{{- end }}
 {{- if $pm.enabled }}
 {{- if not $.Values.server.tlsSecretName }}
 {{- fail "serverMetrics.podMonitor needs server.tlsSecretName — the scrape verifies the listener's certificate against the CA in that Secret, and the chart will not turn verification off" }}
 {{- end }}
 ---
-{{- /* The server's own metrics, scraped from the SAME listener the API is
-       served on: /v1/sys/metrics, which answers without a token once the
-       listener's telemetry block sets unauthenticated_metrics_access (the
-       server preset renders it, docs/server.md "Metrics"). No second port
-       exists, so the scrape verifies the listener's certificate like any
-       client: the CA comes from the serving certificate's Secret, which
+{{- /* The server's own metrics, scraped from the metrics listener: a second
+       listener on serverMetrics.port that serves /v1/sys/metrics and
+       nothing else, without a token (metrics_only and
+       unauthenticated_metrics_access; the server preset renders it,
+       docs/server.md "Metrics"). It shares the API listener's certificate,
+       so the scrape verifies it like any client: the CA comes from the serving certificate's Secret, which
        lives in this namespace because a scrape object reads its Secrets
        from its own. A PodMonitor, portable across a Prometheus-style
        operator and VictoriaMetrics' (which converts it). A converted
