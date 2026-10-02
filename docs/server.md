@@ -457,6 +457,14 @@ log failures, p99 request latency, a scrape target down, and no metrics at all.
 A stale or failed backup is not among them: `snapshotAge` and `jobSuccess`
 already alert on it from the store itself.
 
+A gauge the server stops updating is still exposed until
+`prometheus_retention_time` passes. Autopilot's gauges are set only by the
+active node and a follower's applied-index delta only by a follower, so after a
+leadership change the former holder keeps exporting its last value for hours.
+The rules that read them are joined to `vault_core_active` (which each pod sets
+itself), so only the pod that currently owns the gauge counts; a dashboard
+reading them must do the same.
+
 A converted `VMPodScrape` or `VMRule` is not always updated when the source
 `PodMonitor` or `PrometheusRule` changes: after editing either, check the
 converted object and delete it if it is stale, so the operator re-creates it.

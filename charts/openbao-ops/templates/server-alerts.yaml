@@ -11,7 +11,16 @@
 {{- $rules := list }}
 {{- /* Each rule: a dict of cfg, alert, expr, summary, description. The
        metric names are OpenBAO's own (docs/internals/telemetry): the
-       server keeps the `vault_` prefix on the wire. */}}
+       server keeps the `vault_` prefix on the wire.
+
+       A gauge the server stops updating is still exposed until
+       prometheus_retention_time passes (24h by default). Autopilot's
+       gauges are set only by the ACTIVE node and a follower's applied
+       index delta only by a FOLLOWER, so after a leadership change the old
+       holder keeps exporting its last value for hours. The rules that
+       read them are joined to vault_core_active, which every pod sets
+       itself, so only the series of the pod that currently owns the gauge
+       counts. */}}
 {{- if $r.sealed.enabled }}
 {{- $rules = append $rules (dict "cfg" $r.sealed "alert" "OpenBAOSealed"
   "expr" (printf `vault_core_unsealed{%s} == 0` $s)
@@ -27,14 +36,14 @@
 {{- if $r.raftUnhealthy.enabled }}
 {{- $c := $r.raftUnhealthy }}
 {{- $rules = append $rules (dict "cfg" $c "alert" "OpenBAORaftUnhealthy"
-  "expr" (printf `count(vault_autopilot_node_healthy{%s} == 1) < %d or min(vault_autopilot_healthy{%s}) < 1` $s (int $c.minHealthyVoters) $s)
+  "expr" (printf `count(vault_autopilot_node_healthy{%s} == 1 and on (namespace, pod) vault_core_active{%s} == 1) < %d or min(vault_autopilot_healthy{%s} and on (namespace, pod) vault_core_active{%s} == 1) < 1` $s $s (int $c.minHealthyVoters) $s $s)
   "summary" (printf `OpenBAO has fewer than %d healthy Raft voters` (int $c.minHealthyVoters))
   "description" (printf `Autopilot (read from the active node) counts fewer than %d healthy voters, or reports the cluster unhealthy. One more failure may cost quorum. See which node: bao operator raft autopilot state (needs a token); then that pod's log and storage.` (int $c.minHealthyVoters))) }}
 {{- end }}
 {{- if $r.raftCommitLag.enabled }}
 {{- $c := $r.raftCommitLag }}
 {{- $rules = append $rules (dict "cfg" $c "alert" "OpenBAORaftCommitLag"
-  "expr" (printf `vault_raft_storage_follower_applied_index_delta{%s} > %d` $s (int $c.maxIndexDelta))
+  "expr" (printf `vault_raft_storage_follower_applied_index_delta{%s} > %d and on (namespace, pod) vault_core_active{%s} == 0` $s (int $c.maxIndexDelta) $s)
   "summary" `OpenBAO pod {{ $labels.pod }} is {{ $value }} Raft log entries behind the leader`
   "description" `Pod {{ $labels.pod }} has applied {{ $value }} fewer Raft log entries than the leader for longer than this alert's window. A follower that cannot keep up is a slow disk, a network problem between pods, or a node under memory pressure; it cannot take over cleanly while it lags.`) }}
 {{- end }}

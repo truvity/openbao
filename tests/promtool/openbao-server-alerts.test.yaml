@@ -101,6 +101,8 @@ tests:
   - name: fewer than three healthy voters, from the node count or from autopilot
     interval: 1m
     input_series:
+      - series: 'vault_core_active{namespace="openbao",k8s_cluster_name="example",pod="openbao-0"}'
+        values: '1x30'
       - series: 'vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-0",node_id="openbao-0"}'
         values: '1x30'
       - series: 'vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-0",node_id="openbao-1"}'
@@ -125,6 +127,10 @@ tests:
   - name: a follower far behind the leader
     interval: 1m
     input_series:
+      - series: 'vault_core_active{namespace="openbao",k8s_cluster_name="example",pod="openbao-2"}'
+        values: '0x30'
+      - series: 'vault_core_active{namespace="openbao",k8s_cluster_name="example",pod="openbao-1"}'
+        values: '0x30'
       - series: 'vault_raft_storage_follower_applied_index_delta{namespace="openbao",k8s_cluster_name="example",pod="openbao-2"}'
         values: '2000x30'
       - series: 'vault_raft_storage_follower_applied_index_delta{namespace="openbao",k8s_cluster_name="example",pod="openbao-1"}'
@@ -211,3 +217,35 @@ tests:
               summary: No OpenBAO metrics are being scraped
               description: >-
                 No vault_core_unsealed series exists for namespace openbao: every OpenBAO alert is blind. The server's telemetry (unauthenticated_metrics_access on the listener) may be off, or nothing scrapes the pods.
+
+  - name: gauges a former leader still exports after a leadership change are not counted
+    interval: 1m
+    input_series:
+      # openbao-0 was the leader and still exports its last autopilot view
+      # (a voter unhealthy) and openbao-1 its last follower lag; openbao-1 is
+      # the leader now and reports three healthy voters.
+      - series: 'vault_core_active{namespace="openbao",k8s_cluster_name="example",pod="openbao-0"}'
+        values: '0x30'
+      - series: 'vault_core_active{namespace="openbao",k8s_cluster_name="example",pod="openbao-1"}'
+        values: '1x30'
+      - series: 'vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-0",node_id="openbao-2"}'
+        values: '0x30'
+      - series: 'vault_autopilot_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-0"}'
+        values: '0x30'
+      - series: 'vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-1",node_id="openbao-0"}'
+        values: '1x30'
+      - series: 'vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-1",node_id="openbao-1"}'
+        values: '1x30'
+      - series: 'vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-1",node_id="openbao-2"}'
+        values: '1x30'
+      - series: 'vault_autopilot_healthy{namespace="openbao",k8s_cluster_name="example",pod="openbao-1"}'
+        values: '1x30'
+      - series: 'vault_raft_storage_follower_applied_index_delta{namespace="openbao",k8s_cluster_name="example",pod="openbao-1"}'
+        values: '9000x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: OpenBAORaftUnhealthy
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: OpenBAORaftCommitLag
+        exp_alerts: []
