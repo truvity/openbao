@@ -213,6 +213,11 @@ restoreCheck:
   # Config.RestoreCheckValues() (docs/server.md), which renders sealConfig
   # (the seal stanza AND its `plugin "kms"` block) and this together:
   #   directory      plugin_directory of the scratch server.
+  #   arch           the architecture the init container's checksum
+  #                  belongs to (Config.Arch). Required with initContainer:
+  #                  the pod gets nodeSelector kubernetes.io/arch=<arch>, so
+  #                  the image volume resolves to the binary the checksum
+  #                  names. restoreCheck.nodeSelector must not say otherwise.
   #   initContainer  a whole container that copies the binary into the
   #                  emptyDir this chart mounts at `directory` as the volume
   #                  "seal-plugin" (verified against its checksum first).
@@ -867,6 +872,136 @@ pluginCatalog:
         tag: "8.22.0"
         digest: ""
         pullPolicy: ""
+
+# ---------------------------------------------------------------------------
+# The server's own metrics: a PodMonitor, and alerts on what they say.
+#
+# The metrics are served by the API listener itself at /v1/sys/metrics, and
+# answer without a token only when that listener's telemetry block sets
+# unauthenticated_metrics_access (and the server's telemetry stanza sets
+# prometheus_retention_time): serverpreset renders both (docs/server.md,
+# "Metrics"). Without them the scrape gets 403 and every alert here is blind.
+#
+# Both objects need a CRD the cluster may not have, so the whole part is off
+# until enabled.
+serverMetrics:
+  enabled: false
+
+  podMonitor:
+    enabled: true
+    name: openbao-server
+    # Where the object lives. Default: the release namespace. The CA Secret
+    # (server.tlsSecretName) must be in the same namespace as the object.
+    namespace: ""
+    labels: {}
+    annotations: {}
+    # The NAME of the container port the listener is on.
+    port: https
+    interval: 30s
+    scrapeTimeout: 10s
+
+  # Who may scrape, for networkPolicy.serverIngress: one ingress rule on the
+  # API port for these peers (raw NetworkPolicyPeer entries, e.g. a
+  # namespaceSelector with a podSelector for the metrics agent). The metrics
+  # share the API port, so this is NOT a narrower door than the client
+  # ranges: it is the explicit one, which keeps the scrape working if
+  # clientCidrs is ever narrowed. Empty: no rule.
+  scraper: []
+
+  alerts:
+    enabled: false
+    # vmrule         VMRule (operator.victoriametrics.com/v1beta1)
+    # prometheusrule PrometheusRule (monitoring.coreos.com/v1)
+    # configmap      the plain Prometheus rules file, under one key
+    format: vmrule
+    # Object name. Default: <release>-server-alerts.
+    name: ""
+    # Where the object lives. Default: the release namespace.
+    namespace: ""
+    # Labels on the OBJECT (an operator's ruleSelector matches these) and
+    # annotations on it.
+    labels: {}
+    annotations: {}
+    # Labels added to EVERY rule, for routing. A rule's own `labels` are
+    # merged over these; `severity` is set per rule.
+    ruleLabels: {}
+    groupName: openbao-server
+    interval: ""
+    # Extra label matchers, comma separated and inside no braces, added to
+    # every selector after namespace="<release namespace>" — for a store
+    # that holds several clusters, e.g. `k8s_cluster_name="example"`.
+    selector: ""
+
+    # Per rule: `enabled`, `for` (how long the condition must hold),
+    # `severity`, `labels` and `annotations` (merged over the rule's), and
+    # the threshold the rule has. Backups are NOT here: snapshotAge and
+    # jobSuccess already alert on a stale or failed snapshot, from the
+    # store itself.
+    rules:
+      # A pod that is sealed serves nothing. With auto-unseal it should not
+      # stay that way past its start.
+      sealed:
+        enabled: true
+        for: 5m
+        severity: critical
+        labels: {}
+        annotations: {}
+      # No pod is active: no leader, so no client is served.
+      noActiveNode:
+        enabled: true
+        for: 3m
+        severity: critical
+        labels: {}
+        annotations: {}
+      # Autopilot, read from the active node: fewer healthy voters than
+      # minHealthyVoters, or the cluster reported unhealthy.
+      raftUnhealthy:
+        enabled: true
+        for: 10m
+        severity: warning
+        minHealthyVoters: 3
+        labels: {}
+        annotations: {}
+      # A follower more than maxIndexDelta Raft log entries behind the
+      # leader (vault_raft_storage_follower_applied_index_delta).
+      raftCommitLag:
+        enabled: true
+        for: 10m
+        severity: warning
+        maxIndexDelta: 500
+        labels: {}
+        annotations: {}
+      # The audit devices failed to log a request or a response: OpenBAO
+      # refuses what it cannot audit.
+      auditFailures:
+        enabled: true
+        for: 2m
+        severity: critical
+        labels: {}
+        annotations: {}
+      # p99 of non-login request handling, in milliseconds.
+      highLatency:
+        enabled: true
+        for: 15m
+        severity: warning
+        thresholdMilliseconds: 1000
+        labels: {}
+        annotations: {}
+      # A scrape target of the PodMonitor is down.
+      scrapeDown:
+        enabled: true
+        for: 10m
+        severity: warning
+        labels: {}
+        annotations: {}
+      # No vault_core_unsealed series at all: nothing is scraped, or the
+      # listener's telemetry is off.
+      metricsAbsent:
+        enabled: true
+        for: 15m
+        severity: warning
+        labels: {}
+        annotations: {}
 
 # ---------------------------------------------------------------------------
 networkPolicy:

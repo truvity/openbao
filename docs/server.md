@@ -251,7 +251,7 @@ and `sealConfig` from the Config you already build the server with:
 ```go
 values, err := cfg.RestoreCheckValues() // Seal.Plugin required
 // values["sealConfig"]  the seal stanza and the `plugin "kms" "awskms"` block
-// values["sealPlugin"]  {directory, initContainer, sourceVolume}
+// values["sealPlugin"]  {directory, arch, initContainer, sourceVolume}
 ```
 
 Merge the result under `restoreCheck` in the `openbao-ops` values. It is the
@@ -266,6 +266,7 @@ restoreCheck:
     plugin "kms" "awskms" { command = "kms-awskms-v0.1.0"  version = "v0.1.0" }
   sealPlugin:
     directory: /openbao/plugins
+    arch: arm64               # Config.Arch: the checksum below is this architecture's
     sourceVolume:
       name: seal-plugin-src
       image:
@@ -288,6 +289,21 @@ an init container without the source volume (or the reverse) or one that does
 not install into `directory`. With `DeliveryPreinstalled` only `directory` is
 set: the binary is already in the image. The restore check, like the pod,
 needs a cluster with image volumes.
+
+**The pod is pinned to the architecture the checksum belongs to.** The image
+volume is a multi-arch manifest the kubelet resolves to the node's
+architecture, while the init container verifies ONE architecture's checksum
+(`Config.Arch`, from `SHA256ByArch`). A pod with no pin that lands on a node of
+the other architecture fails with `does not match the pinned checksum`. So
+`sealPlugin.arch` is required with an init container (`RestoreCheckValues`
+renders it from `Config.Arch`), and the chart adds
+`nodeSelector: {kubernetes.io/arch: <arch>}` to the restore check's pod; a
+`restoreCheck.nodeSelector` that pins a different architecture fails the render.
+The server pod is pinned the same way by whatever node selection placed it
+(the one `ResolveArch` resolved). The alternative, a checksum per architecture
+carried into the init container and chosen at run time from `uname -m`, would
+verify whichever binary the node got instead of the one the Config committed
+to, and `Config.Arch` is deliberately explicit.
 
 ### Other 2.7 changes that touch this shape
 
@@ -400,6 +416,53 @@ its own data and unseals (rehearsed for a standby). Once the active node has
 run 2.7, do not run a 2.6 binary against that data: restore the snapshot into
 a fresh 2.6.x cluster (or roll forward). Stopping at the first not-Ready pod
 is what keeps the first case the only one you meet.
+
+## Metrics
+
+OpenBAO serves its own metrics from the API listener at `/v1/sys/metrics`
+(`?format=prometheus`). The names keep the `vault_` prefix on the wire
+(`vault_core_unsealed`, `vault_autopilot_healthy`, `vault_audit_log_request_failure`).
+Two settings make them scrapeable, and `Config.Telemetry` renders both:
+
+```hcl
+telemetry {
+  prometheus_retention_time = "24h"   # 0 disables Prometheus-format reads
+  disable_hostname          = true    # a pod label names a series, not a hostname prefix
+}
+listener "tcp" {
+  # ...
+  telemetry {
+    unauthenticated_metrics_access = true   # /v1/sys/metrics answers without a token
+  }
+}
+```
+
+`TelemetryHCL()` and `ListenerTelemetryHCL()` return the two pieces for a
+caller that writes its own listener; `HCL()` includes both.
+
+**There is no second port.** The metrics share the API's, so a NetworkPolicy
+cannot admit the scraper to them alone: whoever may reach the API can read
+`/v1/sys/metrics` (counts and timings, never a path or a value). The scrape
+verifies the listener's certificate like any client, from the CA in the serving
+certificate's Secret and the name in `server.tlsServerName`; nothing here skips
+verification.
+
+`openbao-ops` consumes it with `serverMetrics.enabled`: a `PodMonitor` for the
+pods in `server.podLabels`; an ingress rule for the scraper in
+`networkPolicy.serverIngress` (`serverMetrics.scraper`), added to the client,
+peer and job rules and removing none of them; and `serverMetrics.alerts`, a
+`VMRule`, `PrometheusRule` or plain rules file. The alerts are sealed, no active
+node, fewer than three healthy Raft voters, a follower behind the leader, audit
+log failures, p99 request latency, a scrape target down, and no metrics at all.
+A stale or failed backup is not among them: `snapshotAge` and `jobSuccess`
+already alert on it from the store itself.
+
+A converted `VMPodScrape` or `VMRule` is not always updated when the source
+`PodMonitor` or `PrometheusRule` changes: after editing either, check the
+converted object and delete it if it is stale, so the operator re-creates it.
+
+The server's configuration is read at start: turning this on is a roll of the
+StatefulSet (see [Rolling a configuration change](#rolling-a-configuration-change)).
 
 ## Verifying one name
 

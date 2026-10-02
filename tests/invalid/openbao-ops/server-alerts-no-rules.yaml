@@ -1,0 +1,15 @@
+# An empty rule group is refused by the rulers: alerts on with every rule off
+# renders nothing, which is a mistake to name rather than render.
+serverMetrics:
+  enabled: true
+  alerts:
+    enabled: true
+    rules:
+      sealed: {enabled: false}
+      noActiveNode: {enabled: false}
+      raftUnhealthy: {enabled: false}
+      raftCommitLag: {enabled: false}
+      auditFailures: {enabled: false}
+      highLatency: {enabled: false}
+      scrapeDown: {enabled: false}
+      metricsAbsent: {enabled: false}

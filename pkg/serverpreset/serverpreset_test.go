@@ -332,3 +332,62 @@ func TestCheckMountsCrossChecksThePluginVersion(t *testing.T) {
 	none := serverpreset.Config{Arch: "arm64"}
 	require.ErrorContains(t, none.CheckMounts(desiredWithAWSMount("v0.1.1", false)), "declared: none")
 }
+
+func TestTelemetryRendersTheStanzaAndTheListenerBlock(t *testing.T) {
+	c := serverpreset.Config{
+		Arch: "arm64",
+		Listener: serverpreset.Listener{
+			Address: "[::]:8200", ClusterAddress: "[::]:8201",
+			TLSCertFile: "/tls/tls.crt", TLSKeyFile: "/tls/tls.key",
+		},
+		ExternalStorage: true,
+		Telemetry:       &serverpreset.Telemetry{UnauthenticatedMetricsAccess: true},
+	}
+
+	stanza, err := c.TelemetryHCL()
+	require.NoError(t, err)
+	assert.Equal(t, "telemetry {\n  prometheus_retention_time = \"24h\"\n  disable_hostname          = true\n}\n", stanza)
+
+	assert.Equal(t, "  telemetry {\n    unauthenticated_metrics_access = true\n  }\n", c.ListenerTelemetryHCL())
+
+	hcl, err := c.HCL()
+	require.NoError(t, err)
+
+	// The listener's block is inside the listener, the stanza outside it.
+	_, afterOpen, found := strings.Cut(hcl, `listener "tcp" {`)
+	require.True(t, found)
+
+	listener, _, found := strings.Cut(afterOpen, "\n}\n")
+	require.True(t, found)
+
+	assert.Contains(t, listener, "unauthenticated_metrics_access = true")
+	assert.NotContains(t, listener, "prometheus_retention_time")
+	assert.Contains(t, hcl, stanza)
+}
+
+func TestTelemetryOffRendersNothing(t *testing.T) {
+	c := serverpreset.Config{Arch: "arm64"}
+
+	stanza, err := c.TelemetryHCL()
+	require.NoError(t, err)
+	assert.Empty(t, stanza)
+	assert.Empty(t, c.ListenerTelemetryHCL())
+
+	// Retention alone does not open the endpoint.
+	c.Telemetry = &serverpreset.Telemetry{PrometheusRetentionTime: "1h"}
+	assert.Empty(t, c.ListenerTelemetryHCL())
+
+	stanza, err = c.TelemetryHCL()
+	require.NoError(t, err)
+	assert.Contains(t, stanza, `prometheus_retention_time = "1h"`)
+}
+
+func TestTelemetryRefusesARetentionTheServerWouldNotServe(t *testing.T) {
+	for _, bad := range []string{"soon", "0s", "-1h"} {
+		c := serverpreset.Config{Arch: "arm64", Telemetry: &serverpreset.Telemetry{PrometheusRetentionTime: bad}}
+
+		_, err := c.TelemetryHCL()
+		require.Error(t, err, bad)
+		require.Error(t, c.Validate(), bad)
+	}
+}

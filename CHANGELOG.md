@@ -5,6 +5,16 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.27.0
+
+### Added
+
+- **`charts/openbao-ops`: `serverMetrics` (opt-in; off, every existing render is byte for byte unchanged), and `serverpreset.Config.Telemetry`.** `Config.Telemetry` renders the `telemetry` stanza (`prometheus_retention_time`, `disable_hostname`) and the listener's `unauthenticated_metrics_access`, so `/v1/sys/metrics` answers a scraper without a token; `TelemetryHCL()` and `ListenerTelemetryHCL()` return the two pieces. `serverMetrics` renders a `PodMonitor` that verifies the listener's certificate (CA from the serving Secret, `server.tlsServerName`), a rule in `networkPolicy.serverIngress` for the scraper (`serverMetrics.scraper`, added to the client, peer and job rules), and `serverMetrics.alerts` as a `VMRule`, `PrometheusRule` or rules file: sealed, no active node, fewer than three healthy voters, a follower behind the leader, audit log failures, p99 latency, a scrape target down, no metrics. `promtool` checks every format and unit-tests every alert. The metrics share the API's port, so the policy cannot admit the scraper to them alone. See [docs/server.md](docs/server.md#metrics).
+
+### Fixed
+
+- **`charts/openbao-ops`: the restore check's pod is pinned to the architecture its seal plugin checksum belongs to.** The plugin image volume resolves to the node's architecture and the init container verifies one architecture's checksum, so a restore check scheduled on a node of the other architecture failed `does not match the pinned checksum`. `restoreCheck.sealPlugin.arch` is now required with an init container (`RestoreCheckValues` renders it from `Config.Arch`) and becomes `nodeSelector: kubernetes.io/arch`; a `restoreCheck.nodeSelector` that pins another architecture fails the render. **A caller that sets `restoreCheck.sealPlugin` by hand must add `arch`.**
+
 ## v0.26.0
 
 ### Added

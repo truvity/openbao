@@ -78,10 +78,13 @@ func extractRules(t *testing.T, rendered, format string) string {
 		}
 
 		if format == "configmap" {
-			file, ok := object.Data["issuance-alerts.rules.yaml"]
-			require.True(t, ok, "the ConfigMap has no issuance-alerts.rules.yaml")
+			for key, file := range object.Data {
+				if strings.HasSuffix(key, ".rules.yaml") {
+					return file
+				}
+			}
 
-			return file
+			continue
 		}
 
 		out, err := yaml.Marshal(object.Spec)

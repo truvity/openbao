@@ -72,6 +72,17 @@ spec:
           protocol: TCP
         - port: {{ $.Values.server.clusterPort }}
           protocol: TCP
+    {{- if and $.Values.serverMetrics.enabled $.Values.serverMetrics.scraper }}
+    {{- /* The metrics agent, by name. The metrics are on the API port, so
+           the client rule above already admits any client range that
+           contains the agent; this one keeps the scrape working when that
+           range is narrowed. It adds to the rules above and removes none. */}}
+    - from:
+        {{- toYaml $.Values.serverMetrics.scraper | nindent 8 }}
+      ports:
+        - port: {{ $.Values.server.apiPort }}
+          protocol: TCP
+    {{- end }}
     {{- if $.Values.snapshot.enabled }}
     - from:
         - podSelector:

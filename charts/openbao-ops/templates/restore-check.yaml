@@ -17,6 +17,12 @@
 {{- fail "restoreCheck.sealPlugin.initContainer and sourceVolume go together — the init container copies the binary out of the image volume; set both (init-copy) or neither (a binary already in the image)" }}
 {{- end }}
 {{- if $spCopy }}
+{{- if not $sp.arch }}
+{{- fail "restoreCheck.sealPlugin.arch is required with an init container — the binary it installs is verified against ONE architecture's checksum, and a pod with no architecture pin lands on whichever node the scheduler picks (serverpreset's RestoreCheckValues renders it from Config.Arch)" }}
+{{- end }}
+{{- if and $rc.nodeSelector (hasKey $rc.nodeSelector "kubernetes.io/arch") (ne (index $rc.nodeSelector "kubernetes.io/arch") $sp.arch) }}
+{{- fail (printf "restoreCheck.nodeSelector pins kubernetes.io/arch=%s but restoreCheck.sealPlugin.arch is %s — the plugin's checksum belongs to one architecture; the two must agree" (index $rc.nodeSelector "kubernetes.io/arch") $sp.arch) }}
+{{- end }}
 {{- $mountsPluginDir := false }}
 {{- range $sp.initContainer.volumeMounts }}
 {{- if and (eq .name "seal-plugin") (eq .mountPath $sp.directory) }}{{- $mountsPluginDir = true }}{{- end }}
@@ -162,7 +168,13 @@ spec:
           serviceAccountName: {{ $rc.serviceAccountName }}
           automountServiceAccountToken: false
           restartPolicy: Never
-          {{- with $rc.nodeSelector }}
+          {{- /* The seal plugin's checksum is one architecture's: the pod
+                 runs on that architecture's nodes, or the init container
+                 refuses the binary the kubelet resolved for the node
+                 ("does not match the pinned checksum"). */}}
+          {{- $nodeSelector := deepCopy ($rc.nodeSelector | default dict) }}
+          {{- if $spCopy }}{{- $_ := set $nodeSelector "kubernetes.io/arch" $sp.arch }}{{- end }}
+          {{- with $nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
           {{- end }}

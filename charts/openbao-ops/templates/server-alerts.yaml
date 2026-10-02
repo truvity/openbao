@@ -1,0 +1,110 @@
+{{- if and .Values.serverMetrics.enabled .Values.serverMetrics.alerts.enabled }}
+{{- $a := .Values.serverMetrics.alerts }}
+{{- $r := $a.rules }}
+{{- $ns := include "ops.namespace" . }}
+{{- $name := $a.name | default (printf "%s-server-alerts" .Release.Name) }}
+{{- /* Every selector in every expression: the namespace the server runs in,
+       and whatever matchers the caller adds (a cluster label, say). */}}
+{{- $sel := list (printf "namespace=%s" (toJson $ns)) }}
+{{- with $a.selector }}{{- $sel = append $sel . }}{{- end }}
+{{- $s := join "," $sel }}
+{{- $rules := list }}
+{{- /* Each rule: a dict of cfg, alert, expr, summary, description. The
+       metric names are OpenBAO's own (docs/internals/telemetry): the
+       server keeps the `vault_` prefix on the wire. */}}
+{{- if $r.sealed.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.sealed "alert" "OpenBAOSealed"
+  "expr" (printf `vault_core_unsealed{%s} == 0` $s)
+  "summary" `OpenBAO pod {{ $labels.pod }} is sealed`
+  "description" `OpenBAO pod {{ $labels.pod }} has been sealed since before this alert's window and serves nothing. With auto-unseal it should unseal on start: look at the pod's log for the seal's error (a KMS permission, an unreachable endpoint, a missing plugin binary). Runbook: docs/server.md, "The seal as a plugin".`) }}
+{{- end }}
+{{- if $r.noActiveNode.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.noActiveNode "alert" "OpenBAONoActiveNode"
+  "expr" (printf `(sum(vault_core_active{%s}) or vector(0)) < 1` $s)
+  "summary" `OpenBAO has no active node`
+  "description" (printf `No OpenBAO pod reports itself active: no leader is elected, or none can be scraped. Every client is failing. Check for a lost Raft quorum (kubectl -n %s get pods; the pods' log for "election") and for sealed pods.` $ns)) }}
+{{- end }}
+{{- if $r.raftUnhealthy.enabled }}
+{{- $c := $r.raftUnhealthy }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "OpenBAORaftUnhealthy"
+  "expr" (printf `count(vault_autopilot_node_healthy{%s} == 1) < %d or min(vault_autopilot_healthy{%s}) < 1` $s (int $c.minHealthyVoters) $s)
+  "summary" (printf `OpenBAO has fewer than %d healthy Raft voters` (int $c.minHealthyVoters))
+  "description" (printf `Autopilot (read from the active node) counts fewer than %d healthy voters, or reports the cluster unhealthy. One more failure may cost quorum. See which node: bao operator raft autopilot state (needs a token); then that pod's log and storage.` (int $c.minHealthyVoters))) }}
+{{- end }}
+{{- if $r.raftCommitLag.enabled }}
+{{- $c := $r.raftCommitLag }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "OpenBAORaftCommitLag"
+  "expr" (printf `vault_raft_storage_follower_applied_index_delta{%s} > %d` $s (int $c.maxIndexDelta))
+  "summary" `OpenBAO pod {{ $labels.pod }} is {{ $value }} Raft log entries behind the leader`
+  "description" `Pod {{ $labels.pod }} has applied {{ $value }} fewer Raft log entries than the leader for longer than this alert's window. A follower that cannot keep up is a slow disk, a network problem between pods, or a node under memory pressure; it cannot take over cleanly while it lags.`) }}
+{{- end }}
+{{- if $r.auditFailures.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.auditFailures "alert" "OpenBAOAuditLogFailures"
+  "expr" (printf `increase(vault_audit_log_request_failure{%s}[5m]) > 0 or increase(vault_audit_log_response_failure{%s}[5m]) > 0` $s $s)
+  "summary" `OpenBAO audit devices are failing on {{ $labels.pod }}`
+  "description" `An audit log request or response failed on pod {{ $labels.pod }}. OpenBAO refuses the request it cannot audit, so clients see errors and no audit trail exists for them. Look at the audit device the pod declares (a stdout device fails when the log pipe is blocked) and at the pod's log.`) }}
+{{- end }}
+{{- if $r.highLatency.enabled }}
+{{- $c := $r.highLatency }}
+{{- $rules = append $rules (dict "cfg" $c "alert" "OpenBAOHighRequestLatency"
+  "expr" (printf `vault_core_handle_request{%s,quantile="0.99"} > %d` $s (int $c.thresholdMilliseconds))
+  "summary" `OpenBAO p99 request latency on {{ $labels.pod }} is {{ $value | printf "%.0f" }} ms`
+  "description" `The 99th percentile of non-login request handling time on pod {{ $labels.pod }} has been above this alert's threshold for longer than its window. Suspects: storage latency (the Raft disk), a burst of large requests, an audit device that blocks, or CPU throttling at the pod's limit.`) }}
+{{- end }}
+{{- if $r.scrapeDown.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.scrapeDown "alert" "OpenBAOMetricsDown"
+  "expr" (printf `up{%s,job=~%s} == 0` $s (toJson (printf ".+/%s" $.Values.serverMetrics.podMonitor.name)))
+  "summary" `OpenBAO pod {{ $labels.pod }} cannot be scraped`
+  "description" `The scrape of pod {{ $labels.pod }} fails, so its alerts cannot fire. The pod is down, its listener's certificate no longer verifies against the CA the scrape reads, or the network policy no longer admits the scraper.`) }}
+{{- end }}
+{{- if $r.metricsAbsent.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.metricsAbsent "alert" "OpenBAOMetricsAbsent"
+  "expr" (printf `absent(vault_core_unsealed{%s})` $s)
+  "summary" `No OpenBAO metrics are being scraped`
+  "description" (printf `No vault_core_unsealed series exists for namespace %s: every OpenBAO alert is blind. The server's telemetry (unauthenticated_metrics_access on the listener) may be off, or nothing scrapes the pods.` $ns)) }}
+{{- end }}
+{{- if not $rules }}
+{{- fail "serverMetrics.alerts.enabled renders no rule: every serverMetrics.alerts.rules.*.enabled is off, and an empty rule group is refused by the rulers this chart renders for" }}
+{{- end }}
+{{- $out := list }}
+{{- range $x := $rules }}
+{{- $cfg := $x.cfg }}
+{{- $labels := mergeOverwrite (deepCopy ($a.ruleLabels | default dict)) (dict "severity" $cfg.severity) (deepCopy ($cfg.labels | default dict)) }}
+{{- $ann := mergeOverwrite (dict "summary" $x.summary "description" $x.description) (deepCopy ($cfg.annotations | default dict)) }}
+{{- $out = append $out (dict "alert" $x.alert "expr" $x.expr "for" $cfg.for "labels" $labels "annotations" $ann) }}
+{{- end }}
+{{- $group := dict "name" $a.groupName "rules" $out }}
+{{- with $a.interval }}{{- $_ := set $group "interval" . }}{{- end }}
+{{- $groups := dict "groups" (list $group) }}
+---
+{{- if eq $a.format "configmap" }}
+apiVersion: v1
+kind: ConfigMap
+{{- else if eq $a.format "prometheusrule" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+{{- else }}
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+{{- end }}
+metadata:
+  name: {{ $name }}
+  namespace: {{ $a.namespace | default $ns }}
+  labels:
+    {{- include "ops.labels" "openbao-server-alerts" | nindent 4 }}
+    {{- with $a.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if eq $a.format "configmap" }}
+data:
+  server-alerts.rules.yaml: |
+    {{- toYaml $groups | nindent 4 }}
+{{- else }}
+spec:
+  {{- toYaml $groups | nindent 2 }}
+{{- end }}
+{{- end }}

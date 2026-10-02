@@ -1,0 +1,60 @@
+{{- if .Values.serverMetrics.enabled }}
+{{- $m := .Values.serverMetrics }}
+{{- $pm := $m.podMonitor }}
+{{- $ns := include "ops.namespace" . }}
+{{- if $pm.enabled }}
+{{- if not $.Values.server.tlsSecretName }}
+{{- fail "serverMetrics.podMonitor needs server.tlsSecretName — the scrape verifies the listener's certificate against the CA in that Secret, and the chart will not turn verification off" }}
+{{- end }}
+---
+{{- /* The server's own metrics, scraped from the SAME listener the API is
+       served on: /v1/sys/metrics, which answers without a token once the
+       listener's telemetry block sets unauthenticated_metrics_access (the
+       server preset renders it, docs/server.md "Metrics"). No second port
+       exists, so the scrape verifies the listener's certificate like any
+       client: the CA comes from the serving certificate's Secret, which
+       lives in this namespace because a scrape object reads its Secrets
+       from its own. A PodMonitor, portable across a Prometheus-style
+       operator and VictoriaMetrics' (which converts it). A converted
+       object is NOT updated when this one changes on some operator
+       versions: delete the converted VMPodScrape after editing. */}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $pm.name }}
+  namespace: {{ $pm.namespace | default $ns }}
+  labels:
+    {{- include "ops.labels" $pm.name | nindent 4 }}
+    {{- with $pm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $pm.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ $ns }}
+  selector:
+    matchLabels:
+      {{- toYaml $.Values.server.podLabels | nindent 6 }}
+  podMetricsEndpoints:
+    - port: {{ $pm.port }}
+      scheme: https
+      path: /v1/sys/metrics
+      params:
+        format:
+          - prometheus
+      interval: {{ $pm.interval }}
+      scrapeTimeout: {{ $pm.scrapeTimeout }}
+      tlsConfig:
+        ca:
+          secret:
+            name: {{ $.Values.server.tlsSecretName }}
+            key: {{ $.Values.server.caKey }}
+        {{- with $.Values.server.tlsServerName }}
+        serverName: {{ . }}
+        {{- end }}
+{{- end }}
+{{- end }}

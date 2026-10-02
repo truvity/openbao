@@ -314,6 +314,7 @@ func TestRestoreCheckValues(t *testing.T) {
 
 	plugin, _ := values["sealPlugin"].(map[string]any)
 	assert.Equal(t, "/openbao/plugins", plugin["directory"])
+	assert.Equal(t, c.Arch, plugin["arch"], "the pod is pinned to the architecture the checksum belongs to")
 
 	// The very same init container and image volume the server pod gets,
 	// bound to the chart's volume name.

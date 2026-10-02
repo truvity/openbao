@@ -79,6 +79,8 @@ spec:
           serviceAccountName: openbao-restore-check
           automountServiceAccountToken: false
           restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/arch: arm64
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
