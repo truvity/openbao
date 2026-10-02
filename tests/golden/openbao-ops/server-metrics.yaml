@@ -415,8 +415,10 @@ spec:
           pod''s log and storage.'
         summary: OpenBAO has fewer than 3 healthy Raft voters
       expr: count(vault_autopilot_node_healthy{namespace="openbao",k8s_cluster_name="example"}
-        == 1) < 3 or min(vault_autopilot_healthy{namespace="openbao",k8s_cluster_name="example"})
-        < 1
+        == 1 and on (namespace, pod) vault_core_active{namespace="openbao",k8s_cluster_name="example"}
+        == 1) < 3 or min(vault_autopilot_healthy{namespace="openbao",k8s_cluster_name="example"}
+        and on (namespace, pod) vault_core_active{namespace="openbao",k8s_cluster_name="example"}
+        == 1) < 1
       for: 10m
       labels:
         severity: warning
@@ -430,7 +432,8 @@ spec:
         summary: OpenBAO pod {{ $labels.pod }} is {{ $value }} Raft log entries behind
           the leader
       expr: vault_raft_storage_follower_applied_index_delta{namespace="openbao",k8s_cluster_name="example"}
-        > 500
+        > 500 and on (namespace, pod) vault_core_active{namespace="openbao",k8s_cluster_name="example"}
+        == 0
       for: 10m
       labels:
         severity: warning
