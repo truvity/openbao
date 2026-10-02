@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.28.0
+
+### Changed
+
+- **The server's metrics are served on a listener of their own, and only the scraper can reach it.** `serverpreset.Telemetry.UnauthenticatedMetricsAccess` is gone (a breaking change to a v0.27.0 field; its one consumer moves with this release) and `ListenerTelemetryHCL()` with it. `Telemetry.MetricsAddress` (`"[::]:8202"`) renders a second `listener "tcp"` with the API listener's certificate whose `telemetry` block sets `metrics_only` and `unauthenticated_metrics_access`, via the new `MetricsListenerHCL()`. OpenBAO's `metrics_only` makes that listener refuse every path but `/v1/sys/metrics`, and the API listener no longer sets `unauthenticated_metrics_access`, so the metrics need a token on the API port. `Validate` refuses a `MetricsAddress` equal to the API or cluster address. `charts/openbao-ops`: new `serverMetrics.port` (default `8202`); the `serverMetrics.scraper` rule in `networkPolicy.serverIngress` opens that port only, no longer the API port (every other rule is unchanged); `serverMetrics.podMonitor.port` defaults to the container port name `metrics`, and the pods must declare it. A conformance test starts a real `bao server` with the rendered listener and checks the metrics answer there without a token and no other path does. The server's configuration is read at start, so adopting this is a roll of the StatefulSet. See [docs/server.md](docs/server.md#metrics).
+
 ## v0.27.0
 
 ### Added

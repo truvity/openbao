@@ -419,38 +419,51 @@ is what keeps the first case the only one you meet.
 
 ## Metrics
 
-OpenBAO serves its own metrics from the API listener at `/v1/sys/metrics`
-(`?format=prometheus`). The names keep the `vault_` prefix on the wire
-(`vault_core_unsealed`, `vault_autopilot_healthy`, `vault_audit_log_request_failure`).
-Two settings make them scrapeable, and `Config.Telemetry` renders both:
+OpenBAO serves its own metrics at `/v1/sys/metrics` (`?format=prometheus`). The
+names keep the `vault_` prefix on the wire (`vault_core_unsealed`,
+`vault_autopilot_healthy`, `vault_audit_log_request_failure`). They are served
+on a **listener of their own**, so a NetworkPolicy can admit the scraper to that
+port alone. `Config.Telemetry` renders it, with the stanza that keeps the
+metrics:
 
 ```hcl
 telemetry {
   prometheus_retention_time = "24h"   # 0 disables Prometheus-format reads
   disable_hostname          = true    # a pod label names a series, not a hostname prefix
 }
-listener "tcp" {
+listener "tcp" {                      # the API listener: no telemetry block at all
+  address         = "[::]:8200"
+  cluster_address = "[::]:8201"
   # ...
+}
+listener "tcp" {                      # Telemetry.MetricsAddress
+  address       = "[::]:8202"
+  tls_cert_file = "..."               # the API listener's certificate
+  tls_key_file  = "..."
   telemetry {
+    metrics_only                   = true   # every other path is refused
     unauthenticated_metrics_access = true   # /v1/sys/metrics answers without a token
   }
 }
 ```
 
-`TelemetryHCL()` and `ListenerTelemetryHCL()` return the two pieces for a
-caller that writes its own listener; `HCL()` includes both.
-
-**There is no second port.** The metrics share the API's, so a NetworkPolicy
-cannot admit the scraper to them alone: whoever may reach the API can read
-`/v1/sys/metrics` (counts and timings, never a path or a value). The scrape
-verifies the listener's certificate like any client, from the CA in the serving
-certificate's Secret and the name in `server.tlsServerName`; nothing here skips
-verification.
+`metrics_only` is OpenBAO's own listener option (documented for 2.6 and 2.7): the
+listener serves `/v1/sys/metrics` and blocks every other API request, so the
+unauthenticated port is not a second door into the API. The API listener sets
+neither option, so on port 8200 the metrics need a token like any other path.
+`TelemetryHCL()` and `MetricsListenerHCL()` return the two pieces for a caller
+that writes its own configuration; `HCL()` includes both. `MetricsAddress` must
+differ from the API and cluster addresses; the metrics listener has no
+`cluster_address` (Raft stays on the API listener's). The pods need a container
+port for it, named `metrics` for the chart's PodMonitor. The scrape verifies the
+certificate like any client, from the CA in the serving certificate's Secret and
+the name in `server.tlsServerName`; nothing here skips verification.
 
 `openbao-ops` consumes it with `serverMetrics.enabled`: a `PodMonitor` for the
 pods in `server.podLabels`; an ingress rule for the scraper in
-`networkPolicy.serverIngress` (`serverMetrics.scraper`), added to the client,
-peer and job rules and removing none of them; and `serverMetrics.alerts`, a
+`networkPolicy.serverIngress` (`serverMetrics.scraper`) that opens
+`serverMetrics.port` (8202) and no other port to it, added to the client, peer
+and job rules and removing none of them; and `serverMetrics.alerts`, a
 `VMRule`, `PrometheusRule` or plain rules file. The alerts are sealed, no active
 node, fewer than three healthy Raft voters, a follower behind the leader, audit
 log failures, p99 request latency, a scrape target down, and no metrics at all.

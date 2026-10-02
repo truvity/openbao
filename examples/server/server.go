@@ -74,9 +74,9 @@ func Config(arch string) *serverpreset.Config {
 		ServiceRegistration: "kubernetes",
 		AuditDevice:         "to-stdout",
 		// Metrics for the openbao-ops chart's serverMetrics to scrape: the
-		// telemetry stanza, and a token-free /v1/sys/metrics on the
-		// listener, gated by the network policy.
-		Telemetry: &serverpreset.Telemetry{UnauthenticatedMetricsAccess: true},
+		// telemetry stanza, and a token-free /v1/sys/metrics on a
+		// second listener of its own, gated by the network policy.
+		Telemetry: &serverpreset.Telemetry{MetricsAddress: "[::]:8202"},
 		Plugins: []serverpreset.Plugin{{
 			Kind:       "auth",
 			Name:       "aws",

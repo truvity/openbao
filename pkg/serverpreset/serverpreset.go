@@ -251,10 +251,9 @@ type (
 
 	// Telemetry is what makes the server's metrics scrapeable: the
 	// top-level `telemetry` stanza that keeps Prometheus-format metrics,
-	// and the listener's own `telemetry` block that lets the scraper read
-	// /v1/sys/metrics without a token (the one path that setting covers).
-	// charts/openbao-ops' serverMetrics scrapes it; see docs/server.md,
-	// "Metrics".
+	// and a SECOND listener that serves /v1/sys/metrics and nothing else,
+	// without a token. charts/openbao-ops' serverMetrics scrapes it; see
+	// docs/server.md, "Metrics".
 	Telemetry struct {
 		// PrometheusRetentionTime is how long the server keeps metrics
 		// for a Prometheus-format read, as a Go duration ("24h"). Empty:
@@ -262,12 +261,18 @@ type (
 		// answers a Prometheus-format read with an error, not with
 		// metrics.
 		PrometheusRetentionTime string
-		// UnauthenticatedMetricsAccess sets unauthenticated_metrics_access
-		// on the listener, so /v1/sys/metrics answers without a token.
-		// The path is on the API port: whoever can reach the API can read
-		// it, so the network policy is the only gate. The metrics carry
-		// counts and timings, never a value or a path.
-		UnauthenticatedMetricsAccess bool
+		// MetricsAddress, when set ("[::]:8202"), renders the metrics
+		// listener: a listener "tcp" on this address with the API
+		// listener's certificate and key, whose telemetry block sets
+		// metrics_only (every other path is refused) and
+		// unauthenticated_metrics_access (the metrics need no token).
+		// The API listener sets neither, so the metrics are open only on
+		// this port, and a NetworkPolicy can admit the scraper to it
+		// alone. It carries no cluster_address: Raft stays on the API
+		// listener's. Empty: no metrics listener, and the metrics need a
+		// token on the API port. Must differ from the API listener's
+		// port.
+		MetricsAddress string
 	}
 
 	// Raft is the storage backend: one voter per pod, retry-joining every
@@ -334,8 +339,8 @@ type (
 		Raft     Raft
 		// Telemetry, when set, renders the `telemetry` stanza (with
 		// disable_hostname, so a series is named by its pod label and not
-		// by a hostname prefix) and, with UnauthenticatedMetricsAccess,
-		// the listener's telemetry block. Nil renders neither.
+		// by a hostname prefix) and, with MetricsAddress, the metrics
+		// listener. Nil renders neither.
 		Telemetry *Telemetry
 		// ExternalStorage says the storage backend is configured outside
 		// this package (another backend, or a stanza the caller appends).
@@ -517,6 +522,10 @@ func (c *Config) Validate() error {
 	if c.Telemetry != nil {
 		if err := c.Telemetry.validate(); err != nil {
 			return err
+		}
+
+		if m := c.Telemetry.MetricsAddress; m != "" && (m == c.Listener.Address || m == c.Listener.ClusterAddress) {
+			return fmt.Errorf("telemetry: MetricsAddress %q is the API or cluster listener's address — the metrics listener needs a port of its own", m)
 		}
 	}
 
@@ -880,10 +889,6 @@ func (c *Config) ListenerHCL() string {
 	fmt.Fprintf(&b, "  tls_cert_file   = %q\n", l.TLSCertFile)
 	fmt.Fprintf(&b, "  tls_key_file    = %q\n", l.TLSKeyFile)
 
-	if block := c.ListenerTelemetryHCL(); block != "" {
-		b.WriteString(block)
-	}
-
 	fmt.Fprintf(&b, "}\n")
 
 	return b.String()
@@ -939,16 +944,30 @@ func (c *Config) TelemetryHCL() (string, error) {
 	return b.String(), nil
 }
 
-// ListenerTelemetryHCL renders the `telemetry` block that belongs INSIDE the
-// listener stanza (indented two spaces, to paste beside address and the
-// certificate files), or "" unless Telemetry.UnauthenticatedMetricsAccess
-// is set. The setting opens /v1/sys/metrics and nothing else.
-func (c *Config) ListenerTelemetryHCL() string {
-	if c.Telemetry == nil || !c.Telemetry.UnauthenticatedMetricsAccess {
+// MetricsListenerHCL renders the second `listener "tcp" { ... }` stanza: the
+// metrics listener, or "" unless Telemetry.MetricsAddress is set. It serves
+// /v1/sys/metrics and nothing else (metrics_only), without a token
+// (unauthenticated_metrics_access), over the API listener's certificate.
+func (c *Config) MetricsListenerHCL() string {
+	if c.Telemetry == nil || c.Telemetry.MetricsAddress == "" {
 		return ""
 	}
 
-	return "  telemetry {\n    unauthenticated_metrics_access = true\n  }\n"
+	l := c.Listener
+
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "listener \"tcp\" {\n")
+	fmt.Fprintf(&b, "  address       = %q\n", c.Telemetry.MetricsAddress)
+	fmt.Fprintf(&b, "  tls_cert_file = %q\n", l.TLSCertFile)
+	fmt.Fprintf(&b, "  tls_key_file  = %q\n", l.TLSKeyFile)
+	fmt.Fprintf(&b, "  telemetry {\n")
+	fmt.Fprintf(&b, "    metrics_only                   = true\n")
+	fmt.Fprintf(&b, "    unauthenticated_metrics_access = true\n")
+	fmt.Fprintf(&b, "  }\n")
+	fmt.Fprintf(&b, "}\n")
+
+	return b.String()
 }
 
 // RaftHCL renders the `storage "raft" { ... }` stanza with one retry_join
@@ -1002,6 +1021,7 @@ func (c *Config) HCL() (string, error) {
 	}
 
 	b.WriteString(c.ListenerHCL())
+	b.WriteString(c.MetricsListenerHCL())
 
 	telemetry, err := c.TelemetryHCL()
 	if err != nil {

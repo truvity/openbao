@@ -216,7 +216,7 @@ tests:
             exp_annotations:
               summary: No OpenBAO metrics are being scraped
               description: >-
-                No vault_core_unsealed series exists for namespace openbao: every OpenBAO alert is blind. The server's telemetry (unauthenticated_metrics_access on the listener) may be off, or nothing scrapes the pods.
+                No vault_core_unsealed series exists for namespace openbao: every OpenBAO alert is blind. The server's metrics listener (metrics_only and unauthenticated_metrics_access) may be off, or nothing scrapes the pods.
 
   - name: gauges a former leader still exports after a leadership change are not counted
     interval: 1m

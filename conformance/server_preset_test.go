@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,4 +262,53 @@ func TestFailBehaviorRefusesToStart(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("the server neither became healthy nor exited with plugin_download_behavior = \"fail\":\n%s", logs.String())
 	}
+}
+
+// TestMetricsListenerServesMetricsAndNothingElse proves, against a real
+// `bao server`, what docs/server.md claims of the rendered metrics listener:
+// /v1/sys/metrics answers there without a token, no other path does, and the
+// API listener (which sets no telemetry block) refuses the same read.
+func TestMetricsListenerServesMetricsAndNothingElse(t *testing.T) {
+	binary := tool(t, "bao")
+
+	dir := t.TempDir()
+	apiAddress := freeAddress(t)
+	metricsAddress := freeAddress(t)
+
+	cfg := serverpreset.Config{
+		Arch:      "amd64",
+		Listener:  serverpreset.Listener{Address: apiAddress, TLSCertFile: "/tls.crt", TLSKeyFile: "/tls.key"},
+		Telemetry: &serverpreset.Telemetry{MetricsAddress: metricsAddress},
+	}
+
+	// TLS is not what is under test: swap the certificate files the preset
+	// renders for tls_disable, and keep every other line it renders.
+	metricsHCL := strings.NewReplacer(
+		`  tls_cert_file = "/tls.crt"`, `  tls_disable   = "true"`,
+		`  tls_key_file  = "/tls.key"`+"\n", "",
+	).Replace(cfg.MetricsListenerHCL())
+	require.Contains(t, metricsHCL, "metrics_only")
+
+	telemetry, err := cfg.TelemetryHCL()
+	require.NoError(t, err)
+
+	configPath := filepath.Join(dir, "server.hcl")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte(minimalHCL(t, filepath.Join(dir, "data"), apiAddress, metricsHCL+telemetry)), 0o600))
+
+	healthy, _, _, logs := runServer(t, binary, configPath, apiAddress)
+	require.True(t, healthy, "the server did not start:\n%s", logs.String())
+
+	status := func(address, path string) int {
+		response, err := http.Get("http://" + address + path)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+
+		return response.StatusCode
+	}
+
+	assert.Equal(t, http.StatusOK, status(metricsAddress, "/v1/sys/metrics?format=prometheus"), "the metrics listener answers without a token")
+	assert.NotEqual(t, http.StatusOK, status(metricsAddress, "/v1/sys/health"), "the metrics listener serves no other path")
+	assert.NotEqual(t, http.StatusOK, status(metricsAddress, "/v1/sys/seal-status"), "the metrics listener serves no other path")
+	assert.NotEqual(t, http.StatusOK, status(apiAddress, "/v1/sys/metrics?format=prometheus"), "the API listener does not answer the metrics without a token")
 }

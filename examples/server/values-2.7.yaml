@@ -113,7 +113,13 @@ server:
           cluster_address = "[::]:8201"
           tls_cert_file   = "/openbao/userconfig/openbao-tls/tls.crt"
           tls_key_file    = "/openbao/userconfig/openbao-tls/tls.key"
+        }
+        listener "tcp" {
+          address       = "[::]:8202"
+          tls_cert_file = "/openbao/userconfig/openbao-tls/tls.crt"
+          tls_key_file  = "/openbao/userconfig/openbao-tls/tls.key"
           telemetry {
+            metrics_only                   = true
             unauthenticated_metrics_access = true
           }
         }
