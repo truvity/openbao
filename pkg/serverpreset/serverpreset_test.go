@@ -341,7 +341,7 @@ func TestTelemetryRendersTheStanzaAndTheListenerBlock(t *testing.T) {
 			TLSCertFile: "/tls/tls.crt", TLSKeyFile: "/tls/tls.key",
 		},
 		ExternalStorage: true,
-		Telemetry:       &serverpreset.Telemetry{MetricsAddress: "[::]:8202"},
+		Telemetry:       &serverpreset.Telemetry{MetricsAddress: "[::]:9101"},
 	}
 
 	stanza, err := c.TelemetryHCL()
@@ -349,7 +349,7 @@ func TestTelemetryRendersTheStanzaAndTheListenerBlock(t *testing.T) {
 	assert.Equal(t, "telemetry {\n  prometheus_retention_time = \"24h\"\n  disable_hostname          = true\n}\n", stanza)
 
 	assert.Equal(t, `listener "tcp" {
-  address       = "[::]:8202"
+  address       = "[::]:9101"
   tls_cert_file = "/tls/tls.crt"
   tls_key_file  = "/tls/tls.key"
   telemetry {

@@ -261,7 +261,7 @@ type (
 		// answers a Prometheus-format read with an error, not with
 		// metrics.
 		PrometheusRetentionTime string
-		// MetricsAddress, when set ("[::]:8202"), renders the metrics
+		// MetricsAddress, when set ("[::]:9101"), renders the metrics
 		// listener: a listener "tcp" on this address with the API
 		// listener's certificate and key, whose telemetry block sets
 		// metrics_only (every other path is refused) and
