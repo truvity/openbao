@@ -36,6 +36,12 @@ jobs:
   # release fails the leg. The binary is the official release tarball,
   # verified against the SHA-256 pinned here (from the release's
   # checksums.txt); a version bump is a change to this matrix.
+  #
+  # The same binary also runs the bootstrap lifecycle
+  # (conformance/bootstrap_test.go, docs/bootstrap.md): a real `bao server`
+  # on a static seal (an auto-unseal seal, so no cloud account) is taken
+  # through openbaoctl init, configure and revoke-root, root generation
+  # drill included, with the lock-out guards on the way. Offline.
   server-config:
     name: server-config (${{ matrix.version }})
     runs-on: ubuntu-latest
@@ -80,6 +86,11 @@ jobs:
         env:
           OPENBAO_BAO_BINARY: ${{ runner.temp }}/bao/bao
         run: go test ./conformance/ -run 'TestServerAccepts|TestServerStartsOn|TestDiagnose' -count=1 -v
+
+      - name: Bootstrap lifecycle conformance (init, configure, drill, revoke-root)
+        env:
+          OPENBAO_BAO_BINARY: ${{ runner.temp }}/bao/bao
+        run: go test ./conformance/ -run 'TestFreshServer' -count=1 -v -timeout 8m
 
   # Stable name for branch protection: the matrix reports as
   # "recipes / lint" and so on, so a required context called "check"

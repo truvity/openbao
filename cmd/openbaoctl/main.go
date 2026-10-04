@@ -10,6 +10,13 @@
 //	openbaoctl pki install-emergency-server --certificate openbao.crt --private-key openbao.key \
 //	  --ca-bundle root.crt --namespace openbao --kube-context <context>       # --kube-context is required
 //
+// The bootstrap of a fresh server (pkg/bootstrap, docs/bootstrap.md):
+//
+//	openbaoctl init --addr https://127.0.0.1:8200 --ca-file ca.pem --keeper-dir ./keeper --age-identity-file id.txt
+//	openbaoctl configure ... --issuer https://issuer.example --operator-group openbao:operators
+//	openbaoctl revoke-root ... --operator-group openbao:operators --operator-jwt-file token.jwt
+//	openbaoctl drill start|forward|stop --kube-context <context> --namespace openbao
+//
 // Every signing command asks the root key for at most one signature, and
 // only for a template whose hash the operator confirmed. See
 // docs/ceremony.md.
@@ -31,9 +38,9 @@ func main() {
 		Name:    "openbaoctl",
 		Usage:   "OpenBAO operations that have no Kubernetes or Pulumi resource",
 		Version: Version,
-		Commands: []*cli.Command{
+		Commands: append([]*cli.Command{
 			pkiCommand(),
-		},
+		}, bootstrapCommands()...),
 	}
 
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
