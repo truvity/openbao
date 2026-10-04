@@ -48,7 +48,7 @@ namespace per project ([ADR 0001](decisions/0001-namespaces-are-environment-proj
 `Validate` refuses a namespace or project name with a `/`, a space, `..`,
 `*` or `+` — a single, plain path segment or nothing.
 
-Two worked examples, the small one first:
+Two examples, the small one first:
 
 - [`desired-one-env.yaml`](../pkg/model/testdata/desired-one-env.yaml) —
   **one environment**, on the cluster that also runs the server: a root
@@ -363,7 +363,7 @@ to ask for a principal outside its own expected range before it signs
 resulting certificate scoping ITS OWN trust of that CA to a narrower
 pattern than the domain suffix alone — OpenSSH's `known_hosts`
 `@cert-authority` matching does support glob patterns, even though this
-model's own role check does not. See a consumer's own docs for a worked
+model's own role check does not. See a consumer's own docs for an
 example of exactly this (an EC2 host whose hostname suffix is shared
 across every deployment environment, scoped instead by each
 environment's own non-overlapping IP range).
@@ -620,7 +620,7 @@ Issuer names are unique across the server because resources are named
 after them. `Options.Rename` maps any of these to the name an existing
 state holds the object under ([adoption.md](adoption.md#adopting-a-running-openbao-configuration)).
 [`pkg/apply/testdata/resources.yaml`](../pkg/apply/testdata/resources.yaml)
-is every resource the worked example registers, with its inputs.
+is every resource the model's example registers, with its inputs.
 
 ### What is protected
 

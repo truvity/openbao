@@ -65,7 +65,7 @@ trustDomains:
         name: example-private-2026-01
         subject: { commonName: example.internal Intermediate CA, organization: Example Org }
         keyCurve: P-384
-        maxPathLen: 2
+        maxPathLen: 2           # the root's 3 less one: a domain intermediate spends exactly one level
         permittedDnsDomains: [example.internal, cluster.local]
       lifetimes: &standard { domainIntermediate: 87600h, clusterIntermediate: 26280h, leafDefault: 720h, leafMaximum: 2160h, renewBefore: 240h }
       roles:
@@ -98,7 +98,7 @@ trustDomains:
         name: example-identity-2026-01
         subject: { commonName: Workload Identity Intermediate CA, organization: Example Org }
         keyCurve: P-384
-        maxPathLen: 2
+        maxPathLen: 2           # the root's 3 less one, as for every domain intermediate
         permittedUriDomains: [.example.internal]   # every environment's SPIFFE trust domain is a subdomain of this
       lifetimes: { domainIntermediate: 87600h, clusterIntermediate: 26280h, leafDefault: 1h, leafMaximum: 24h, renewBefore: 10m }
       environments: [dev, prod]
@@ -110,7 +110,7 @@ trustDomains:
         lifetimes: { default: 1h, maximum: 24h, renewBefore: 10m }
       environmentCA:
         keyCurve: P-384
-        maxPathLen: 0
+        maxPathLen: 0           # root-signed, issues leaves only: strictly below the root's 3
         commonNameSuffix: Workload Identity CA
       rootSignedEnvironments: [dev]
 
@@ -138,11 +138,13 @@ below. [`pkg/pki/testdata/contract-estate.yaml`](../pkg/pki/testdata/contract-es
 is a contract that spells every one of them, the shape of an estate that
 adopted the package over a PKI that was already deployed.
 
-`serialNamespace` (top level, optional, default `private-pki`) prefixes the
-label every deterministic serial is derived from. The example omits it
-because the default is right for a new root; an estate whose root already
-exists must set it to the prefix that root was created with, and never
-change it afterwards ([adoption.md](adoption.md)).
+`serialNamespace` (top level, optional, default `private-pki`, the same
+default [ceremony.md](ceremony.md) and the
+[reference](reference.md#hierarchy-file) name) prefixes the label every
+deterministic serial is derived from. The example omits it because the
+default is right for a new root; an estate whose root already exists must
+set it to the prefix that root was created with, and never change it
+afterwards ([adoption.md](adoption.md)).
 
 `Load` reads it strictly (an unknown key is an error) and calls `Validate`,
 which carries every invariant below. `ArtifactDir` (default `pki-roots`,
@@ -484,7 +486,7 @@ URI subtrees, and no IP address at all), `signedBy` its domain intermediate
 or `external` when the root signs it, and every derived role names its
 issuer. Because the names come only from the contract, a consumer that
 applies the result is registered under the names its contract spells; the
-worked example's derivation is
+example estate's derivation is
 [`pkg/pki/testdata/derive-estate.yaml`](../pkg/pki/testdata/derive-estate.yaml).
 
 ### Reading a contract from a file system

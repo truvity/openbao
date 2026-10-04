@@ -396,6 +396,41 @@ func TestSpecsCarryContractSerialNamespace(t *testing.T) {
 	}
 }
 
+// One default, in one place: a contract that leaves serialNamespace out hands
+// every ceremony spec an EMPTY namespace, so pkg/ceremony's own default
+// (`private-pki`, documented as the default in docs/pki.md and
+// docs/reference.md) is what every serial is derived under -- never a second
+// default kept in this package.
+func TestSpecsWithoutSerialNamespaceUseTheCeremonyDefault(t *testing.T) {
+	if ceremony.DefaultSerialNamespace != "private-pki" {
+		t.Fatalf("ceremony.DefaultSerialNamespace = %q: the docs name private-pki", ceremony.DefaultSerialNamespace)
+	}
+
+	contract := ceremonyFixture(t)
+	contract.SerialNamespace = ""
+
+	rootSpec, err := contract.RootSpec("example-root-2026-01")
+	if err != nil {
+		t.Fatalf("RootSpec: %v", err)
+	}
+
+	dnsSpec, err := contract.DNSIntermediateSpec("internal", "example-root-2026-01")
+	if err != nil {
+		t.Fatalf("DNSIntermediateSpec: %v", err)
+	}
+
+	caSpec, err := contract.EnvironmentCASpec("workload", "dev", "dev.internal.example.org", "example-root-2026-01")
+	if err != nil {
+		t.Fatalf("EnvironmentCASpec: %v", err)
+	}
+
+	for name, got := range map[string]string{"root": rootSpec.SerialNamespace, "dns": dnsSpec.SerialNamespace, "environment CA": caSpec.SerialNamespace} {
+		if got != "" {
+			t.Errorf("%s spec carries serial namespace %q, want empty (the ceremony default applies)", name, got)
+		}
+	}
+}
+
 func TestEmergencyServerSpec(t *testing.T) {
 	contract := ceremonyFixture(t)
 	notBefore := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)

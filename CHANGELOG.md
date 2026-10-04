@@ -5,6 +5,16 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Fixed
+
+- **One serial-namespace default, named the same everywhere.** `pkg/ceremony`'s `DefaultSerialNamespace` (`private-pki`) is the only default; `pkg/pki`'s contract documentation, `docs/pki.md`, `docs/ceremony.md`, `docs/reference.md` and `docs/adoption.md` all say so, and a test pins that a contract without `serialNamespace` hands every ceremony spec an empty namespace, so no second default can appear in `pkg/pki`. An estate that adopted a root created under another prefix still sets `serialNamespace` explicitly, as before. No behaviour change.
+
+- **The path-length rules in `docs/pki.md` and `docs/ceremony.md` say what validation enforces.** A domain intermediate is exactly one less than the root's; a CA the root signs directly for leaves alone is strictly less (0 when nothing sits below it), which the hierarchy-file table had as "each layer is exactly one less than its parent". The example contract's `maxPathLen` values are annotated with the rule that fixes them.
+
+- **"Worked example" means one thing.** It is reserved for `examples/org`; the model's and the builder's examples, and the install snippet in the README, are called examples. Documentation only.
+
 ## v0.30.0
 
 ### Added
