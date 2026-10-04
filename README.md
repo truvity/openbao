@@ -283,6 +283,12 @@ touches a key (see Status); it does not serve an estate on another cloud.
   approval, the edge, workload identity, PostgreSQL, SSH and sign-in, the
   decision log and a living status page. A pull request that changes a
   trust path updates it
+- [docs/decision-guide.md](docs/decision-guide.md) — **which capability
+  level to adopt, and why**: the ladder 0 to 5 (prerequisites, toggles,
+  consequences), the namespace split and the PKI chains, the approver layer
+  and the mTLS adoption model (off, identity, enforced)
+- [docs/prerequisites.md](docs/prerequisites.md) — the platform checklist
+  per capability level, every item with the command that verifies it
 - [docs/adoption.md](docs/adoption.md) — prerequisites, install order,
   adopting objects that already run, the zero-diff gate
 - [docs/safety.md](docs/safety.md) — the backup regime, the traps, and
