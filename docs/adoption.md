@@ -1,5 +1,9 @@
 # Adoption
 
+Which capability level to adopt: [decision-guide.md](decision-guide.md). What
+the platform must provide at each level, with a check for every item:
+[prerequisites.md](prerequisites.md).
+
 ## Prerequisites
 
 - The server, from upstream's `openbao/openbao` chart, with Raft storage
