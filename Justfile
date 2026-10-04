@@ -65,6 +65,14 @@ rehearse-bootstrap-tls:
 rehearse-seal-plugin:
     OPENBAO_SEAL_REHEARSAL=required go test ./conformance/ -run TestSealPluginRehearsal -count=1 -v
 
+# The rendered server HCL against a real `bao`, offline: starts a server in a
+# network namespace with no interface and requires it to reach the seal, and
+# `bao operator diagnose` to parse the file. CI runs it for 2.6.2 and 2.7.0
+# (the server-config job); locally, BAO is the binary to try. Needs
+# unprivileged user and network namespaces; not part of `just test`.
+server-config BAO=`command -v bao`:
+    OPENBAO_BAO_BINARY={{ BAO }} go test ./conformance/ -run 'TestServerAccepts|TestServerStartsOn|TestDiagnose' -count=1 -v
+
 # Regenerate the golden renders, the ceremony's template goldens, the
 # model's example, the builder's example, the apply's registered resources and the access-roster
 # example — review the diff before committing.
