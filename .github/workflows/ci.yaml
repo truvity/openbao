@@ -92,13 +92,39 @@ jobs:
           OPENBAO_BAO_BINARY: ${{ runner.temp }}/bao/bao
         run: go test ./conformance/ -run 'TestFreshServer' -count=1 -v -timeout 12m
 
+  # Every package must compile on every OS the module may be consumed on
+  # (a build tag that only says `!linux` once broke Windows). Build only:
+  # the tests are Linux's.
+  cross-build:
+    name: cross-build (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build every package
+        env:
+          GOOS: ${{ matrix.goos }}
+          CGO_ENABLED: "0"
+        run: go build ./...
+
   # Stable name for branch protection: the matrix reports as
   # "recipes / lint" and so on, so a required context called "check"
   # would never arrive and every PR would hang waiting for it.
   check:
-    needs: [recipes, server-config]
+    needs: [recipes, server-config, cross-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: '[ "${{ needs.recipes.result }}" = "success" ] && [ "${{ needs.server-config.result }}" = "success" ]'
+      - run: '[ "${{ needs.recipes.result }}" = "success" ] && [ "${{ needs.server-config.result }}" = "success" ] && [ "${{ needs.cross-build.result }}" = "success" ]'
