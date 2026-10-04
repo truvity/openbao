@@ -1,0 +1,25 @@
+# Level 0: the server and what keeps it observable, with no model, no PKI and
+# no secrets. Nothing here logs in to the server, so nothing here needs a
+# desired state. Render with `helm template openbao-ops charts/openbao-ops
+# -f ops.values.yaml`.
+namespace: openbao
+# The serving certificate comes from whatever issuer the cluster already has;
+# the server needs a certificate from SOMEONE, not from itself.
+serverCertificate:
+  enabled: true
+  externalDnsName: openbao.example.internal
+  issuerRef:
+    name: example-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+certificateExpiry:
+  enabled: true
+  clusterName: example-cluster
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
+networkPolicy:
+  enabled: true
+  clientCidrs: ["10.0.0.0/8"]

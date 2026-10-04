@@ -81,6 +81,41 @@ for p in "${patterns[@]}"; do
   fi
 done
 
+# The worked example (examples/org) is the one place an adopter copies from, so
+# it is held to a stricter rule than the rest: it describes a made-up
+# organisation. No name of a real one, and every host it names is under a
+# domain reserved for examples (RFC 2606) or is a bare placeholder.
+#
+#   - Not the names of the organisations that maintain this repository, or of
+#     the estates that adopt it. (An import path of this module is not a
+#     name: it is removed before the match.)
+#   - Every URL's host is under example.com, example.org, example.net or
+#     example.internal, or is a bare name or `<service>.<namespace>.svc` (a Service of the
+#     install itself; `.svc.cluster.local` stays banned above),
+#     loopback, or one of the public registries the plugin images come from.
+org_files=$(git ls-files -z -- 'examples/org' | tr '\0' '\n')
+if [ -n "$org_files" ]; then
+  # shellcheck disable=SC2086
+  names=$(grep -InEi 'truvity|opwerm|nexus|trustform|trust-form' $org_files 2>/dev/null \
+            | grep -vE 'github\.com/truvity/openbao' | head -5)
+  if [ -n "$names" ]; then
+    echo "LEAK: examples/org names an organisation — it describes a made-up one:"
+    echo "$names" | sed 's/^/    /'
+    fail=1
+  fi
+
+  # shellcheck disable=SC2086
+  hosts=$(grep -InEo 'https?://[A-Za-z0-9._-]+' $org_files 2>/dev/null \
+            | grep -vE '://[A-Za-z0-9._-]*(example\.(com|org|net|internal)|alertmanager\.example\.svc)$' \
+            | grep -vE '://(github\.com|ghcr\.io|pkg-containers\.githubusercontent\.com|127\.0\.0\.1|localhost)$' \
+            | grep -vE '://[A-Za-z0-9-]+(\.openbao-internal|\.[A-Za-z0-9-]+\.svc)?$' | head -5)
+  if [ -n "$hosts" ]; then
+    echo "LEAK: examples/org names a host outside the reserved example domains:"
+    echo "$hosts" | sed 's/^/    /'
+    fail=1
+  fi
+fi
+
 if [ "$fail" = 0 ]; then
   echo "leak canary clean — ${#patterns[@]} patterns checked, no particulars found"
 fi

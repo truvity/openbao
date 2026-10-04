@@ -83,6 +83,16 @@ golden:
     UPDATE_GOLDEN=1 go test ./pkg/builder/ -run Golden
     UPDATE_GOLDEN=1 go test ./pkg/apply/ -run Golden
     UPDATE_GOLDEN=1 go test ./examples/roster/ -run Golden
+    UPDATE_GOLDEN=1 go test ./examples/org/
+
+# The worked example (examples/org), levels 0 to 5, with no cluster and no
+# cloud account: each level's contract and desired state validate, its apply
+# previews under Pulumi's mocks, and its chart values render with
+# `helm template` against the committed goldens. The Go half also runs in
+# `test`; this is its own job so a failure names the example.
+examples:
+    go test ./examples/org/ -count=1
+    hack/golden.sh examples
 
 # Compile everything, openbaoctl included.
 build:
@@ -111,7 +121,7 @@ package:
     for chart in {{ charts }}; do helm package "charts/$chart" --destination dist/; done
 
 # Everything CI runs on a pull request.
-check: build lint test leak-canary
+check: build lint test examples leak-canary
 
 # The admission policy of openbao-consumers, proved on a real API server:
 # creates a throwaway kind cluster (its own temporary kubeconfig, never the

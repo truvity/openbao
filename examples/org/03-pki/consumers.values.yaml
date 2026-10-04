@@ -1,0 +1,26 @@
+# Level 3: level 1 plus the PKI: cert-manager issuers backed by the
+# environment's issuing CA, the trust bundle that distributes the root, and a
+# disposable certificate that proves the login, the chain and renewal before
+# any real workload changes its issuerRef.
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+vaultNamespace: dev
+auth:
+  mountPath: jwt-dev
+stores:
+  - name: example-app
+    conditions:
+      - namespaces: [example-app]
+pki:
+  enabled: true
+  trustAnchors:
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  issuers:
+    - name: example-private
+      signPath: pki-internal/sign/server
+      role: example-private
+certificates:
+  - name: example-private-smoke
+    commonName: smoke.dev.internal.example.org
+    dnsNames: [smoke.dev.internal.example.org]

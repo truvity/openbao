@@ -1,0 +1,12 @@
+# Level 1: the dev cluster's side. One External Secrets store that reads the
+# example-app prefix of the dev environment through the jwt-dev mount. No
+# cert-manager and no trust-manager: nothing here issues a certificate.
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+vaultNamespace: dev
+auth:
+  mountPath: jwt-dev
+stores:
+  - name: example-app
+    conditions:
+      - namespaces: [example-app]

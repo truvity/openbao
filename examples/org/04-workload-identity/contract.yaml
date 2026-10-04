@@ -1,0 +1,113 @@
+# Level 4: level 3 plus a workload-identity trust domain (a URI domain): an
+# environment CA constrained to that environment's SPIFFE trust domain.
+# Every name is a placeholder.
+schemaVersion: 1
+
+global:
+  immutable: true
+  keyAlgorithm: ECDSA
+  keyCurve: P-384
+  signatureAlgorithm: ECDSA_SHA_384
+  minimumTlsVersion: TLS1.3
+  additionalLeafKeyCurves: [P-256]
+
+rootGenerations:
+  - id: example-root-2026-01
+    lifetime: 175200h # 20 years
+    certificate:
+      notBefore: "2026-01-01T00:00:00Z"
+      subject:
+        commonName: Example Private Root 2026-01
+        organization: Example Org
+      maxPathLen: 3
+    custody:
+      provider: aws-kms
+      accountId: "111122223333"
+      profile: example-root@admin
+      region: eu-central-1
+      trustedPrincipalArnPattern: "arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_role-admin_*"
+      disasterRecovery:
+        mode: multi-region-replica
+        region: eu-north-1
+    state: active
+
+trustDomains:
+  dns:
+    - name: internal
+      suffix: internal.example.org
+      rootGeneration: example-root-2026-01
+      domainIntermediate:
+        name: example-internal-2026-01
+        subject:
+          commonName: internal.example.org Intermediate CA
+          organization: Example Org
+        keyCurve: P-384
+        maxPathLen: 2
+        permittedDnsDomains: [internal.example.org, cluster.local]
+      lifetimes:
+        domainIntermediate: 87600h
+        clusterIntermediate: 26280h
+        leafDefault: 720h
+        leafMaximum: 2160h
+        renewBefore: 240h
+      roles:
+        - name: server
+          names:
+            source: environment-zone
+            patterns: ["{zone}"]
+            bare: true
+            subdomains: true
+          usage: {server: true, client: true}
+          keyCurve: P-384
+          lifetimes:
+            default: 720h
+            maximum: 2160h
+            renewBefore: 240h
+  uri:
+    - name: workload
+      rootGeneration: example-root-2026-01
+      domainIntermediate:
+        name: example-workload-2026-01
+        subject:
+          commonName: Workload Identity Intermediate CA
+          organization: Example Org
+        keyCurve: P-384
+        maxPathLen: 2
+        permittedUriDomains: [".internal.example.org"]
+      lifetimes:
+        domainIntermediate: 87600h
+        clusterIntermediate: 26280h
+        leafDefault: 1h
+        leafMaximum: 24h
+        renewBefore: 10m
+      environments: [dev, prod]
+      role:
+        name: identity
+        uriSanPattern: "spiffe://{zone}/*"
+        usage: {server: true, client: true}
+        keyCurve: P-256
+        lifetimes:
+          default: 1h
+          maximum: 24h
+          renewBefore: 10m
+      environmentCA:
+        keyCurve: P-384
+        maxPathLen: 0
+        commonNameSuffix: Workload Identity CA
+      # dev's CA is signed by the root itself (two-phase ceremony); prod's is
+      # issued by the workload domain intermediate until it is added here.
+      rootSignedEnvironments: [dev]
+
+alerts:
+  enabled: false
+  thresholds:
+    rootGeneration: 43800h
+    domainIntermediate: 17520h
+    clusterIntermediate: 4320h
+    leaf: 240h
+
+signAlerts:
+  notify: [security@example.org]
+
+migration:
+  trustedGenerations: [example-root-2026-01]

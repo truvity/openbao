@@ -1,0 +1,1081 @@
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-ingress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 8200
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+              component: server
+      ports:
+        - port: 8200
+          protocol: TCP
+        - port: 8201
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao-snapshot
+      ports:
+        - port: 8200
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao-plugin-catalog
+      ports:
+        - port: 8200
+          protocol: TCP
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-restore-check-ingress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-restore-check
+  policyTypes:
+    - Ingress
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-tls-expiry-ingress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-tls-expiry
+  policyTypes:
+    - Ingress
+
+---
+# Source: openbao-ops/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-plugin-catalog-ingress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao-plugin-catalog
+  policyTypes:
+    - Ingress
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+
+---
+# Source: openbao-ops/templates/plugin-catalog.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-plugin-catalog
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-plugin-catalog
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-restore-check
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-snapshot
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+automountServiceAccountToken: false
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-restore-check
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+data:
+  scratch.hcl: |
+    ui            = false
+    disable_mlock = true
+    api_addr      = "http://127.0.0.1:8200"
+    cluster_addr  = "http://127.0.0.1:8201"
+    listener "tcp" {
+      address     = "127.0.0.1:8200"
+      tls_disable = true
+    }
+    storage "raft" {
+      path    = "/data"
+      node_id = "restore-check"
+    }
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+    # As production declares it, so the restored audit table finds its device.
+    audit "file" "to-stdout" {
+      options {
+        file_path = "stdout"
+      }
+    }
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    resourceNames: ["openbao-tls"]
+    verbs: ["get"]
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+subjects:
+  - kind: ServiceAccount
+    name: openbao-tls-expiry
+    namespace: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-tls-expiry
+
+---
+# Source: openbao-ops/templates/certificate-expiry.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-tls-expiry
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-tls-expiry
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "23 7 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-tls-expiry
+        spec:
+          serviceAccountName: openbao-tls-expiry
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: read
+              image: alpine/kubectl:1.34.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n openbao get certificate openbao-tls \
+                    -o jsonpath='{.status.notAfter}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{.status.conditions[?(@.type=="Ready")].message}{"\n"}' \
+                    > /work/status
+                  cat /work/status
+              env:
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                limits:
+                  memory: 128Mi
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: alert
+              image: curlimages/curl:8.22.0
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  not_after=$(sed -n 1p /work/status)
+                  ready=$(sed -n 2p /work/status)
+                  reason=$(sed -n 3p /work/status)
+                  [ -n "$not_after" ] || { echo "openbao/openbao-tls has no status.notAfter"; not_after=1970-01-01T00:00:00Z; }
+                  # busybox's date does not read RFC 3339: hand it the form it parses.
+                  left=$(( $(date -u -d "$(echo "$not_after" | sed -e 's/T/ /' -e 's/Z$//')" +%s) - $(date -u +%s) ))
+                  echo "openbao-tls: notAfter $not_after, $((left / 86400)) days left, Ready=$ready"
+                  if [ "$left" -ge 1814400 ]; then
+                    exit 0
+                  fi
+                  # cert-manager's own text goes into a JSON body: one quote in
+                  # it would make the body something Alertmanager rejects, and
+                  # then nobody is told at all.
+                  escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+                  cat > /tmp/alert.json <<JSON
+                  [
+                    {
+                      "labels": {
+                        "alertname": "OpenBAOCertificateExpiring",
+                        "severity": "warning",
+                        "release": "openbao"
+                      },
+                      "annotations": {
+                        "summary": "OpenBAO's certificate ends in $((left / 86400)) days",
+                        "description": "openbao/openbao-tls on example-cluster ends at ${not_after} ($((left / 86400)) days left). It renews through OpenBAO 30 days before its end, so renewal has been failing for $(( (2592000 - left) / 86400 )) days. Certificate Ready=$(escape "$ready"): $(escape "$reason"). Look at: kubectl -n openbao get certificaterequest; kubectl -n cert-manager logs deploy/cert-manager."
+                      }
+                    }
+                  ]
+                  JSON
+                  curl --silent --show-error --fail --max-time 30 \
+                    --header 'Content-Type: application/json' \
+                    --data-binary @/tmp/alert.json \
+                    "http://alertmanager.example.svc:9093/api/v2/alerts"
+                  exit 1
+              env:
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+
+---
+# Source: openbao-ops/templates/plugin-catalog.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-plugin-catalog
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-plugin-catalog
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "58 * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-plugin-catalog
+        spec:
+          serviceAccountName: openbao-plugin-catalog
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: read
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  : > /work/alert
+                  : > /work/report
+                  problems=0
+                  cluster='example-cluster'
+                  mount='jwt-hub'
+                  role='openbao-plugin-catalog'
+
+                  # Nothing below the login exits non-zero: the alert
+                  # container is the only thing that tells anyone, and it
+                  # never runs if this one fails the pod.
+                  blind() {
+                    {
+                      echo "${cluster:+$cluster: }the plugin-catalog watch cannot see OpenBAO"
+                      echo "$1: $(head -c 300 /work/why 2>/dev/null)"
+                      echo "This watch logs in as the role $role through the $mount mount to read sys/plugins/catalog/<type>/<name>, and it can no longer do so. Losing that access is a step someone would take before a catalog entry could disappear unnoticed, and it is equally what a sealed or unreachable server looks like."
+                      echo "Look at: kubectl -n openbao get pods -l app.kubernetes.io/name=openbao,component=server; bao status; bao read auth/$mount/role/$role; bao policy read <the policy bound to it>."
+                      echo "The way back: restore the role and its policy — read AND sudo on sys/plugins/catalog/<type>/<name> for each configured entry, and nothing else — from the configuration that owns them, and re-run this job."
+                    } > /work/alert
+                    cat /work/alert
+                    exit 0
+                  }
+
+                  if ! bao write -field=token "auth/$mount/login" \
+                       "role=$role" jwt=@/var/run/openbao/token \
+                       > /work/token 2> /work/why; then
+                    blind "logging in failed"
+                  fi
+                  BAO_TOKEN="$(cat /work/token)"
+                  export BAO_TOKEN
+                  rm -f /work/token
+
+                  # Reading one entry does not exit the container: a
+                  # single plugin missing, or a policy narrowed to drop
+                  # one of several entries, is a problem for the report,
+                  # not proof the whole watch has gone blind.
+                  look() {
+                    type=$1; name=$2; version=$3; want_oci=$4; want_declarative=$5; what=$6
+                    if ! bao read "sys/plugins/catalog/$type/$name" "version=$version" \
+                         > /work/answer 2> /work/why; then
+                      echo "  $type/$name ($what) is not in the catalog at version $version: $(head -c 300 /work/why)" >> /work/report
+                      problems=$((problems + 1))
+                      return 0
+                    fi
+                    if [ "$want_oci" = "true" ]; then
+                      got=$(bao read -field=oci "sys/plugins/catalog/$type/$name" "version=$version" 2> /work/why) || got="?"
+                      if [ "$got" != "true" ]; then
+                        echo "  $type/$name ($what) is in the catalog at $version but oci=$got, not true — an API registration, not a declarative download" >> /work/report
+                        problems=$((problems + 1))
+                        return 0
+                      fi
+                    fi
+                    if [ "$want_declarative" = "true" ]; then
+                      got=$(bao read -field=declarative "sys/plugins/catalog/$type/$name" "version=$version" 2> /work/why) || got="?"
+                      if [ "$got" != "true" ]; then
+                        echo "  $type/$name ($what) is in the catalog at $version but declarative=$got, not true — an API registration, not a declarative download" >> /work/report
+                        problems=$((problems + 1))
+                        return 0
+                      fi
+                    fi
+                    echo "$type/$name: in the catalog at $version"
+                  }
+                  look 'auth' 'aws' 'v0.1.1' 'true' 'true' 'the aws auth method, for SSH host certificates'
+
+                  bao token revoke -self || true
+
+                  if [ "$problems" = 0 ]; then
+                    exit 0
+                  fi
+                  {
+                    echo "${cluster:+$cluster: }$problems of 1 OpenBAO plugin(s) are not in the catalog as configured"
+                    echo "OpenBAO downloads an OCI plugin declaratively at startup, and plugin_download_behavior = \"continue\" lets the server start anyway when that download fails — a mount that uses a missing plugin fails only when something tries to use it, never when the download itself was silently skipped:"
+                    cat /work/report
+                    echo "Look at: kubectl -n openbao get pods -l app.kubernetes.io/name=openbao,component=server (each pod's own logs for \"failed to download plugin\"); bao read sys/plugins/catalog/<type>/<name>."
+                    echo "The way back: canary one standby, confirm the catalog entry there, then roll the rest — docs/server.md's plugin rollout runbook."
+                  } > /work/alert
+                  cat /work/alert
+              env:
+                - name: BAO_ADDR
+                  value: https://openbao-active.openbao.svc:8200
+                - name: BAO_CACERT
+                  value: /tls/ca.crt
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: alert
+              image: curlimages/curl:8.22.0
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  if [ ! -s /work/alert ]; then
+                    echo "pluginCatalog: nothing to report"
+                    exit 0
+                  fi
+                  cat /work/alert
+                  summary=$(sed -n 1p /work/alert)
+                  description=$(sed -n '2,$p' /work/alert | tr '\n\t' '  ')
+                  escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+                  cat > /tmp/alert.json <<JSON
+                  [
+                    {
+                      "labels": {
+                        "alertname": "$(escape "$OPENBAO_ALERTNAME")",
+                        "severity": "$(escape "$OPENBAO_SEVERITY")",
+                        "release": "$(escape "$OPENBAO_RELEASE")"
+                      },
+                      "annotations": {
+                        "summary": "$(escape "$summary")",
+                        "description": "$(escape "$description")"
+                      }
+                    }
+                  ]
+                  JSON
+                  curl --silent --show-error --fail --max-time 30 \
+                    --header 'Content-Type: application/json' \
+                    --data-binary @/tmp/alert.json \
+                    'http://alertmanager.example.svc:9093/api/v2/alerts'
+                  exit 1
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: OPENBAO_ALERTNAME
+                  value: "OpenBAOPluginMissing"
+                - name: OPENBAO_SEVERITY
+                  value: "critical"
+                - name: OPENBAO_RELEASE
+                  value: "openbao"
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+
+---
+# Source: openbao-ops/templates/restore-check.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-restore-check
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-restore-check
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "37 5 * * 0"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-restore-check
+        spec:
+          serviceAccountName: openbao-restore-check
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: fetch
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  newest=$(aws s3api list-objects-v2 --bucket example-openbao-backups --prefix raft/ \
+                    --query 'sort_by(Contents, &LastModified)[-1].[Key, LastModified]' --output text)
+                  set -- $newest
+                  key=$1
+                  age=$(( $(date +%s) - $(date -d "$2" +%s) ))
+                  echo "newest snapshot: $key, $((age / 60)) minutes old"
+                  if [ "$age" -gt 43200 ]; then
+                    echo "the newest snapshot is older than 12 hours: the snapshot job is not running"
+                    exit 1
+                  fi
+                  aws s3 cp "s3://example-openbao-backups/$key" /work/openbao.snap --no-progress
+                  echo "$key" > /work/key
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+            - name: server
+              restartPolicy: Always
+              image: openbao/openbao:2.6.2
+              command: [bao, server, -config=/etc/openbao/scratch.hcl]
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/openbao
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                - name: server-tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: check
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # bao status: 0 unsealed, 2 sealed or uninitialized, 1 unreachable.
+                  wait_for() {
+                    i=0
+                    while [ "$i" -lt 90 ]; do
+                      rc=0
+                      bao status >/dev/null 2>&1 || rc=$?
+                      case "$1:$rc" in any:0|any:2|unsealed:0) return 0 ;; esac
+                      i=$((i + 1))
+                      sleep 2
+                    done
+                    echo "the scratch server never became $1 (bao status exit $rc)"
+                    bao status || true
+                    return 1
+                  }
+
+                  wait_for any
+                  # Recovery shares of a throwaway install: never printed, gone with the pod.
+                  BAO_TOKEN=$(bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json |
+                    sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p')
+                  [ -n "$BAO_TOKEN" ] || { echo "initializing the scratch server returned no root token"; exit 1; }
+                  export BAO_TOKEN
+                  wait_for unsealed
+
+                  # -force: the snapshot carries production's keyring, not the scratch's.
+                  # Judge by exit code; 2.x prints "Error properly closing policy file" on success.
+                  bao operator raft snapshot restore -force /work/openbao.snap
+                  unset BAO_TOKEN
+                  wait_for unsealed
+
+                  # The scratch root token died with the restore; from here on only what the
+                  # snapshot itself grants.
+                  i=0
+                  until BAO_TOKEN=$(bao write -field=token auth/jwt-hub/login role=openbao-restore-check \
+                    jwt=@/var/run/openbao/token 2>/tmp/login.err); do
+                    i=$((i + 1))
+                    if [ "$i" -ge 30 ]; then
+                      echo "cannot log in to the restored copy:"
+                      cat /tmp/login.err
+                      exit 1
+                    fi
+                    sleep 2
+                  done
+                  export BAO_TOKEN
+
+                  namespaces="dev prod"
+                  for ns in $namespaces; do
+                    got=$(bao read -namespace="$ns" -field=data kv/data/restore-canary)
+                    if [ "$got" != "map[namespace:$ns]" ]; then
+                      echo "namespace $ns: restore canary reads '$got'"
+                      exit 1
+                    fi
+                  done
+                  bao token revoke -self >/dev/null
+
+                  echo "restore check passed: $(cat /work/key) opened; canaries read, in:" $namespaces
+              env:
+                - name: BAO_ADDR
+                  value: http://127.0.0.1:8200
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: config
+                  mountPath: /etc/restore-check
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: data
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: server-tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: config
+              configMap:
+                name: openbao-restore-check
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-snapshot
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "17 */6 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-snapshot
+        spec:
+          serviceAccountName: openbao-snapshot
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: snapshot
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  date -u +%Y%m%dT%H%M%SZ > /work/taken-at
+                  BAO_TOKEN="$(bao write -field=token auth/jwt-hub/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
+                  export BAO_TOKEN
+                  bao operator raft snapshot save /work/openbao.snap
+                  bao token revoke -self
+                  mkdir /work/check
+                  tar -xzf /work/openbao.snap -C /work/check
+                  (cd /work/check && sha256sum -c SHA256SUMS)
+                  rm -rf /work/check
+                  echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
+              env:
+                - name: BAO_ADDR
+                  value: https://openbao-active.openbao.svc:8200
+                - name: BAO_CACERT
+                  value: /tls/ca.crt
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  key="raft/$(cat /work/taken-at).snap"
+                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+
+---
+# Source: openbao-ops/templates/snapshot.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-snapshot-weekly
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao-snapshot
+    app.kubernetes.io/part-of: openbao
+spec:
+  schedule: "47 3 * * 0"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao-snapshot
+        spec:
+          serviceAccountName: openbao-snapshot
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: snapshot
+              image: openbao/openbao:2.6.2
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  date -u +%Y%m%dT%H%M%SZ > /work/taken-at
+                  BAO_TOKEN="$(bao write -field=token auth/jwt-hub/login role=openbao-snapshot jwt=@/var/run/openbao/token)"
+                  export BAO_TOKEN
+                  bao operator raft snapshot save /work/openbao.snap
+                  bao token revoke -self
+                  mkdir /work/check
+                  tar -xzf /work/openbao.snap -C /work/check
+                  (cd /work/check && sha256sum -c SHA256SUMS)
+                  rm -rf /work/check
+                  echo "snapshot $(cat /work/taken-at): $(wc -c < /work/openbao.snap) bytes"
+              env:
+                - name: BAO_ADDR
+                  value: https://openbao-active.openbao.svc:8200
+                - name: BAO_CACERT
+                  value: /tls/ca.crt
+                - name: HOME
+                  value: /work
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: login
+                  mountPath: /var/run/openbao
+                  readOnly: true
+                - name: ca
+                  mountPath: /tls
+                  readOnly: true
+              resources:
+                limits:
+                  memory: 256Mi
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.36.44
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  key="weekly/$(cat /work/taken-at).snap"
+                  aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
+              env:
+                - name: AWS_REGION
+                  value: eu-example-1
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                limits:
+                  memory: 512Mi
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            -
+              name: login
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: openbao
+                      expirationSeconds: 600
+                      path: token
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+
+---
+# Source: openbao-ops/templates/certificate.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-tls
+  namespace: openbao
+spec:
+  secretName: openbao-tls
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: example-ca
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    rotationPolicy: Always
+    size: 256
+  commonName: "openbao.example.internal"
+  dnsNames:
+    - "openbao.example.internal"
+    - "openbao"
+    - "openbao.openbao.svc"
+    - "openbao-active"
+    - "openbao-active.openbao.svc"
+    - "*.openbao-internal"
+    - "*.openbao-internal.openbao.svc"
+  ipAddresses:
+    - 127.0.0.1
