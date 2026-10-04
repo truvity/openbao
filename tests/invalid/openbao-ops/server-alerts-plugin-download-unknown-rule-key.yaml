@@ -1,0 +1,6 @@
+serverAlerts:
+  pluginDownload:
+    enabled: true
+    plugin: auth/aws
+    rules:
+      downloadFailing: {thresholdMilliseconds: 1}

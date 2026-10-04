@@ -167,6 +167,25 @@ requires and does not render.
 | `alerts.selector` | `""` | Extra matchers added to every selector after `namespace="<release namespace>"`. |
 | `alerts.rules.<rule>` | | `enabled`, `for`, `severity`, `labels`, `annotations`; rules: `sealed` (5m, critical), `noActiveNode` (3m, critical), `raftUnhealthy` (10m, warning, `minHealthyVoters: 3`), `raftCommitLag` (10m, warning, `maxIndexDelta: 500`), `auditFailures` (2m, critical), `highLatency` (15m, warning, `thresholdMilliseconds: 1000`), `scrapeDown` (10m, warning), `metricsAbsent` (15m, warning). |
 
+### serverAlerts.pluginDownload
+
+Two LogsQL alerts, as a `VMRule`, on the server's own log: a declarative
+plugin download that is failing and has not recovered, and the retry sidecar
+giving up. Off by default. The prose is in the
+[chart README](../charts/openbao-ops/README.md#serveralertsplugindownload).
+
+| Value | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Render the object. |
+| `plugin` | `""` | Required: the plugin whose download is watched (`auth/aws`), named in the text. |
+| `name`, `namespace`, `labels`, `annotations`, `ruleLabels`, `groupName` | `<release>-plugin-download`, release namespace, `observability.rule-type: vlogs`, | The object, and the labels added to every rule. |
+| `interval` | `15m` | Whole minutes: the group interval, which is also the lookback of both rules. |
+| `clusterName` | `""` | The `k8s_cluster_name` label of every rule. |
+| `decision`, `runbook` | `""` | A reference rendered after "permanently" in the first description, and the `runbook` annotation. |
+| `serverContainer` | `openbao` | The container whose log the first rule reads. |
+| `sidecar.container`, `.attempts`, `.budgetMinutes` | `tls-reload`, `20`, `10` | The retry sidecar the second rule reads, its attempt count and the minutes that takes. |
+| `rules.downloadFailing`, `rules.sidecarGaveUp` | enabled, `for` unset, `warning` | `enabled`, `for`, `severity`, `labels`, `annotations`. |
+
 ### pluginCatalog
 
 Are the plugins [`pkg/serverpreset`](#pkgserverpreset) declares actually

@@ -1,0 +1,6 @@
+# The interval is also the lookback the text names, in whole minutes.
+serverAlerts:
+  pluginDownload:
+    enabled: true
+    plugin: auth/aws
+    interval: 90s

@@ -1,0 +1,49 @@
+---
+# Source: openbao-ops/templates/server-plugin-alerts.yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: openbao-plugin-download
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: openbao-plugin-download-alerts
+    app.kubernetes.io/part-of: openbao
+    observability.rule-type: vlogs
+  annotations:
+    example.com/sync-wave: "95"
+spec:
+  groups:
+    -
+      interval: 15m
+      name: OpenBAOPluginCatalog
+      rules:
+      - alert: OpenBAOPluginDownloadFailing
+        annotations:
+          description: An OpenBAO pod's own container logged "failed to download plugin"
+            with no matching "successfully downloaded and validated plugin" in the last
+            15 minutes. plugin_download_behavior stays "continue" permanently (decision
+            7), so the server keeps serving without the auth/aws plugin rather than crash-looping
+            -- this alert is the loud signal that decision requires.
+          runbook: docs/runbook.md#plugin-catalog-after-a-roll
+          summary: OpenBAO's declarative plugin download is failing on example and has not
+            recovered
+        expr: |-
+          kubernetes.pod_namespace:"openbao" AND kubernetes.container_name:"openbao" | stats count() if (_msg:"failed to download plugin") as failures,
+            count() if (_msg:"successfully downloaded and validated plugin") as successes
+          | filter failures:>0 | filter successes:=0
+        labels:
+          k8s_cluster_name: example
+          severity: warning
+      - alert: OpenBAOPluginDownloadSidecarGaveUp
+        annotations:
+          description: The tls-reload sidecar exhausted its 20-attempt (~10 minute) retry
+            budget for the auth/aws plugin download and will not retry again until the next
+            certificate rotation SIGHUPs the server.
+          runbook: docs/runbook.md#plugin-catalog-after-a-roll
+          summary: OpenBAO's tls-reload sidecar gave up retrying the plugin download
+        expr: kubernetes.pod_namespace:"openbao" AND kubernetes.container_name:"tls-reload"
+          AND _msg:"giving up after 20 attempts" | stats count() as attempts | filter attempts:>0
+        labels:
+          k8s_cluster_name: example
+          severity: warning
+      type: vlogs

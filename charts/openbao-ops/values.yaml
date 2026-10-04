@@ -1012,6 +1012,74 @@ serverMetrics:
         annotations: {}
 
 # ---------------------------------------------------------------------------
+# Alerts on the server's own LOG, for a failure that has no metric.
+#
+# OpenBAO exports no gauge for a declarative plugin download. With
+# plugin_download_behavior "continue" a failed download never crash-loops
+# the server: it starts, or keeps running, without the plugin until something
+# SIGHUPs it, and nothing else in the install says a word about it. These
+# rules make that loud. They are LogsQL, read by a log ruler (vmalert against
+# VictoriaLogs), so the object carries the label that routes it there and
+# away from the metrics ruler. See the chart README.
+serverAlerts:
+  pluginDownload:
+    enabled: false
+    # Only the VMRule format exists: LogsQL has no PrometheusRule form.
+    format: vmrule
+    # Object name. Default: <release>-plugin-download.
+    name: ""
+    # Where the object lives. Default: the release namespace.
+    namespace: ""
+    # Labels on the OBJECT. The default routes it to the LogsQL ruler.
+    labels:
+      observability.rule-type: vlogs
+    annotations: {}
+    # Labels added to EVERY rule; a rule's own `labels` are merged over them.
+    ruleLabels: {}
+    groupName: OpenBAOPluginCatalog
+    # Whole minutes. This is also the lookback: the rules carry no time
+    # filter and the ruler applies the group interval, so the interval IS
+    # the window and the debounce (`for` stays unset).
+    interval: 15m
+    # When set: the k8s_cluster_name label of every rule, and " on <name>"
+    # in the first summary.
+    clusterName: ""
+    # Required: the plugin whose download is watched ("auth/aws"), named in
+    # the alert text.
+    plugin: ""
+    # Optional reference (a decision record) rendered as " (<text>)" after
+    # `stays "continue" permanently` in the first description.
+    decision: ""
+    # Optional: the `runbook` annotation of both rules.
+    runbook: ""
+    # The server's container (the log lines come from it), in the namespace
+    # the server runs in (`namespace` above, else the release namespace).
+    serverContainer: openbao
+    # The retry sidecar of pkg/serverpreset (RetrySidecarContainer or
+    # TLSReloadSidecarContainer): its container name, the attempts it makes
+    # (the "giving up after N attempts" line it logs), and the minutes those
+    # attempts take, for the text.
+    sidecar:
+      container: tls-reload
+      attempts: 20
+      budgetMinutes: 10
+    rules:
+      # A failed download with no success in the same window.
+      downloadFailing:
+        enabled: true
+        for: ""
+        severity: warning
+        labels: {}
+        annotations: {}
+      # The sidecar exhausted its attempts.
+      sidecarGaveUp:
+        enabled: true
+        for: ""
+        severity: warning
+        labels: {}
+        annotations: {}
+
+# ---------------------------------------------------------------------------
 networkPolicy:
   enabled: false
   annotations: {}

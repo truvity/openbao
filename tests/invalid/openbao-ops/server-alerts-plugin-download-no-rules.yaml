@@ -1,0 +1,8 @@
+# An empty rule group is refused by the rulers.
+serverAlerts:
+  pluginDownload:
+    enabled: true
+    plugin: auth/aws
+    rules:
+      downloadFailing: {enabled: false}
+      sidecarGaveUp: {enabled: false}

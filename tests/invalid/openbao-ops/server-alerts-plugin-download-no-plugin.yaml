@@ -1,0 +1,4 @@
+# The alert text names the plugin it watches: none named is a mistake.
+serverAlerts:
+  pluginDownload:
+    enabled: true
