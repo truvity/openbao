@@ -1,0 +1,15 @@
+# The plugin-download log alerts: two LogsQL rules in a VMRule that a log
+# ruler reads. Off by default; the release namespace is where the server
+# runs, the object lives elsewhere.
+namespace: openbao
+serverAlerts:
+  pluginDownload:
+    enabled: true
+    name: openbao-plugin-download
+    namespace: observability
+    annotations:
+      example.com/sync-wave: "95"
+    clusterName: example
+    plugin: auth/aws
+    decision: decision 7
+    runbook: docs/runbook.md#plugin-catalog-after-a-roll

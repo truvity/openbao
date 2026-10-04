@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`charts/openbao-ops`: `serverAlerts.pluginDownload` (opt-in; off, every existing render is byte for byte unchanged).** Two LogsQL alerts on the server's own log, as a `VMRule` labelled `observability.rule-type: vlogs` so a log ruler reads it: `OpenBAOPluginDownloadFailing` (a `failed to download plugin` with no `successfully downloaded and validated plugin` in the same window) and `OpenBAOPluginDownloadSidecarGaveUp` (the retry sidecar's `giving up after N attempts`). With `plugin_download_behavior = "continue"` a failed download never crashes the server and has no metric, so these are the only loud signal. `plugin` is required; the cluster label, runbook, containers and sidecar attempts are values. See the [chart README](charts/openbao-ops/README.md#serveralertsplugindownload).
+
 ## v0.28.0
 
 ### Changed

@@ -1,0 +1,74 @@
+{{- if .Values.serverAlerts.pluginDownload.enabled }}
+{{- $a := .Values.serverAlerts.pluginDownload }}
+{{- $r := $a.rules }}
+{{- $ns := include "ops.namespace" . }}
+{{- $name := $a.name | default (printf "%s-plugin-download" .Release.Name) }}
+{{- if not $a.plugin }}
+{{- fail "serverAlerts.pluginDownload.plugin is required: the alert text names the plugin whose download it watches (for example auth/aws)" }}
+{{- end }}
+{{- if not (or $r.downloadFailing.enabled $r.sidecarGaveUp.enabled) }}
+{{- fail "serverAlerts.pluginDownload renders no rule: both serverAlerts.pluginDownload.rules.*.enabled are off, and an empty rule group is refused by the rulers this chart renders for" }}
+{{- end }}
+{{- /* The lookback IS the window: vmalert appends `_time: <group interval>`
+       to a LogsQL expression with no time filter of its own, so the rules
+       carry none and the text names the interval. */}}
+{{- $minutes := trimSuffix "m" $a.interval }}
+{{- $decision := ternary (printf " (%s)" $a.decision) "" (ne $a.decision "") }}
+{{- $on := ternary (printf " on %s" $a.clusterName) "" (ne $a.clusterName "") }}
+{{- $rules := list }}
+{{- /* Rule 1 watches the FULL lifetime of a pod: a download can fail again
+       long after boot, on any later SIGHUP. A failure alone would page on
+       the ordinary first-boot race (the fresh pod's egress is not yet
+       admitted, the first attempt fails and a retry succeeds well inside
+       the window), so it needs NO success in the same window. */}}
+{{- if $r.downloadFailing.enabled }}
+{{- $rules = append $rules (dict "cfg" $r.downloadFailing "alert" "OpenBAOPluginDownloadFailing"
+  "expr" (printf `kubernetes.pod_namespace:%s AND kubernetes.container_name:%s | stats count() if (_msg:"failed to download plugin") as failures,
+  count() if (_msg:"successfully downloaded and validated plugin") as successes
+| filter failures:>0 | filter successes:=0` (toJson $ns) (toJson $a.serverContainer))
+  "summary" (printf "OpenBAO's declarative plugin download is failing%s and has not recovered" $on)
+  "description" (printf `An OpenBAO pod's own container logged "failed to download plugin" with no matching "successfully downloaded and validated plugin" in the last %s minutes. plugin_download_behavior stays "continue" permanently%s, so the server keeps serving without the %s plugin rather than crash-looping -- this alert is the loud signal that decision requires.` $minutes $decision $a.plugin)) }}
+{{- end }}
+{{- /* Rule 2 is the sharper, boot-time-only version: the retry sidecar's own
+       "giving up" line. The first-boot race is what its attempts exist to
+       absorb, so it cannot fire on that race. */}}
+{{- if $r.sidecarGaveUp.enabled }}
+{{- $s := $a.sidecar }}
+{{- $rules = append $rules (dict "cfg" $r.sidecarGaveUp "alert" "OpenBAOPluginDownloadSidecarGaveUp"
+  "expr" (printf `kubernetes.pod_namespace:%s AND kubernetes.container_name:%s AND _msg:%s | stats count() as attempts | filter attempts:>0` (toJson $ns) (toJson $s.container) (toJson (printf "giving up after %d attempts" (int $s.attempts))))
+  "summary" (printf "OpenBAO's %s sidecar gave up retrying the plugin download" $s.container)
+  "description" (printf `The %s sidecar exhausted its %d-attempt (~%d minute) retry budget for the %s plugin download and will not retry again until the next certificate rotation SIGHUPs the server.` $s.container (int $s.attempts) (int $s.budgetMinutes) $a.plugin)) }}
+{{- end }}
+{{- $out := list }}
+{{- range $x := $rules }}
+{{- $cfg := $x.cfg }}
+{{- $labels := mergeOverwrite (deepCopy ($a.ruleLabels | default dict)) (dict "severity" $cfg.severity) (deepCopy ($cfg.labels | default dict)) }}
+{{- with $a.clusterName }}{{- $_ := set $labels "k8s_cluster_name" . }}{{- end }}
+{{- $ann := dict "summary" $x.summary "description" $x.description }}
+{{- with $a.runbook }}{{- $_ := set $ann "runbook" . }}{{- end }}
+{{- $ann = mergeOverwrite $ann (deepCopy ($cfg.annotations | default dict)) }}
+{{- $rule := dict "alert" $x.alert "expr" $x.expr "labels" $labels "annotations" $ann }}
+{{- with $cfg.for }}{{- $_ := set $rule "for" . }}{{- end }}
+{{- $out = append $out $rule }}
+{{- end }}
+{{- $group := dict "name" $a.groupName "type" "vlogs" "interval" $a.interval "rules" $out }}
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: {{ $name }}
+  namespace: {{ $a.namespace | default $ns }}
+  labels:
+    {{- include "ops.labels" "openbao-plugin-download-alerts" | nindent 4 }}
+    {{- with $a.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with include "ops.annotations" (dict "root" $ "extra" $a.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    -
+      {{- toYaml $group | nindent 6 }}
+{{- end }}

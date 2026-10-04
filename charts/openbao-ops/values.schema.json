@@ -692,6 +692,61 @@
         }
       }
     },
+    "serverAlerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pluginDownload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "format": { "enum": ["vmrule"] },
+            "name": { "type": "string" },
+            "namespace": { "type": "string" },
+            "labels": { "$ref": "#/definitions/stringMap" },
+            "annotations": { "$ref": "#/definitions/stringMap" },
+            "ruleLabels": { "$ref": "#/definitions/stringMap" },
+            "groupName": { "type": "string", "minLength": 1 },
+            "interval": { "type": "string", "pattern": "^[1-9][0-9]*m$" },
+            "clusterName": { "type": "string" },
+            "plugin": { "type": "string" },
+            "decision": { "type": "string" },
+            "runbook": { "type": "string" },
+            "serverContainer": { "type": "string", "minLength": 1 },
+            "sidecar": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "container": { "type": "string", "minLength": 1 },
+                "attempts": { "type": "integer", "minimum": 1 },
+                "budgetMinutes": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "rules": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "downloadFailing": { "type": "object", "additionalProperties": false, "properties": {
+                    "enabled": { "type": "boolean" },
+                    "for": { "type": "string", "pattern": "^([0-9]+(ms|s|m|h|d|w))?$" },
+                    "severity": { "enum": ["critical", "warning"] },
+                    "labels": { "$ref": "#/definitions/stringMap" },
+                    "annotations": { "$ref": "#/definitions/stringMap" }
+                  } },
+                "sidecarGaveUp": { "type": "object", "additionalProperties": false, "properties": {
+                    "enabled": { "type": "boolean" },
+                    "for": { "type": "string", "pattern": "^([0-9]+(ms|s|m|h|d|w))?$" },
+                    "severity": { "enum": ["critical", "warning"] },
+                    "labels": { "$ref": "#/definitions/stringMap" },
+                    "annotations": { "$ref": "#/definitions/stringMap" }
+                  } }
+              }
+            }
+          }
+        }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
