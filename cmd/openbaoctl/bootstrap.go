@@ -96,7 +96,11 @@ func settingsFlags() []cli.Flag {
 		&cli.IntFlag{Name: flagRecoveryShares, Usage: "recovery key shares", Value: bootstrap.DefaultRecoveryShares},
 		&cli.IntFlag{Name: flagRecoveryTh, Usage: "shares that reconstruct the recovery key", Value: bootstrap.DefaultRecoveryThreshold},
 		&cli.IntFlag{Name: flagVoters, Usage: "Raft voters configure waits for", Value: bootstrap.DefaultVoters},
-		&cli.StringFlag{Name: flagAuditDevice, Usage: "the audit device the server config declares; configure refuses without it", Value: bootstrap.DefaultAuditDevice},
+		&cli.StringFlag{
+			Name:  flagAuditDevice,
+			Usage: "the audit device the server config declares; configure refuses without it",
+			Value: bootstrap.DefaultAuditDevice,
+		},
 		&cli.StringFlag{Name: flagDescription, Usage: "names the install in the keeper items' notes (free text, never a secret)"},
 		&cli.DurationFlag{Name: flagReadyTimeout, Usage: "how long to wait for an unsealed, fully joined cluster", Value: bootstrap.DefaultReadyTimeout},
 	}

@@ -90,11 +90,14 @@ func TestBuildPodRefusesWhatItCannotRebuild(t *testing.T) {
 		cronJob string
 		want    string
 	}{
-		"not json":                {cronJob: `{`, want: "parse the openbao-restore-check CronJob"},
-		"no pod template":         {cronJob: `{"spec": {}}`, want: "no pod template"},
-		"no checking container":   {cronJob: `{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"containers":[{"name":"x"}]}}}}}}`, want: `no "check" container`},
-		"a fetch with no bucket":  {cronJob: `{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"initContainers":[{"name":"fetch","command":["sh","-c","true"]}],"containers":[{"name":"check"}]}}}}}}`, want: "names no --bucket"},
-		"a fetch with no command": {cronJob: `{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"initContainers":[{"name":"fetch"}],"containers":[{"name":"check"}]}}}}}}`, want: "no command"},
+		"not json":              {cronJob: `{`, want: "parse the openbao-restore-check CronJob"},
+		"no pod template":       {cronJob: `{"spec": {}}`, want: "no pod template"},
+		"no checking container": {cronJob: podTemplate(`{"containers":[{"name":"x"}]}`), want: `no "check" container`},
+		"a fetch with no bucket": {
+			cronJob: podTemplate(`{"initContainers":[{"name":"fetch","command":["sh","-c","true"]}],"containers":[{"name":"check"}]}`),
+			want:    "names no --bucket",
+		},
+		"a fetch with no command": {cronJob: podTemplate(`{"initContainers":[{"name":"fetch"}],"containers":[{"name":"check"}]}`), want: "no command"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := RestoreDrill{}.BuildPod([]byte(tc.cronJob))
@@ -184,4 +187,9 @@ func TestRestoreDrillStartReportsAFailedPodWithoutTokens(t *testing.T) {
 	assert.Contains(t, errOut.String(), "boom")
 	assert.NotContains(t, errOut.String(), "leaked-token")
 	assert.Contains(t, fmt.Sprint(kubectl.calls), "logs openbao-drill --all-containers")
+}
+
+// podTemplate wraps a pod spec in the CronJob around it.
+func podTemplate(spec string) string {
+	return `{"spec":{"jobTemplate":{"spec":{"template":{"spec":` + spec + `}}}}}`
 }
