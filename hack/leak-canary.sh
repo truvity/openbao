@@ -105,6 +105,14 @@ if [ -n "$org_files" ]; then
   fi
 
   # shellcheck disable=SC2086
+  regions=$(grep -InE 'eu-central-1|eu-north-1' $org_files 2>/dev/null | head -5)
+  if [ -n "$regions" ]; then
+    echo "LEAK: examples/org names a real region (use eu-example-1, eu-example-2):"
+    echo "$regions" | sed 's/^/    /'
+    fail=1
+  fi
+
+  # shellcheck disable=SC2086
   hosts=$(grep -InEo 'https?://[A-Za-z0-9._-]+' $org_files 2>/dev/null \
             | grep -vE '://[A-Za-z0-9._-]*(example\.(com|org|net|internal)|alertmanager\.example\.svc)$' \
             | grep -vE '://(github\.com|ghcr\.io|pkg-containers\.githubusercontent\.com|127\.0\.0\.1|localhost)$' \
