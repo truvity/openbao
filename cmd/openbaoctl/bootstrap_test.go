@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -218,7 +219,7 @@ func TestThePrintFlagPrintsOnlyWhatThisRunCreated(t *testing.T) {
 
 // R2: only init on an uninitialized server may create the keeper directory.
 func TestAMissingKeeperDirectoryIsNeverCreatedForALiveInstall(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"initialized":true}`))
 	}))
 	t.Cleanup(server.Close)
@@ -234,8 +235,10 @@ func TestAMissingKeeperDirectoryIsNeverCreatedForALiveInstall(t *testing.T) {
 		{"configure", "--" + flagIssuer, "https://issuer.example", "--" + flagOperatorGroup, "g"},
 		{"revoke-root", "--" + flagOperatorGroup, "g", "--" + flagMembershipOnly},
 	} {
-		args := append(command, "--"+flagAddr, server.URL, "--"+flagCAFile, ca, "--"+flagTLSServerName, "example.com",
-			"--"+flagKeeperDir, missing, "--"+flagAgeIdentity, identity)
+		args := slices.Concat(command, []string{
+			"--" + flagAddr, server.URL, "--" + flagCAFile, ca, "--" + flagTLSServerName, "example.com",
+			"--" + flagKeeperDir, missing, "--" + flagAgeIdentity, identity,
+		})
 
 		err := runBootstrapCLI(t, args...)
 		require.Error(t, err, command[0])
