@@ -23,11 +23,11 @@ rootGenerations:
       provider: aws-kms
       accountId: "111122223333"
       profile: example-root@admin
-      region: eu-central-1
+      region: eu-example-1
       trustedPrincipalArnPattern: "arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_role-admin_*"
       disasterRecovery:
         mode: multi-region-replica
-        region: eu-north-1
+        region: eu-example-2
     state: active
 
 trustDomains:
