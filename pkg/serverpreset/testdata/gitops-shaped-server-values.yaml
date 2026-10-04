@@ -1,0 +1,209 @@
+# The valuesObject of a three-voter server, as a hand-written deployment
+# carried it, with the names of the estate replaced by neutral ones. The
+# Raft config is the file beside it (gitops-shaped-server.hcl), whose
+# comments are not rendered by Config.HCL.
+csi:
+  enabled: false
+global:
+  tlsDisable: false
+injector:
+  enabled: false
+server:
+  auditStorage:
+    enabled: false
+  authDelegator:
+    enabled: false
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    storageClass: gp3
+  extraContainers:
+  - args:
+    - |
+      # plugin: the link the declarative download creates in plugin_directory
+      # for the `plugin "auth" "aws"` block above.
+      plugin=/openbao/plugins/auth-aws-v0.1.1
+
+      # Never signal bao before it is serving: SIGHUP's
+      # default action terminates a process that has not yet
+      # installed its handler, which would restart the server
+      # container. Wait for its own listener first (up to 5 min).
+      ready=0
+      while [ "$ready" -lt 60 ]; do
+        wget -q -T 2 -O /dev/null --no-check-certificate 'https://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200' 2>/dev/null && break
+        ready=$((ready + 1))
+        sleep 5
+      done
+
+      attempt=1
+      while [ ! -e "$plugin" ] && [ "$attempt" -le 20 ]; do
+        echo "openbao-plugins: $plugin not present yet (attempt $attempt/20), reloading bao to retry the plugin download"
+        for p in /proc/[0-9]*; do
+          cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
+          case "$cmd" in
+            "bao server "*) kill -HUP "${p#/proc/}" && echo "openbao-plugins: reloaded bao (pid ${p#/proc/}), attempt $attempt/20" ;;
+          esac
+        done
+        sleep 30
+        attempt=$((attempt + 1))
+      done
+      if [ -e "$plugin" ]; then
+        echo "openbao-plugins: $plugin present"
+      else
+        echo "openbao-plugins: giving up after 20 attempts, $plugin still not present -- the ordinary TLS-watch loop below will still reload bao on the next certificate change"
+      fi
+
+      crt=/openbao/userconfig/openbao-tls/tls.crt
+      last=$(cksum "$crt")
+      while sleep 60; do
+        cur=$(cksum "$crt") || continue
+        [ "$cur" = "$last" ] && continue
+        for p in /proc/[0-9]*; do
+          cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
+          case "$cmd" in
+            "bao server "*) kill -HUP "${p#/proc/}" && echo "openbao-tls changed: reloaded bao (pid ${p#/proc/})" ;;
+          esac
+        done
+        last=$cur
+      done
+    command:
+    - /bin/sh
+    - -c
+    image: registry.example.com/quay/openbao/openbao:2.7.0
+    name: tls-reload
+    resources:
+      limits:
+        memory: 32Mi
+      requests:
+        cpu: 5m
+        memory: 8Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+    volumeMounts:
+    - mountPath: /openbao/userconfig/openbao-tls
+      name: userconfig-openbao-tls
+      readOnly: true
+    - mountPath: /openbao/plugins
+      name: openbao-plugins
+      readOnly: true
+  extraEnvironmentVars:
+    AWS_REGION: eu-example-1
+    BAO_CACERT: /openbao/userconfig/openbao-tls/ca.crt
+    BAO_TLS_SERVER_NAME: openbao.example.internal
+  extraInitContainers:
+  - args:
+    - |
+      set -eu
+      src=/seal-plugin-src/openbao-plugin-kms-aws
+      dst=/openbao/plugins/kms-awskms-v0.1.0
+
+      if [ ! -s "$src" ]; then
+        echo "seal-plugin-install: $src is missing or empty -- the image does not carry the plugin binary at its root" >&2
+        exit 1
+      fi
+      echo "9925bd77bb644fbf8a3a479deb39768e5a230e9b2b4eafad18971b54b3b580e2  $src" | sha256sum -c - >/dev/null || { echo "seal-plugin-install: $src does not match the pinned checksum" >&2; exit 1; }
+
+      # Copy beside the destination and rename, so a start interrupted here never
+      # leaves a half-written binary under the name the server will execute. The
+      # image carries the binary as 0644.
+      cp "$src" "$dst.tmp"
+      chmod 0555 "$dst.tmp"
+      mv -f "$dst.tmp" "$dst"
+      echo "seal-plugin-install: installed $dst"
+    command:
+    - /bin/sh
+    - -c
+    image: registry.example.com/quay/openbao/openbao:2.7.0
+    name: seal-plugin-install
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+    volumeMounts:
+    - mountPath: /openbao/plugins
+      name: openbao-plugins
+    - mountPath: /seal-plugin-src
+      name: seal-plugin-src
+      readOnly: true
+  extraPorts:
+  - containerPort: 9101
+    name: metrics
+    protocol: TCP
+  extraVolumes:
+  - name: openbao-tls
+    type: secret
+  ha:
+    disruptionBudget:
+      enabled: true
+      maxUnavailable: 1
+    enabled: true
+    raft:
+      config: '@HCL@'
+      enabled: true
+      setNodeId: true
+    replicas: 3
+  image:
+    registry: registry.example.com
+    repository: quay/openbao/openbao
+    tag: 2.7.0
+  nodeSelector:
+    example.com/pool: durable
+  podManagementPolicy: Parallel
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  serviceAccount:
+    create: true
+    name: openbao
+  shareProcessNamespace: true
+  statefulSet:
+    securityContext:
+      container:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+  tolerations:
+  - effect: NoSchedule
+    key: example.com/dedicated
+    operator: Equal
+    value: 'true'
+  - effect: NoSchedule
+    key: arch
+    operator: Equal
+    value: arm64
+  topologySpreadConstraints:
+  - labelSelector:
+      matchLabels:
+        app.kubernetes.io/instance: openbao
+        app.kubernetes.io/name: openbao
+        component: server
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+  volumeMounts:
+  - mountPath: /openbao/plugins
+    name: openbao-plugins
+  volumes:
+  - emptyDir:
+      sizeLimit: 256Mi
+    name: openbao-plugins
+  - image:
+      pullPolicy: IfNotPresent
+      reference: registry.example.com/github/openbao/openbao-plugin-kms-aws@sha256:fe9fb94872048c9474156c044ea8852bb5c2e968fc9304a3725e4d434b488541
+    name: seal-plugin-src
+ui:
+  activeOpenbaoPodOnly: false
+  enabled: true
+  externalPort: 443
+  publishNotReadyAddresses: false
+  serviceType: ClusterIP
+  targetPort: 8200
