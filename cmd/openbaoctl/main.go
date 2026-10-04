@@ -35,7 +35,10 @@ import (
 // Version is stamped by the release.
 var Version = "dev"
 
-func main() {
+func main() { os.Exit(run()) }
+
+// run is main's body, so its deferred stop runs before the process exits.
+func run() int {
 	cmd := &cli.Command{
 		Name:    "openbaoctl",
 		Usage:   "OpenBAO operations that have no Kubernetes or Pulumi resource",
@@ -52,9 +55,10 @@ func main() {
 	defer stop()
 
 	if err := cmd.Run(ctx, os.Args); err != nil {
-		stop()
-
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+
+		return 1
 	}
+
+	return 0
 }
