@@ -13,6 +13,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 - **`openbaoctl init | configure | revoke-root | drill start | forward | stop`.** The reference command over `pkg/bootstrap` with the file/age keeper. The recovery shares are never printed unless `init --insecure-print-recovery-shares-to-stdout` is given (a warning goes to stderr; the root token is never printed); `revoke-root` needs `--operator-jwt-file` (a login proof) or the explicitly weaker `--membership-evidence-only`; TLS is always verified and there is no insecure flag. The client never follows a redirect, a cancelled context (Ctrl-C) still cancels a pending root generation and revokes a drill token on a context of its own, and `init` records the recovery split (`openbao-recovery-split`) that later steps hold to. A conformance test (`conformance/bootstrap_test.go`) takes a real `bao server` on a static seal through init, configure and revoke-root on OpenBAO 2.6.2 and 2.7.0 in CI's `server-config` job, offline.
 
+### Fixed
+
+- **`pkg/bootstrap` and `openbaoctl` build on every OS.** The forward's process-group setting was tagged `!linux`, which took in Windows, where it does not exist. It is now per OS (Linux with the parent-death signal, other Unix with a process group, Windows with a new process group), and CI cross-builds the module for Linux, macOS and Windows.
+
 ## v0.29.0
 
 ### Added
