@@ -13,7 +13,7 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 - **The path-length rules in `docs/pki.md` and `docs/ceremony.md` say what validation enforces.** A domain intermediate is exactly one less than the root's; a CA the root signs directly for leaves alone is strictly less (0 when nothing sits below it), which the hierarchy-file table had as "each layer is exactly one less than its parent". The example contract's `maxPathLen` values are annotated with the rule that fixes them.
 
-- **"Worked example" means one thing.** It is reserved for `examples/org`; the model's and the builder's examples, and the install snippet in the README, are called examples. Documentation only.
+- **"Worked example" means one thing.** It is reserved for `examples/org`; the model's and the builder's examples are called examples. The README heading `Install and a worked example` stays, because the component contract (C8) requires it. Documentation only.
 
 ## v0.30.0
 

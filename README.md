@@ -83,7 +83,7 @@ issue its own serving certificate. Each signature is a reviewed template,
 signed once, recorded as a public artifact the estate commits, and
 announced by an alarm.
 
-## Install, with an example
+## Install and a worked example
 
 ```sh
 helm install openbao-ops oci://ghcr.io/truvity/charts/openbao-ops \
