@@ -5,11 +5,15 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
-## v0.29.1
+## v0.30.0
 
 ### Added
 
 - **`pkg/awsserver`: the server's AWS resources as Pulumi components, with a hook for adopting existing state.** `NewUnsealKey` (multi-region key, replica and aliases), `NewPodRole` (Pod Identity role, inline policy and association), `NewAlertTopic` (SNS topic and e-mail subscriptions), `NewBackupBucket` (versioned, KMS-encrypted, private bucket with Object Lock COMPLIANCE, resource policies and cross-region replication), `NewEndpointRecord`, and the least-privilege policy documents of the server's and the jobs' roles. Every particular is an argument. The Pulumi type and logical name of every child are documented in [docs/awsserver.md](docs/awsserver.md) and pinned by tests, because they are the child's URN; every constructor takes `WithResourceOptions(func(kind, logicalName string) []pulumi.ResourceOption)`, applied to every resource it registers, so a caller that already has the resources in its state adds `pulumi.Aliases` and the first preview is empty. KMS keys and buckets carry `Protect` and `RetainOnDelete` by default.
+
+## v0.29.1
+
+### Added
 
 - **`pkg/bootstrap`: initialize a fresh server, open operator login, and retire the root token, with the secrets in the caller's custody.** `Bootstrap.Initialize` verifies a `Keeper` (write, read back, delete a canary) before it initializes, refuses a shamir seal and the stale items of an earlier install, and stores every recovery share and the root token, each read back. `Bootstrap.Configure` waits for an unsealed server with every Raft voter, refuses an unaudited server and a non-empty one (`Settings.AllowNonEmpty` says it is deliberate), and converges the operators' door (the roster JWT mount, the operator policy and an external identity group, via `model.Roster.Bootstrap`). `Bootstrap.RevokeRoot` refuses until an operator login is proven (`Bootstrap.OperatorJWT`: a real login that must return the operator policy; without it, a group member on file), reconstructs the recovery key from the shares with every share submitted at least once, revoking each generated token at once, and only then revokes the bootstrap token and archives its item. `RestoreDrill` is the rebuild drill's scratch pod (start, forward, stop), `PortForward` reaches a pod that is not ready yet through `kubectl port-forward` with TLS verified. The package never persists or logs a secret: shares and tokens are `[]byte` zeroed after use, errors are scrubbed of every secret seen, and `Keeper` is an interface the caller implements; `pkg/bootstrap/filekeeper` is an age-encrypted file reference. The estate's facts (share split, voters, audit device, issuer, group) are inputs with documented defaults. See [docs/bootstrap.md](docs/bootstrap.md) for the threat model, the secret flows and the invariants with the tests that prove them.
 
