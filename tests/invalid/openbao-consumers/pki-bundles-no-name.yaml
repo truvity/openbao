@@ -1,0 +1,11 @@
+# Every entry needs a name.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustAnchors:
+    - {name: example-root, certificate: Zm9v}
+
+  bundles:
+    - sources: [{inLine: "x"}]
+      target: {key: x.pem, namespaceSelector: {}}

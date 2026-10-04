@@ -170,4 +170,48 @@ spec:
     namespaceSelector:
       {{- toYaml $pki.bundle.target.namespaceSelector | nindent 6 }}
 {{- end }}
+{{- /* More trust bundles, each with its own sources, target key and
+       namespaceSelector: what a second audience of a different trust needs
+       (an identity chain for the workloads that opt in, the same chain for
+       one namespace by name, because a selector matches a label OR a name,
+       not both). The sources are certificates given inline, so a Bundle
+       depends on no other object. They are rendered as given, in order. */}}
+{{- range $b := $pki.bundles }}
+{{- if not $b.name }}
+{{- fail "every entry of pki.bundles needs a name" }}
+{{- end }}
+{{- if not $b.sources }}
+{{- fail (printf "pki.bundles.%s has no sources — a Bundle that trusts nothing" $b.name) }}
+{{- end }}
+{{- if not $b.target }}
+{{- fail (printf "pki.bundles.%s needs a target" $b.name) }}
+{{- end }}
+{{- if not $b.target.key }}
+{{- fail (printf "pki.bundles.%s needs target.key: the key its ConfigMap holds the bundle under" $b.name) }}
+{{- end }}
+{{- if not (hasKey $b.target "namespaceSelector") }}
+{{- fail (printf "pki.bundles.%s needs target.namespaceSelector ({} is every namespace)" $b.name) }}
+{{- end }}
+{{- if and $pki.bundle.enabled (eq $b.name $pki.bundle.name) }}
+{{- fail (printf "Bundle %s is claimed by both pki.bundle and pki.bundles.%s — two objects cannot share one name" $b.name $b.name) }}
+{{- end }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "Bundle" "namespace" "" "name" $b.name "by" (printf "pki.bundles.%s" $b.name)) }}
+---
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ $b.name }}
+  {{- with include "consumers.annotations" (dict "root" $ "extra" $b.annotations) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  sources:
+    {{- toYaml $b.sources | nindent 4 }}
+  target:
+    configMap:
+      key: {{ $b.target.key }}
+    namespaceSelector:
+      {{- toYaml $b.target.namespaceSelector | nindent 6 }}
+{{- end }}
 {{- end }}

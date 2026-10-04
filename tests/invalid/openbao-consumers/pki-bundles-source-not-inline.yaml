@@ -1,0 +1,12 @@
+# Only inline sources: the Bundle depends on no other object.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustAnchors:
+    - {name: example-root, certificate: Zm9v}
+
+  bundles:
+    - name: example-identity
+      sources: [{configMap: {name: x, key: y}}]
+      target: {key: x.pem, namespaceSelector: {}}

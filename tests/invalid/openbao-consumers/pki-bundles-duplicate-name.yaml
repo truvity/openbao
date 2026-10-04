@@ -1,0 +1,15 @@
+# Two Bundles cannot share a name.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustAnchors:
+    - {name: example-root, certificate: Zm9v}
+
+  bundles:
+    - name: example-identity
+      sources: [{inLine: "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----\n"}]
+      target: {key: x.pem, namespaceSelector: {}}
+    - name: example-identity
+      sources: [{inLine: "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----\n"}]
+      target: {key: x.pem, namespaceSelector: {}}

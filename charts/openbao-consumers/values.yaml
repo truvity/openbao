@@ -129,6 +129,26 @@ pki:
       key: ca-certificates.crt
       namespaceSelector: {}       # {} — every namespace
 
+  # More Bundles, alongside `bundle` (which stays as it is, and may be turned
+  # off): each with its own sources, target key and namespaceSelector. For a
+  # trust of a different audience than the private CA — say an identity
+  # chain, delivered to the namespaces that opt in by label, and the same
+  # chain to one namespace by name (a selector matches a label OR a name,
+  # not both). Rendered in order, nothing derived from trustAnchors.
+  bundles: []
+  #  - name: example-identity-ca        # unique, and not `bundle.name`
+  #    annotations: {}                  # on the Bundle, e.g. a sync-options
+  #                                     # annotation of a GitOps controller
+  #    sources:                         # in order; each an inline PEM
+  #      - inLine: |
+  #          -----BEGIN CERTIFICATE-----
+  #          ...
+  #    target:
+  #      key: example-identity-ca.pem   # the ConfigMap key in each namespace
+  #      namespaceSelector:             # required; {} is every namespace
+  #        matchLabels:
+  #          example.com/identity: "true"
+
 certificateDefaults:
   # A third of the lifetime: renewal gets two chances before anything
   # expires, so an outage in the issuer is survivable rather than immediate.

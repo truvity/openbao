@@ -1,0 +1,40 @@
+# Several trust bundles beside the private CA's: the same two sources (an
+# environment CA and the root that signed it) delivered twice, because a
+# namespaceSelector matches a label OR a name, not both. Each Bundle has its
+# own target key, selector and annotations, which pass through as given.
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+pki:
+  enabled: true
+  trustAnchors:
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  issuers:
+    - name: example-private
+      signPath: pki/sign/private
+      role: example-private
+  bundles:
+    - name: example-identity-ca
+      annotations:
+        example.com/sync-wave: "33"
+        argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      sources:
+        - inLine: "-----BEGIN CERTIFICATE-----\nZXhhbXBsZS1lbnZpcm9ubWVudC1jYQ==\n-----END CERTIFICATE-----\n"
+        - inLine: "-----BEGIN CERTIFICATE-----\nZXhhbXBsZS1pZGVudGl0eS1yb290\n-----END CERTIFICATE-----\n"
+      target:
+        key: example-identity-ca.pem
+        namespaceSelector:
+          matchLabels:
+            example.com/workload-identity: "true"
+    - name: example-identity-ca-driver
+      annotations:
+        example.com/sync-wave: "33"
+        argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      sources:
+        - inLine: "-----BEGIN CERTIFICATE-----\nZXhhbXBsZS1lbnZpcm9ubWVudC1jYQ==\n-----END CERTIFICATE-----\n"
+        - inLine: "-----BEGIN CERTIFICATE-----\nZXhhbXBsZS1pZGVudGl0eS1yb290\n-----END CERTIFICATE-----\n"
+      target:
+        key: example-identity-ca.pem
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: example-driver

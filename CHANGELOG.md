@@ -11,6 +11,8 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 - **`charts/openbao-ops`: `serverAlerts.pluginDownload` (opt-in; off, every existing render is byte for byte unchanged).** Two LogsQL alerts on the server's own log, as a `VMRule` labelled `observability.rule-type: vlogs` so a log ruler reads it: `OpenBAOPluginDownloadFailing` (a `failed to download plugin` with no `successfully downloaded and validated plugin` in the same window) and `OpenBAOPluginDownloadSidecarGaveUp` (the retry sidecar's `giving up after N attempts`). With `plugin_download_behavior = "continue"` a failed download never crashes the server and has no metric, so these are the only loud signal. `plugin` is required; the cluster label, runbook, containers and sidecar attempts are values. See the [chart README](charts/openbao-ops/README.md#serveralertsplugindownload).
 
+- **`charts/openbao-consumers`: `pki.bundles[]`, several trust bundles beside the single `pki.bundle` (opt-in; empty by default, every existing render is byte for byte unchanged).** Each entry is one trust-manager `Bundle` with its own `name`, `annotations` (passed through as given, a GitOps controller's sync options included), inline `sources` (rendered as given, in order), `target.key` and `target.namespaceSelector`: an identity chain delivered to the namespaces that opt in by label, and the same chain to one namespace by name, since a selector matches a label or a name, not both. The schema and the render refuse an entry without a name, sources, a target key or a selector, a source that is not inline, a duplicate name, and a name `pki.bundle` owns. See [docs/reference.md](docs/reference.md).
+
 ## v0.28.0
 
 ### Changed
