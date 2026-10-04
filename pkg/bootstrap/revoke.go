@@ -398,7 +398,7 @@ func (b *Bootstrap) submitShares(ctx context.Context, root *Client, status gener
 // decodeToken undoes the one-time pad OpenBAO applies to a generated root
 // token (sdk/helper/roottoken.DecodeToken with a non-zero OTP length).
 func decodeToken(encoded, otp []byte) ([]byte, error) {
-	raw := make([]byte, base64.RawStdEncoding.DecodedLen(len(encoded)))
+	raw := track(make([]byte, base64.RawStdEncoding.DecodedLen(len(encoded))))
 	defer zero(raw)
 
 	n, err := base64.RawStdEncoding.Decode(raw, encoded)
@@ -411,7 +411,7 @@ func decodeToken(encoded, otp []byte) ([]byte, error) {
 		return nil, errors.New("the generated root token and its OTP differ in length")
 	}
 
-	token := make([]byte, len(raw))
+	token := track(make([]byte, len(raw)))
 	for i := range raw {
 		token[i] = raw[i] ^ otp[i]
 	}

@@ -46,6 +46,10 @@ type (
 // the answer points, an http:// URL included. Calls are bounded by
 // [RequestTimeout] each through their context, not by the http.Client.
 func NewClient(base string, httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+
 	own := *httpClient
 	own.Timeout = 0
 	own.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -175,4 +179,18 @@ func (c *Client) doWithin(ctx context.Context, limit time.Duration, method, path
 	}
 
 	return nil
+}
+
+// Initialized reports whether the server is initialized (an unauthenticated
+// read).
+func (c *Client) Initialized(ctx context.Context) (bool, error) {
+	var status struct {
+		Initialized bool `json:"initialized"`
+	}
+
+	if err := c.do(ctx, http.MethodGet, "sys/init", nil, &status); err != nil {
+		return false, err
+	}
+
+	return status.Initialized, nil
 }

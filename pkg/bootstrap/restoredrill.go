@@ -288,8 +288,13 @@ func (d RestoreDrill) holdContainer(spec map[string]any) error {
 // context of its own) rather than left holding a copy of every secret; a
 // delete that fails is reported with the command to run.
 func (d RestoreDrill) Start(ctx context.Context) (err error) {
-	if _, getErr := d.run(ctx, nil, "get", "pod", d.pod()); getErr == nil {
+	switch _, getErr := d.run(ctx, nil, "get", "pod", d.pod()); {
+	case getErr == nil:
 		return fmt.Errorf("%s already exists; stop it first", d.pod())
+	case !strings.Contains(getErr.Error(), "NotFound"):
+		// Not "no such pod" (permissions, the network): nothing is known, and
+		// nothing is created or deleted on a guess.
+		return fmt.Errorf("cannot tell whether %s exists: %w", d.pod(), getErr)
 	}
 
 	cronJob, err := d.run(ctx, nil, "get", "cronjob", d.cronJob(), "-o", "json")
@@ -302,24 +307,34 @@ func (d RestoreDrill) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	// A failed apply may still have created the pod.
+	// Only a pod this run created (or may have, if the apply was cut short)
+	// is ever deleted here: an apply refused for another reason, say because
+	// the pod already exists, touches nothing.
+	created := false
+
 	defer func() {
-		if err == nil {
+		if err == nil || !created {
 			return
 		}
 
 		cleanup, cancel := cleanupContext(ctx)
 		defer cancel()
 
-		if stopErr := d.Stop(cleanup); stopErr != nil {
+		// Not waiting: the deletion is under way when the call returns, and a
+		// slow termination must not read as a failure.
+		if _, stopErr := d.run(cleanup, nil, "delete", "pod", d.pod(), "--ignore-not-found", "--wait=false"); stopErr != nil {
 			err = errors.Join(err, fmt.Errorf("the drill pod %s could NOT be deleted and still holds a copy of the data: "+
-				"delete it with `kubectl -n %s delete pod %s`: %w", d.pod(), d.Namespace, d.pod(), stopErr))
+				"delete it with `kubectl %s delete pod %s`: %w", d.pod(), strings.Join(d.kubectlArgs(), " "), d.pod(), stopErr))
 		}
 	}()
 
-	if _, err := d.run(ctx, pod, "apply", "-f", "-"); err != nil {
-		return err
+	if _, applyErr := d.run(ctx, pod, "apply", "-f", "-"); applyErr != nil {
+		created = ctx.Err() != nil // cut short by a cancellation: it may exist
+
+		return applyErr
 	}
+
+	created = true
 
 	_, _ = fmt.Fprintln(d.stderr(), "waiting for the restore (fetch, unseal, restore)...")
 

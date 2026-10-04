@@ -165,6 +165,8 @@ audit "file" "to-stdout" {
 	rig.identity = filepath.Join(root, "age-identity.txt")
 	require.NoError(t, os.WriteFile(rig.identity, []byte(identity.String()+"\n"), 0o600))
 
+	require.NoError(t, filekeeper.Prepare(rig.keeper))
+
 	rig.keepers, err = filekeeper.New(rig.keeper, nil, rig.identity)
 	require.NoError(t, err)
 

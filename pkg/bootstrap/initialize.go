@@ -78,10 +78,14 @@ func (b *Bootstrap) Initialize(ctx context.Context) error {
 	if status.Initialized {
 		if missing := b.recoveryItems(titles, false); len(missing) > 0 {
 			if len(missing) == b.Settings.shares() && !titles[RootTokenItem] {
-				// Nothing at all on file: most likely an init whose answer never
-				// arrived (a timeout, a dropped connection) on a server that
-				// finished it. The shares are gone, and rekeying needs them.
-				return fmt.Errorf("OpenBAO is initialized but the keeper holds none of its recovery shares: %s", b.wipeAdvice())
+				// Nothing on file for a server that is initialized. There is no
+				// evidence this run initialized it, and the likeliest cause by far
+				// is the wrong keeper: never advise a wipe from here.
+				return errors.New("OpenBAO is initialized but the keeper holds none of its recovery shares or the root token. " +
+					"This is almost always the wrong keeper (directory, session, account) or lost keeper contents, not a failed init: " +
+					"do NOT wipe or delete anything; check the keeper location first. " +
+					"Only an install this tool initialized minutes ago, with an answer that never arrived, is a wipe candidate: " +
+					"see docs/bootstrap.md, \"Recovering from a failed init\"")
 			}
 
 			return fmt.Errorf("OpenBAO is initialized but the keeper lacks %s: rekey the recovery key before anything else",
@@ -90,6 +94,12 @@ func (b *Bootstrap) Initialize(ctx context.Context) error {
 
 		if err := b.checkSplit(ctx, titles); err != nil {
 			return err
+		}
+
+		if b.Settings.RecordSplit && !titles[SplitItem] {
+			if err := b.recordSplit(ctx); err != nil {
+				return err
+			}
 		}
 
 		b.Logger.InfoContext(ctx, "openbao already initialized; every recovery share is on file")
@@ -208,11 +218,10 @@ func (b *Bootstrap) initialize(ctx context.Context) error {
 			return err
 		}
 
-		// Sent, and no answer: the server may have finished initializing
-		// without anyone here holding its shares.
-		return fmt.Errorf("the init call got no answer (%w); the server may have initialized anyway, "+
-			"in which case its recovery shares are lost. If it now reports initialized and the keeper holds none: %s",
-			err, b.wipeAdvice())
+		// Sent, and no answer. This run saw the server uninitialized a moment
+		// ago, so asking again is the evidence: only a server that now reports
+		// initialized, with nothing in this run's hands, has lost its shares.
+		return b.noAnswer(ctx, err)
 	}
 
 	b.Logger.InfoContext(ctx, "openbao initialized; storing the recovery shares and the root token",
@@ -245,14 +254,8 @@ func (b *Bootstrap) initialize(ctx context.Context) error {
 		return err
 	}
 
-	split := []byte(fmt.Sprintf("%d/%d", shares, threshold))
-	err = b.Keeper.Create(ctx, SplitItem, split, "The recovery split this install was initialized with (shares/threshold). Not a secret.")
-
-	zero(split)
-
-	if err != nil {
-		return fmt.Errorf("the shares and the root token are stored, but recording the recovery split failed "+
-			"(run init again once the keeper works; it verifies and does not re-initialize): %w", b.API.redactor.scrubErr(err))
+	if err := b.recordSplit(ctx); err != nil {
+		return err
 	}
 
 	b.Founded = true
@@ -369,4 +372,45 @@ func (b *Bootstrap) checkSplit(ctx context.Context, titles map[string]bool) erro
 	}
 
 	return nil
+}
+
+// recordSplit writes the non-secret split item.
+func (b *Bootstrap) recordSplit(ctx context.Context) error {
+	split := []byte(fmt.Sprintf("%d/%d", b.Settings.shares(), b.Settings.threshold()))
+	err := b.Keeper.Create(ctx, SplitItem, split, "The recovery split this install was initialized with (shares/threshold). Not a secret.")
+
+	zero(split)
+
+	if err != nil {
+		return fmt.Errorf("recording the recovery split failed; until %s exists the later steps cannot hold to the split. "+
+			"The shares and the root token are stored. Once the keeper works, run init again with the record-recovery-split "+
+			"setting (--record-recovery-split), which writes it when every configured share is on file and none is beyond them: %w",
+			SplitItem, b.API.redactor.scrubErr(err))
+	}
+
+	return nil
+}
+
+// noAnswer explains an init call whose answer never arrived, after asking
+// the server whether it initialized anyway.
+func (b *Bootstrap) noAnswer(ctx context.Context, cause error) error {
+	cleanup, cancel := cleanupContext(ctx)
+	defer cancel()
+
+	var status struct {
+		Initialized bool `json:"initialized"`
+	}
+
+	switch err := b.API.do(cleanup, http.MethodGet, "sys/init", nil, &status); {
+	case err != nil:
+		return fmt.Errorf("the init call got no answer (%w) and the server cannot be asked whether it initialized: "+
+			"do not run anything else until it can. If it reports initialized and this run's keeper holds nothing, "+
+			"the shares are lost; confirm with the owner that it was initialized only just now before wiping anything: %w",
+			cause, b.API.redactor.scrubErr(err))
+	case status.Initialized:
+		return fmt.Errorf("the init call got no answer (%w) and the server now reports initialized: this run initialized it "+
+			"(it was uninitialized moments ago), and its recovery shares are lost. %s", cause, b.wipeAdvice())
+	default:
+		return fmt.Errorf("the init call got no answer (%w) and the server still reports uninitialized: nothing was lost; run init again", cause)
+	}
 }

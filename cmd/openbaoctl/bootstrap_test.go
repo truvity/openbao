@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,5 +213,32 @@ func TestThePrintFlagPrintsOnlyWhatThisRunCreated(t *testing.T) {
 				assert.Empty(t, out.String(), "shares were printed for an install this run did not create")
 			}
 		})
+	}
+}
+
+// R2: only init on an uninitialized server may create the keeper directory.
+func TestAMissingKeeperDirectoryIsNeverCreatedForALiveInstall(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"initialized":true}`))
+	}))
+	t.Cleanup(server.Close)
+
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
+
+	identity := keeperArgs(t)[3]
+	missing := filepath.Join(t.TempDir(), "keepr")
+
+	for _, command := range [][]string{
+		{"init"},
+		{"configure", "--" + flagIssuer, "https://issuer.example", "--" + flagOperatorGroup, "g"},
+		{"revoke-root", "--" + flagOperatorGroup, "g", "--" + flagMembershipOnly},
+	} {
+		args := append(command, "--"+flagAddr, server.URL, "--"+flagCAFile, ca, "--"+flagTLSServerName, "example.com",
+			"--"+flagKeeperDir, missing, "--"+flagAgeIdentity, identity)
+
+		err := runBootstrapCLI(t, args...)
+		require.Error(t, err, command[0])
+		assert.NoDirExists(t, missing, "%s created the keeper directory", command[0])
 	}
 }
