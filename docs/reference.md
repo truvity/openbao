@@ -605,7 +605,7 @@ order); `Config.PluginVolume(name)` / `Config.PluginVolumeMount(name)`
 (the upstream chart's `server.ha.raft.config` plus, when `Plugins` or
 `Seal.Plugin` is set, `server.volumes`/`server.volumeMounts`, and with the
 default seal plugin delivery the image volume and `server.extraInitContainers`);
-`Config.EgressDomains()` (sorted, deduplicated: every plugin's
+`Config.ServerValues(ServerValuesOptions)` (the complete valuesObject of the upstream chart's server: `Values` plus the wiring the HCL assumes, namely the serving Secret and the in-pod CLI, the metrics port, the `ui` Service, `podManagementPolicy: Parallel`, the container security context and the optional signalling sidecar; the image, resources, placement and storage are options; `Config.AuditDescription` is the optional `description` of the audit device); `Config.EgressDomains()` (sorted, deduplicated: every plugin's
 `EgressHosts`, AWS STS for any `RequiresSTS` plugin, and the seal's KMS
 host); `Config.RetrySidecarContainer(RetrySidecarOptions)` (below);
 `ResolveArch(archs)` (the general form of the mixed-architecture refusal:

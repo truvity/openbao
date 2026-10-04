@@ -12,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.50.0
 	github.com/cert-manager/approver-policy v0.28.0
 	github.com/cert-manager/cert-manager v1.21.2
+	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/pulumi/pulumi-aws/sdk/v7 v7.42.0
 	github.com/pulumi/pulumi-vault/sdk/v7 v7.12.0
 	github.com/pulumi/pulumi/sdk/v3 v3.260.0
@@ -93,7 +94,6 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
-	github.com/hashicorp/hcl/v2 v2.24.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect

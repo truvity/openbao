@@ -365,6 +365,11 @@ type (
 		// stdout. OpenBAO refuses API-created audit devices (v2.3.2+),
 		// so a server whose audit trail matters declares one here.
 		AuditDevice string
+		// AuditDescription is the `description` of the audit device
+		// AuditDevice declares. Empty renders no description line (the HCL
+		// of every existing caller is unchanged). Ignored without
+		// AuditDevice.
+		AuditDescription string
 	}
 )
 
@@ -1054,6 +1059,11 @@ func (c *Config) HCL() (string, error) {
 
 	if c.AuditDevice != "" {
 		fmt.Fprintf(&b, "audit \"file\" %q {\n", c.AuditDevice)
+
+		if c.AuditDescription != "" {
+			fmt.Fprintf(&b, "  description = %q\n", c.AuditDescription)
+		}
+
 		fmt.Fprintf(&b, "  options {\n")
 		fmt.Fprintf(&b, "    file_path = \"stdout\"\n")
 		fmt.Fprintf(&b, "  }\n")
