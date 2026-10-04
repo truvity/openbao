@@ -1,0 +1,11 @@
+# A Bundle that trusts nothing.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+pki:
+  enabled: true
+  trustAnchors:
+    - {name: example-root, certificate: Zm9v}
+
+  bundles:
+    - name: example-identity
+      target: {key: x.pem, namespaceSelector: {}}
