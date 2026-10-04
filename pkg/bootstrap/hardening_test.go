@@ -220,7 +220,7 @@ func TestAnInitWhoseAnswerNeverArrivedSaysTheSharesMayBeLost(t *testing.T) {
 
 	err := bootstrap.Initialize(context.Background())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "the server may have initialized anyway")
+	assert.Contains(t, err.Error(), "this run initialized it")
 	assert.Contains(t, err.Error(), "delete its three data PVCs")
 
 	// The server did finish. A re-run finds it initialized and nothing on file:
@@ -230,8 +230,116 @@ func TestAnInitWhoseAnswerNeverArrivedSaysTheSharesMayBeLost(t *testing.T) {
 	err = bootstrap.Initialize(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "holds none of its recovery shares")
+	assert.NotContains(t, err.Error(), "PVC", "a re-run has no evidence this tool initialized the server: no wipe advice")
+}
+
+// R2: an initialized server and a keeper with nothing in it is the wrong
+// keeper until proven otherwise, never a reason to delete data volumes.
+func TestAnInitializedServerWithAnEmptyKeeperNeverGetsWipeAdvice(t *testing.T) {
+	for name, arrange := range map[string]func(*fakeBao, *fakeKeeper){
+		"an empty keeper":         func(*fakeBao, *fakeKeeper) {},
+		"only a canary left over": func(_ *fakeBao, k *fakeKeeper) { k.items[canaryItem] = "x" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bootstrap, fake, keeper := newBootstrap(t, &bytes.Buffer{})
+			fake.initialized = true // a live install initialized long ago
+			arrange(fake, keeper)
+
+			err := bootstrap.Initialize(context.Background())
+			require.Error(t, err)
+
+			for _, advice := range []string{"PVC", "scale the", "StatefulSet", "delete its"} {
+				assert.NotContains(t, err.Error(), advice, "a live install was told to wipe itself")
+			}
+
+			assert.Contains(t, err.Error(), "do NOT wipe")
+			assert.Contains(t, err.Error(), "wrong keeper")
+		})
+	}
+}
+
+// Wipe advice needs positive evidence: this run saw the server uninitialized
+// and then initialized without an answer.
+func TestWipeAdviceOnlyAfterThisRunInitializedTheServer(t *testing.T) {
+	bootstrap, fake, _ := newBootstrap(t, &bytes.Buffer{})
+	fake.initDelay = 300 * time.Millisecond
+	bootstrap.Settings.InitTimeout = 50 * time.Millisecond
+
+	err := bootstrap.Initialize(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "this run initialized it")
 	assert.Contains(t, err.Error(), "delete its three data PVCs")
-	assert.NotContains(t, err.Error(), "rekey")
+}
+
+// R3: a failed recording of the split can be repaired without re-initializing.
+func TestTheRecoverySplitCanBeRecordedAfterwards(t *testing.T) {
+	bootstrap, _, keeper := newBootstrap(t, &bytes.Buffer{})
+	require.NoError(t, bootstrap.Initialize(context.Background()))
+	delete(keeper.items, SplitItem)
+
+	require.NoError(t, bootstrap.Initialize(context.Background()))
+	assert.NotContains(t, keeper.items, SplitItem, "a verification must not write unless told to")
+
+	bootstrap.Settings.RecordSplit = true
+	require.NoError(t, bootstrap.Initialize(context.Background()))
+	assert.Equal(t, "5/3", keeper.items[SplitItem])
+
+	// ...and never from settings that disagree with the shares on file.
+	delete(keeper.items, SplitItem)
+	keeper.items[RecoveryItem(6)] = "an extra share"
+
+	require.Error(t, bootstrap.Initialize(context.Background()))
+	assert.NotContains(t, keeper.items, SplitItem)
+}
+
+func TestARecordingFailureKeepsTheProtectionInTheAdvice(t *testing.T) {
+	bootstrap, _, keeper := newBootstrap(t, &bytes.Buffer{})
+	keeper.failCreate[SplitItem] = 1
+
+	err := bootstrap.Initialize(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--record-recovery-split")
+	assert.NotContains(t, err.Error(), "run init again once", "a plain re-run silently lapses the protection")
+	assert.NotContains(t, err.Error(), "PVC", "the shares are stored: nothing to wipe")
+}
+
+// R5: every share format is scrubbed, paths stay readable.
+func TestEveryShareFormatIsScrubbedAndPathsStayReadable(t *testing.T) {
+	r := &redactor{}
+
+	for name, secretText := range map[string]string{
+		"base64":    "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHNoYXJl+Y29udGVudA==",
+		"base64url": "aGVsbG8_d29ybGQtdGhpcy1pcy1hLXNoYXJlLWNvbnRlbnQ",
+		"hex":       "3f786850e387550fdab836ed7e6dc881de23001b3f786850e387550f",
+		"lowercase": "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz",
+	} {
+		_ = name
+		assert.NotContains(t, r.scrub("echoed "+secretText), secretText[:20], name)
+	}
+
+	for _, path := range []string{"/v1/sys/generate-root-token/update", "sys/storage/raft/configuration", "/v1/sys/policies/acl/operators"} {
+		assert.Equal(t, "PUT "+path+": ok", r.scrub("PUT "+path+": ok"), "a path became unreadable")
+	}
+}
+
+// R4: the decoded drill token is a tracked buffer.
+func TestTheDrillTokenIsOneOfTheTrackedBuffers(t *testing.T) {
+	var seen [][]byte
+
+	trackSecret = func(b []byte) { seen = append(seen, b) }
+
+	t.Cleanup(func() { trackSecret = nil })
+
+	token, err := decodeToken([]byte("AAAAAAAA"), []byte("123456"))
+	require.NoError(t, err)
+
+	found := false
+
+	for _, buffer := range seen {
+		found = found || &buffer[0] == &token[0]
+	}
+
+	assert.True(t, found, "decodeToken's output is not tracked, so its zeroing is unproven")
 }
 
 func TestInitGetsALongerBoundThanOtherCalls(t *testing.T) {

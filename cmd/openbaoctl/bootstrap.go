@@ -35,6 +35,7 @@ const (
 	flagOperatorGroup    = "operator-group"
 	flagTokenTTL         = "token-ttl"
 	flagAllowNonEmpty    = "allow-non-empty"
+	flagRecordSplit      = "record-recovery-split"
 	flagOperatorJWT      = "operator-jwt-file"
 	flagMembershipOnly   = "membership-evidence-only"
 	flagPrintShares      = "insecure-print-recovery-shares-to-stdout"
@@ -130,7 +131,8 @@ func bootstrapInitCommand() *cli.Command {
 			"reach, never in a shared terminal, a CI log or a recorded session. The root token is never printed.\n" +
 			"If init succeeds and storing fails, the shares are lost: the error says how to wipe the empty install.",
 		Flags: append(append(append(connectionFlags(), keeperFlags()...), settingsFlags()...),
-			&cli.BoolFlag{Name: flagPrintShares, Usage: "DANGEROUS: print the recovery shares to stdout after storing them"}),
+			&cli.BoolFlag{Name: flagPrintShares, Usage: "DANGEROUS: print the recovery shares to stdout after storing them"},
+			&cli.BoolFlag{Name: flagRecordSplit, Usage: "on an initialized server, write the missing recovery-split item (every configured share must be on file)"}),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return runInit(ctx, defaultBootstrapEnv(), cmd)
 		},
@@ -184,6 +186,7 @@ func settingsFrom(cmd *cli.Command) bootstrap.Settings {
 		ReadyTimeout:      cmd.Duration(flagReadyTimeout),
 		Description:       cmd.String(flagDescription),
 		AllowNonEmpty:     cmd.Bool(flagAllowNonEmpty),
+		RecordSplit:       cmd.Bool(flagRecordSplit),
 	}
 }
 
@@ -250,16 +253,36 @@ func newBootstrap(env bootstrapEnv, cmd *cli.Command, api *bootstrap.Client, kee
 }
 
 func runInit(ctx context.Context, env bootstrapEnv, cmd *cli.Command) error {
-	keeper, err := keeperFrom(cmd)
-	if err != nil {
-		return err
-	}
-
 	api, closeAPI, err := connect(ctx, cmd)
 	if err != nil {
 		return err
 	}
 	defer closeAPI()
+
+	// The keeper directory is created here and nowhere else, and only for a
+	// server that is not initialized: a typo in --keeper-dir against a live
+	// install must fail, not yield an empty keeper that looks like a lost one.
+	dir := cmd.String(flagKeeperDir)
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+		initialized, err := api.Initialized(ctx)
+		if err != nil {
+			return err
+		}
+
+		if initialized {
+			return fmt.Errorf("the server is already initialized and --%s %s does not exist: refusing to create an empty keeper "+
+				"for a live install. Is --%s a typo, or the wrong machine?", flagKeeperDir, dir, flagKeeperDir)
+		}
+
+		if err := filekeeper.Prepare(dir); err != nil {
+			return err
+		}
+	}
+
+	keeper, err := keeperFrom(cmd)
+	if err != nil {
+		return err
+	}
 
 	b := newBootstrap(env, cmd, api, keeper)
 	if err := b.Initialize(ctx); err != nil {

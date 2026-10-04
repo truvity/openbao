@@ -45,6 +45,11 @@ type (
 		// the bootstrap is for a fresh install, and writing the door into a
 		// live one is a decision the caller states out loud.
 		AllowNonEmpty bool
+		// RecordSplit lets a verifying Initialize write the missing
+		// recovery-split item for an install initialized before it was
+		// recorded (or whose recording failed), when every configured share is
+		// on file and none is beyond them.
+		RecordSplit bool
 	}
 
 	// Bootstrap carries what every stage needs.

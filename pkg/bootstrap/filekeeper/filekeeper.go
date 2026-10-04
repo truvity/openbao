@@ -45,7 +45,21 @@ type Keeper struct {
 	now        func() time.Time
 }
 
-// New returns a Keeper on dir (created 0700 if missing), encrypting to the
+// Prepare creates the keeper directory (0700), for a caller that has just
+// established the server is not initialized.
+func Prepare(dir string) error {
+	if dir == "" {
+		return errors.New("filekeeper: a directory is required")
+	}
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("filekeeper: create %s: %w", dir, err)
+	}
+
+	return nil
+}
+
+// New returns a Keeper on dir (which must exist; see [Prepare]), encrypting to the
 // age recipients (age1... strings) and decrypting with the identities in
 // identityFile (an age identity file: AGE-SECRET-KEY-... lines). With no
 // recipients given, the identities' own public keys are used.
@@ -93,8 +107,16 @@ func New(dir string, recipients []string, identityFile string) (*Keeper, error) 
 		}
 	}
 
+	// The directory must already exist. A typo in it would otherwise yield a
+	// new, empty keeper that looks like a lost one: only [Prepare], which the
+	// caller runs for an install that is not initialized yet, creates it.
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("filekeeper: the keeper directory %s does not exist: check the path "+
+			"(only init on a server that is not initialized yet creates it)", dir)
+	}
+
 	if err := os.MkdirAll(filepath.Join(dir, archiveDir), 0o700); err != nil {
-		return nil, fmt.Errorf("filekeeper: create %s: %w", dir, err)
+		return nil, fmt.Errorf("filekeeper: create %s: %w", filepath.Join(dir, archiveDir), err)
 	}
 
 	return &Keeper{dir: dir, recipients: parsed, identities: identities, now: time.Now}, nil

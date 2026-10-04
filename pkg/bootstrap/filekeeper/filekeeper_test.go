@@ -162,3 +162,19 @@ func TestNewRefusesWhatCannotWork(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, strings.Contains(err.Error(), "nonsense"), "the parse error must not echo the key: %v", err)
 }
+
+// A typo in the directory must not yield an empty keeper that looks lost.
+func TestNewNeverCreatesTheKeeperDirectory(t *testing.T) {
+	identity, _ := identityFile(t)
+	dir := filepath.Join(t.TempDir(), "keepr")
+
+	_, err := filekeeper.New(dir, nil, identity)
+	require.Error(t, err)
+	assert.NoDirExists(t, dir, "New created the directory")
+
+	require.NoError(t, filekeeper.Prepare(dir))
+
+	keeper, err := filekeeper.New(dir, nil, identity)
+	require.NoError(t, err)
+	assert.NotNil(t, keeper)
+}

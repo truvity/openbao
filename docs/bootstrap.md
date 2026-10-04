@@ -86,7 +86,7 @@ Before a pod is ready no Service has an endpoint, so `--port-forward` (with
 voter through `kubectl port-forward` and reads the **public** `ca.crt` of the
 serving Secret; nothing else is used (kubectl does fetch the whole Secret to
 filter it, so that kubeconfig can read the private key: use a narrowly-scoped one).
-`--tls-server-name` and `--kube-context` are required with it.
+`--tls-server-name` and `--kube-context` are required with it. The forward is its own process group and outlives the caller's cancellation: it ends only when the command's cleanups are done, so a Ctrl-C does not cut the tunnel the cleanups need.
 
 ### Printing the shares
 
@@ -153,7 +153,7 @@ login token (everything the operator policy grants).
   including after Ctrl-C or SIGTERM: `openbaoctl` turns those into context
   cancellation, and the cleanups run on a context of their own (30 seconds,
   independent of the caller's). A cleanup that fails is part of the returned
-  error, with the command to run by hand. A SIGKILL, or a power loss, runs
+  error, with the command to run by hand. The first Ctrl-C starts the cleanups; a second one is swallowed until they finish (30 seconds at most), so wait or use SIGKILL. A SIGKILL, or a power loss, runs
   nothing: an open generation then blocks the next run until it is cancelled
   with `bao operator generate-root -cancel`, and a generated root token
   survives until revoked by accessor.
@@ -235,13 +235,27 @@ drive the real `openbaoctl` against a fake roster issuer. Offline.
 
 ## Recovering from a failed init
 
-If `init` succeeded and storing a share did not, the shares are lost: they
-existed only in the process. The server holds no data yet, so the way out is to
-wipe it and start again: scale the StatefulSet to zero, delete its data PVCs,
-let the controller recreate them, archive the `openbao-*` items in the Keeper,
-and run `init` again. The error message says exactly this. It is only safe on an
-empty, just-initialized install; `Initialize` refuses to run next to stale items
-so that a half-finished earlier run is noticed rather than silently reused.
+**Never wipe on a guess.** An initialized server and an empty keeper is, almost
+always, the wrong keeper: a typo in `--keeper-dir`, another machine, an expired
+session. `init` says so and gives no wipe advice then; check the keeper location
+first. `openbaoctl` also refuses to create a missing keeper directory for any
+step except `init` on a server that is not initialized yet.
+
+The one wipe candidate is an install this very run initialized: `init` saw the
+server uninitialized, sent the init call, got no answer, and then asked again
+and found it initialized. Only then does it say the recovery shares are lost.
+The server holds no data yet, so the way out is to wipe it and start again:
+scale the StatefulSet to zero, delete its data PVCs, let the controller
+recreate them, archive the `openbao-*` items in the Keeper, and run `init`
+again. If storing a share failed after a successful init, the same applies.
+If the server cannot be asked afterwards, the error says to confirm with the
+owner that it was initialized only just now before touching anything.
+
+If only recording the split failed, the shares and the root token are stored:
+run `init` again with `--record-recovery-split` (library:
+`Settings.RecordSplit`), which writes the item when every configured share is on
+file and none is beyond them. Until it exists the later steps cannot hold to the
+split.
 
 ## Adopting it from an estate
 

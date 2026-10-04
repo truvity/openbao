@@ -135,14 +135,32 @@ func (r *redactor) scrub(text string) string {
 	text = tokenShape.ReplaceAllString(text, redacted)
 
 	return shareShape.ReplaceAllStringFunc(text, func(run string) string {
-		// A share is random base64: mixed case and digits. A path or a URL of
-		// the same length is lowercase words and stays readable.
-		if strings.ContainsAny(run, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") && strings.ContainsAny(run, "0123456789") {
+		if looksLikeASecret(run) {
 			return redacted
 		}
 
 		return run
 	})
+}
+
+// looksLikeASecret tells a share from a path or a URL of the same length.
+// A share is random: base64 (mixed case and digits, or with + / = padding),
+// base64url (with _), or hex (digits). A path is lowercase words and dashes.
+func looksLikeASecret(run string) bool {
+	hasUpper := strings.ContainsAny(run, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	hasDigit := strings.ContainsAny(run, "0123456789")
+
+	switch {
+	case strings.ContainsAny(run, "+_") || strings.HasSuffix(run, "="):
+		return true
+	case hasUpper && hasDigit:
+		return true
+	case hasDigit && !strings.ContainsAny(run, "/-"):
+		// One unbroken alphanumeric run with digits: hex, or lowercase base32/36.
+		return true
+	default:
+		return false
+	}
 }
 
 // scrubbed is an error whose text has been scrubbed. It does not wrap the

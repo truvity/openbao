@@ -117,7 +117,11 @@ type kubectlDouble struct {
 	// deleteFails makes the pod delete fail; cancel is called on the first
 	// logs call, to cancel the caller's context mid-wait.
 	deleteFails bool
-	cancel      func()
+	// getErr is what `get pod` fails with (default NotFound); applyFails
+	// makes the apply fail.
+	getErr     string
+	applyFails bool
+	cancel     func()
 }
 
 func (k *kubectlDouble) run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
@@ -139,9 +143,17 @@ func (k *kubectlDouble) run(ctx context.Context, stdin []byte, args ...string) (
 			return nil, nil
 		}
 
-		return nil, errors.New("not found")
+		if k.getErr != "" {
+			return nil, errors.New(k.getErr)
+		}
+
+		return nil, errors.New("Error from server (NotFound): pods not found")
 	case strings.Contains(strings.Join(args, " "), "get cronjob"):
 		return []byte(restoreCheckCronJob), nil
+	case slices.Contains(args, "apply") && k.applyFails:
+		k.calls = append(k.calls, "apply-refused")
+
+		return nil, errors.New("Error from server (AlreadyExists)")
 	case slices.Contains(args, "apply"):
 		k.applied = stdin
 		k.exists = true
@@ -262,4 +274,35 @@ func TestRestoreDrillHoldIsCapped(t *testing.T) {
 
 	_, err := RestoreDrill{Hold: MaxDrillHold}.BuildPod([]byte(restoreCheckCronJob))
 	require.NoError(t, err)
+}
+
+// R6: nothing is created or deleted on a guess.
+func TestRestoreDrillOnlyDeletesAPodItCreated(t *testing.T) {
+	t.Run("get pod fails for another reason than NotFound", func(t *testing.T) {
+		kubectl := &kubectlDouble{getErr: "Error from server (Forbidden)"}
+		drill := RestoreDrill{Namespace: "openbao", Run: kubectl.run, Stderr: &bytes.Buffer{}}
+
+		err := drill.Start(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot tell whether")
+		assert.False(t, deletedAfterApply(kubectl.calls))
+		assert.NotContains(t, strings.Join(kubectl.calls, "\n"), "apply")
+	})
+
+	t.Run("the apply is refused", func(t *testing.T) {
+		kubectl := &kubectlDouble{applyFails: true}
+		drill := RestoreDrill{Namespace: "openbao", Run: kubectl.run, Stderr: &bytes.Buffer{}}
+
+		require.Error(t, drill.Start(context.Background()))
+		assert.NotContains(t, strings.Join(kubectl.calls, "\n"), "delete pod", "a pod this run did not create was deleted")
+	})
+}
+
+func TestTheByHandAdviceNamesTheCluster(t *testing.T) {
+	kubectl := &kubectlDouble{phase: "Failed", deleteFails: true}
+	drill := RestoreDrill{Context: "prod-ctx", Namespace: "openbao", Poll: time.Millisecond, Stderr: &bytes.Buffer{}, Run: kubectl.run}
+
+	err := drill.Start(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kubectl --context prod-ctx -n openbao delete pod openbao-drill")
 }

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -130,9 +131,17 @@ func (p PortForward) caPEM(ctx context.Context) ([]byte, error) {
 
 func (p PortForward) forward(ctx context.Context) (port string, stop func(), err error) {
 	listening := regexp.MustCompile(`^Forwarding from 127\.0\.0\.1:(\d+) -> ` + strconv.Itoa(p.remotePort()))
-	forwardCtx, cancel := context.WithCancel(ctx)
+
+	// The forward must outlive the caller's cancellation: after Ctrl-C the
+	// bootstrap's cleanups (cancel a pending root generation, revoke a token
+	// it generated) still go through it. It ends only through stop(), which
+	// the caller runs after those cleanups. It also leaves the terminal's
+	// process group, so the SIGINT that cancelled the caller does not reach it.
+	forwardCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	cmd := p.kubectl(forwardCtx, "port-forward", "-n", p.Namespace, "pod/"+p.Pod, ":"+strconv.Itoa(p.remotePort()))
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	cmd.Stderr = p.Stderr
 	if cmd.Stderr == nil {
