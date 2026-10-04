@@ -146,8 +146,8 @@ signed to adopt it.
 - **The artifacts.** The root and intermediate artifacts, and their
   `.attempt` reservations, are the files `pkg/ceremony` writes and reads:
   keep them where they are and point the hierarchy (or your own specs) at
-  them. Set `serialNamespace` to the label prefix the root was created
-  with -- the serial is derived from it, and a root created under another
+  them. Set `serialNamespace` (default `private-pki`) to the label prefix
+  the root was created with -- the serial is derived from it, and a root created under another
   prefix fails verification rather than being silently re-derived.
   `openbaoctl pki create-root` then verifies the root and signs nothing,
   and `pki sign-intermediate --print-template` against the same CSR must

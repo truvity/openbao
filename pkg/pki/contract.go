@@ -114,7 +114,9 @@ type (
 		// SerialNamespace prefixes every deterministic serial's
 		// domain-separation label (see
 		// [github.com/truvity/openbao/pkg/ceremony]); empty means that
-		// package's own default. NEVER CHANGE IT once a generation has
+		// package's own default, [ceremony.DefaultSerialNamespace]
+		// (`private-pki`), the one default every document names. NEVER
+		// CHANGE IT once a generation has
 		// signed: the serial is derived from it, so an existing root or
 		// intermediate fails re-verification rather than being silently
 		// re-derived under a new one. An estate adopting an existing

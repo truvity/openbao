@@ -23,8 +23,8 @@ code that writes it.
 
 A `Spec` is Go, and it is YAML too: every field carries a tag, `builder.Load`
 reads one (refusing a key it does not know), and
-[`pkg/builder/testdata/spec.yaml`](../pkg/builder/testdata/spec.yaml) is a
-worked one whose whole derivation is the golden
+[`pkg/builder/testdata/spec.yaml`](../pkg/builder/testdata/spec.yaml) is an
+example whose whole derivation is the golden
 [`testdata/desired.yaml`](../pkg/builder/testdata/desired.yaml).
 
 Nothing here names an estate. Every mount, role, group, policy and

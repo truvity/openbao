@@ -225,7 +225,7 @@ the same ServiceAccount under another name.
   Adopted custody and an adopted OpenBAO configuration must preview empty
   on every upgrade.
 - **A refusal in the model comes with a test** in `pkg/model`, and every
-  resource the worked example registers is in `pkg/apply`'s golden.
+  resource the model's example registers is in `pkg/apply`'s golden.
 - **A new capability renders nothing until asked for**, so an existing
   values file renders byte-for-byte the same after an upgrade unless the
   release says otherwise.

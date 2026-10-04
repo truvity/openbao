@@ -53,8 +53,11 @@ emergencyServer:
   # lifetime: 168h               # the default; at most 720h
 ```
 
-An intermediate starts with the root's `notBefore` and its path length is
-one less than the root's. `serialNamespace` (default `private-pki`)
+An intermediate starts with the root's `notBefore` and its path length
+defaults to one less than the root's (a domain intermediate, with an issuing
+CA still expected below it); a CA the root signs for leaves alone sets
+`maxPathLen` itself, strictly less than the root's (0 for a CA with nothing
+below it). `serialNamespace` (default `private-pki`)
 prefixes the label every deterministic serial is derived under; an existing
 root is re-verified only under the namespace it was created with, so never
 change it once a root exists. The file is read strictly: an unknown key is
@@ -67,7 +70,7 @@ an error. The full field list is in [reference.md](reference.md#hierarchy-file).
 | curve | P-384, `ECDSA_SHA_384`, fixed | one curve end to end; KMS `ECC_NIST_P384` |
 | root name constraint | none | a root that lives 20 years must not encode today's zone list |
 | intermediate name constraint | where the names are yours alone | re-issuable under the same root; the constrained one also excludes every IP |
-| `maxPathLen` | the depth you will need, bounded | each layer is exactly one less than its parent, so a leaf-level CA cannot mint a sub-CA |
+| `maxPathLen` | the depth you will need, bounded | a domain intermediate is exactly one less than its parent; a leaf-issuing CA the root signs directly is strictly less, 0 when nothing sits below it, so it cannot mint a sub-CA |
 
 **A workload-identity domain intermediate carries `permittedUriDomains`
 alone -- no `permittedDnsDomains`.** It sits beside the DNS-constrained
