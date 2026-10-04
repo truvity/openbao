@@ -27,6 +27,12 @@ changes nothing else.
 | Rebuild drill | `RestoreDrill` | `drill start`, `forward`, `stop` | A scratch pod built from the weekly restore check's own pod spec that restores the newest snapshot into a throwaway server, for an operator to inspect a copy of the data. No secret passes through it. |
 | Connection | `PortForward`, `NewTLSClient` | `--addr` + `--ca-file`, or `--port-forward` | TLS is always verified, against a CA you name, for a name the certificate holds. There is no insecure mode. |
 
+`init` also records the recovery split it used as the non-secret item
+`openbao-recovery-split` (`5/3`). `revoke-root` and a verifying `init` refuse
+settings that disagree with it, and refuse keeper items numbered past the
+configured shares, so a share is never left out of the drill. An install from
+before the split was recorded has no such item and only gets the second check.
+
 Root generation is authenticated since OpenBAO v2.6, so the drill runs on the
 bootstrap root token while it still exists; a drill after revocation is an
 operator's.
@@ -69,16 +75,25 @@ openbaoctl drill forward  --kube-context <context> --namespace openbao
 openbaoctl drill stop     --kube-context <context> --namespace openbao
 ```
 
+`--addr` must be the bootstrap node (the first Raft voter), never a load balancer
+or a follower: an uninitialized follower that has not joined reports "not
+initialized", and initializing it would found a second cluster. The client never
+follows a redirect (a 3xx is an error), so a token or a share cannot be re-sent
+to wherever an answer points.
+
 Before a pod is ready no Service has an endpoint, so `--port-forward` (with
 `--kube-context`, `--namespace`, `--pod`, `--tls-secret`) reaches the first
 voter through `kubectl port-forward` and reads the **public** `ca.crt` of the
-serving Secret; nothing else is read from the cluster.
+serving Secret; nothing else is used (kubectl does fetch the whole Secret to
+filter it, so that kubeconfig can read the private key: use a narrowly-scoped one).
+`--tls-server-name` and `--kube-context` are required with it.
 
 ### Printing the shares
 
 The shares are **never printed**. `init --insecure-print-recovery-shares-to-stdout`
 prints them to stdout once, after they are stored and read back, with a warning
-on stderr, for the one case where they must be moved into a custody this tool
+on stderr, and only in the run that initialized the server (`Bootstrap.Founded`):
+on an install that was initialized earlier it prints nothing, for the one case where they must be moved into a custody this tool
 does not reach. Do not use it in a shared terminal, a CI log or a recorded
 session. The root token is never printed under any flag.
 
@@ -134,7 +149,19 @@ login token (everything the operator policy grants).
   file. See the secret flows.
 - *A server error that echoes a secret.* Messages are scrubbed.
 - *A half-done step.* An open generate-root attempt, or a drill-generated root
-  token whose check failed, is cancelled or revoked before the error returns.
+  token whose check failed, is cancelled or revoked before the error returns,
+  including after Ctrl-C or SIGTERM: `openbaoctl` turns those into context
+  cancellation, and the cleanups run on a context of their own (30 seconds,
+  independent of the caller's). A cleanup that fails is part of the returned
+  error, with the command to run by hand. A SIGKILL, or a power loss, runs
+  nothing: an open generation then blocks the next run until it is cancelled
+  with `bao operator generate-root -cancel`, and a generated root token
+  survives until revoked by accessor.
+- *The init call's answer lost.* `init` gets its own, longer bound (five
+  minutes). If no answer arrives the server may still have initialized; the
+  error says the shares may be lost and gives the wipe advice, and a re-run that
+  finds an initialized server with nothing on file says the same instead of
+  suggesting a rekey (which needs the lost shares).
 
 **Out of scope, by design.**
 
@@ -186,10 +213,17 @@ threat model excludes a compromised process.
 | Shares are never unseal keys | `Initialize` refuses a seal that is not an auto-unseal seal, and always asks for `secret_shares: 0` | `TestInitializeRefusesAShamirSeal` |
 | Never an unaudited configure | the audit device must be enabled before any write | `TestConfigureRefusesToRunUnaudited` |
 | Wait for the whole cluster | `Configure` waits for every voter | `TestConfigureWaitsForEveryVoter` |
-| Secret buffers are zeroed | `[]byte` end to end, `clear` after use, on every exit path | `TestSecretBuffersAreZeroedOnceUsed` (every buffer a Keeper was given or handed out is all zeroes after the whole lifecycle), `TestSecretJSONRefusesWhatNeedsEscaping` |
+| Secret buffers are zeroed | `[]byte` end to end, `clear` after use, on every exit path | `TestSecretBuffersAreZeroedOnceUsed` (Keeper-side buffers) and `TestEverySecretBufferThePackageAllocatesIsZeroed` (every buffer the package allocates for a secret, through a test-only hook), `TestSecretJSONRefusesWhatNeedsEscaping` |
 | Nothing secret reaches a log or an error | the package logs no value; errors are scrubbed | `TestNothingSecretReachesTheLogOrAnError`, `TestAnErrorNeverCarriesWhatTheServerEchoes`, `TestARecoveryShareThatTheKeeperEchoesIsScrubbed`, conformance (every byte every command printed is searched for every share and the root token) |
 | The shares are printed only on request, and never the root token | one flag with a loud name, on `init` only | `TestOnlyOneFlagPrintsSecretsAndItSaysSo`, `TestPrintSharesWritesThemOnlyWhenCalledAndWarnsOnStderr`, conformance `TestFreshServerPrintsSharesOnlyWhenAsked` |
 | TLS is always verified | no insecure flag; a non-`https` address is refused | `TestThereIsNoInsecureTLSFlag`, `TestTheBootstrapCommandsRefuseWhatIsUnsafeOrAmbiguous` |
+| A cancelled context strands nothing | cleanups on `context.WithoutCancel` with their own timeout; failures reported | `TestCancellingMidDrillCancelsThePendingGeneration`, `TestCancellingAfterTheTokenExistsRevokesIt`, `TestACleanupThatFailsIsReportedWithWhatToDo`, `TestRestoreDrillStartDeletesThePodItCreatedWhenItFails` |
+| Nothing is sent anywhere but the named server | the client never follows a redirect | `TestAClientNeverFollowsARedirect` |
+| A scrubbed error cannot be unwrapped into the secret | `scrubbed` does not wrap | `TestAScrubbedErrorDoesNotWrapTheOriginal` |
+| The recovery split is held to | `openbao-recovery-split`, extra-share check | `TestTheRecoverySplitIsRecordedAndHeldTo` |
+| A lost init answer is not silent | own init timeout, advice on no answer | `TestAnInitWhoseAnswerNeverArrivedSaysTheSharesMayBeLost` |
+| The print flag cannot dump an old install | `Bootstrap.Founded` | `TestThePrintFlagPrintsOnlyWhatThisRunCreated`, conformance `TestFreshServerPrintsSharesOnlyWhenAsked` |
+| The server-side membership gate | conformance with `--membership-evidence-only` | `TestFreshServerRevokesOnMembershipEvidenceOnlyOnceSomeoneLoggedIn` |
 | The file Keeper never writes a secret in the clear | age encryption; 0600/0700; refuses overwrite and path-like titles | `pkg/bootstrap/filekeeper` tests |
 
 The conformance tests (`conformance/bootstrap_test.go`) run in CI's

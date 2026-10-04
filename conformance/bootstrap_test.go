@@ -336,29 +336,16 @@ func TestFreshServerLifecycle(t *testing.T) {
 	titles, err := rig.keepers.Titles(ctx)
 	require.NoError(t, err)
 	assert.False(t, titles[bootstrap.RootTokenItem], "the root token item is archived")
-	assert.Len(t, titles, 5, "every recovery share is still on file")
+	assert.Len(t, titles, 6, "every recovery share and the recorded split are still on file")
 
 	archived, err := filepath.Glob(filepath.Join(rig.keeper, "archive", bootstrap.RootTokenItem+".*.age"))
 	require.NoError(t, err)
 	assert.Len(t, archived, 1)
 
 	// The operators still get in, which is what revoking root must never break.
-	jwt, err := os.ReadFile(good)
-	require.NoError(t, err)
-
-	login, err := http.NewRequestWithContext(ctx, http.MethodPost, rig.baseURL+"/v1/auth/"+model.RosterMount+"/login",
-		strings.NewReader(fmt.Sprintf(`{"role":%q,"jwt":%q}`, model.RosterRole, strings.TrimSpace(string(jwt)))))
-	require.NoError(t, err)
-
-	loginResponse, err := rig.http.Do(login)
-	require.NoError(t, err)
-
-	var loginBody bytes.Buffer
-
-	_, _ = loginBody.ReadFrom(loginResponse.Body)
-	require.NoError(t, loginResponse.Body.Close())
-	require.Equal(t, http.StatusOK, loginResponse.StatusCode, loginBody.String())
-	assert.Contains(t, loginBody.String(), bootstrapGroup, "the operator's login carries the operator policy")
+	loginStatus, loginBody := rig.login(t, good)
+	require.Equal(t, http.StatusOK, loginStatus, loginBody)
+	assert.Contains(t, loginBody, bootstrapGroup, "the operator's login carries the operator policy")
 
 	_, _, err = rig.ctlRun(append(revoke, "--operator-jwt-file", good)...)
 	require.NoError(t, err, "a second revoke-root has nothing left to do")
@@ -384,6 +371,67 @@ func TestFreshServerPrintsSharesOnlyWhenAsked(t *testing.T) {
 	}
 
 	assert.NotContains(t, stdout+stderr, rig.reveal(bootstrap.RootTokenItem), "the root token is never printed")
+
+	// A re-run against the initialized server prints nothing: the flag is
+	// for the run that creates the shares, not a way to dump them later.
+	stdout, stderr, err = rig.ctlRun(append([]string{"init", "--insecure-print-recovery-shares-to-stdout"}, rig.connection()...)...)
+	require.NoError(t, err)
+	assert.Empty(t, stdout, "a re-run printed the shares of an install it did not create")
+	assert.Contains(t, stderr, "NOT printed")
+}
+
+// The library's own gate, with no login proof: a member must be on file.
+func TestFreshServerRevokesOnMembershipEvidenceOnlyOnceSomeoneLoggedIn(t *testing.T) {
+	rig := newBootstrapRig(t)
+
+	_, _, err := rig.ctlRun(append([]string{"init"}, rig.connection()...)...)
+	require.NoError(t, err)
+
+	root := rig.reveal(bootstrap.RootTokenItem)
+
+	_, _, err = rig.ctlRun(append([]string{"configure", "--issuer", rig.issuer.URL, "--operator-group", bootstrapGroup}, rig.connection()...)...)
+	require.NoError(t, err)
+
+	revoke := append([]string{"revoke-root", "--membership-evidence-only", "--operator-group", bootstrapGroup}, rig.connection()...)
+
+	// The server-side check, not the CLI's flag check: nobody has logged in.
+	_, stderr, err := rig.ctlRun(revoke...)
+	require.Error(t, err)
+	assert.Contains(t, stderr+err.Error(), "nobody has logged in")
+
+	status, _ := rig.get("auth/token/lookup-self", root)
+	require.Equal(t, http.StatusOK, status, "the root token was revoked with no member on file")
+
+	// An operator logs in once; now a member is on file.
+	status, body := rig.login(t, rig.operatorToken(t, bootstrapGroup))
+	require.Equal(t, http.StatusOK, status, body)
+
+	_, _, err = rig.ctlRun(revoke...)
+	require.NoError(t, err)
+
+	status, _ = rig.get("auth/token/lookup-self", root)
+	assert.Equal(t, http.StatusForbidden, status)
+}
+
+func (r *bootstrapRig) login(t *testing.T, jwtFile string) (int, string) {
+	t.Helper()
+
+	jwt, err := os.ReadFile(jwtFile)
+	require.NoError(t, err)
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, r.baseURL+"/v1/auth/"+model.RosterMount+"/login",
+		strings.NewReader(fmt.Sprintf(`{"role":%q,"jwt":%q}`, model.RosterRole, strings.TrimSpace(string(jwt)))))
+	require.NoError(t, err)
+
+	response, err := r.http.Do(request)
+	require.NoError(t, err)
+
+	var body bytes.Buffer
+
+	_, _ = body.ReadFrom(response.Body)
+	require.NoError(t, response.Body.Close())
+
+	return response.StatusCode, body.String()
 }
 
 func TestFreshServerRefusesANonEmptyServerUnlessTold(t *testing.T) {

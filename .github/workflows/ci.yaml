@@ -90,7 +90,7 @@ jobs:
       - name: Bootstrap lifecycle conformance (init, configure, drill, revoke-root)
         env:
           OPENBAO_BAO_BINARY: ${{ runner.temp }}/bao/bao
-        run: go test ./conformance/ -run 'TestFreshServer' -count=1 -v -timeout 8m
+        run: go test ./conformance/ -run 'TestFreshServer' -count=1 -v -timeout 12m
 
   # Stable name for branch protection: the matrix reports as
   # "recipes / lint" and so on, so a required context called "check"

@@ -26,6 +26,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/urfave/cli/v3"
 )
@@ -43,7 +45,15 @@ func main() {
 		}, bootstrapCommands()...),
 	}
 
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
+	// Ctrl-C and SIGTERM cancel the context instead of killing the process,
+	// so a bootstrap step in flight runs its cleanups (cancel a pending
+	// root generation, revoke a token it generated) before it exits.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := cmd.Run(ctx, os.Args); err != nil {
+		stop()
+
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type (
@@ -35,6 +36,16 @@ type (
 		policies     map[string]string
 		groups       map[string]*group
 		secretMounts map[string]mount
+		// onRequest sees every authenticated request before it is served.
+		onRequest func(method, path, token string)
+		// failDeleteAttempt and failRevokeGenerated make the two cleanups of a
+		// drill fail; initDelay makes init slow.
+		failDeleteAttempt   bool
+		failRevokeGenerated bool
+		initDelay           time.Duration
+		// badEncoding makes a completed generation answer a token that is not
+		// base64.
+		badEncoding bool
 		// generatedPolicies, when set, are what a token generated from the
 		// shares carries instead of root: a drill that must clean up after
 		// itself.
@@ -159,6 +170,10 @@ func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if f.onRequest != nil {
+		f.onRequest(r.Method, path, r.Header.Get("X-Vault-Token"))
+	}
+
 	status, answer := f.route(r.Method, path, r.Header.Get("X-Vault-Token"), body)
 	reply(w, status, answer)
 }
@@ -235,6 +250,8 @@ func (f *fakeBao) route(method, path, token string, body map[string]any) (int, a
 		held := f.tokens[token]
 
 		return http.StatusOK, map[string]any{"data": map[string]any{"accessor": held.accessor, "policies": held.policies}}
+	case method == http.MethodPost && path == "auth/token/revoke-self" && f.failRevokeGenerated && strings.HasPrefix(token, "s.generated"):
+		return http.StatusInternalServerError, map[string]any{"errors": []string{"revoke failed"}}
 	case method == http.MethodPost && path == "auth/token/revoke-self":
 		delete(f.tokens, token)
 
@@ -250,6 +267,8 @@ func (f *fakeBao) init(body map[string]any) (int, any) {
 	}
 
 	f.initialized = true
+	time.Sleep(f.initDelay)
+
 	f.initBody = body
 	f.shares = nil
 
@@ -321,6 +340,8 @@ func (f *fakeBao) generateRoot(method, path string, body map[string]any) (int, a
 		f.generation = &fakeGeneration{nonce: "nonce-1", otp: "otp-of-exactly-twenty-eight!", submitted: map[string]bool{}}
 
 		return http.StatusOK, f.generationStatus(f.generation.otp)
+	case method == http.MethodDelete && path == "sys/generate-root-token/attempt" && f.failDeleteAttempt:
+		return http.StatusInternalServerError, map[string]any{"errors": []string{"cancel failed"}}
 	case method == http.MethodDelete && path == "sys/generate-root-token/attempt":
 		f.generation = nil
 
@@ -370,9 +391,14 @@ func (f *fakeBao) submit(body map[string]any) (int, any) {
 
 	f.generation = nil
 
+	encoded := base64.RawStdEncoding.EncodeToString(padded)
+	if f.badEncoding {
+		encoded = "!!!not base64!!!"
+	}
+
 	return http.StatusOK, map[string]any{
 		"complete": true, "progress": 3, "required": 3, "nonce": "nonce-1",
-		"encoded_token": base64.RawStdEncoding.EncodeToString(padded),
+		"encoded_token": encoded,
 	}
 }
 

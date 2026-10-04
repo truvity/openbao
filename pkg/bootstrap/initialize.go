@@ -7,14 +7,29 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
 
+// SplitItem records the recovery split an install was initialized with
+// ("shares/threshold", not a secret), so a later step that is told another
+// split refuses instead of proving only some of the shares.
+const SplitItem = "openbao-recovery-split"
+
+var numberWords = map[int]string{1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
+
 // wipeAdvice is the way out when init succeeded and storing did not.
-const wipeAdvice = "OpenBAO is initialized but its recovery shares are not all stored, so they are lost. " +
-	"It holds no data yet: scale the openbao StatefulSet to 0, delete its three data PVCs, " +
-	"let the GitOps controller recreate them, archive any openbao-* items in the keeper, and run init again"
+func (b *Bootstrap) wipeAdvice() string {
+	count := fmt.Sprint(b.Settings.voters())
+	if word, ok := numberWords[b.Settings.voters()]; ok {
+		count = word
+	}
+
+	return "OpenBAO is initialized but its recovery shares are not all stored, so they are lost. " +
+		"It holds no data yet: scale the openbao StatefulSet to 0, delete its " + count + " data PVCs, " +
+		"let the GitOps controller recreate them, archive any openbao-* items in the keeper, and run init again"
+}
 
 type initAnswer struct {
 	RecoveryKeysB64 []secret `json:"recovery_keys_base64"`
@@ -39,7 +54,9 @@ func (a *initAnswer) wipe() {
 // It never initializes before the keeper has proven it can store and read
 // back a secret, and never with a seal whose shares would be unseal keys.
 func (b *Bootstrap) Initialize(ctx context.Context) error {
-	defer b.wipe()
+	defer b.begin()()
+
+	b.Founded = false
 
 	if err := b.Settings.validate(); err != nil {
 		return err
@@ -60,8 +77,19 @@ func (b *Bootstrap) Initialize(ctx context.Context) error {
 
 	if status.Initialized {
 		if missing := b.recoveryItems(titles, false); len(missing) > 0 {
+			if len(missing) == b.Settings.shares() && !titles[RootTokenItem] {
+				// Nothing at all on file: most likely an init whose answer never
+				// arrived (a timeout, a dropped connection) on a server that
+				// finished it. The shares are gone, and rekeying needs them.
+				return fmt.Errorf("OpenBAO is initialized but the keeper holds none of its recovery shares: %s", b.wipeAdvice())
+			}
+
 			return fmt.Errorf("OpenBAO is initialized but the keeper lacks %s: rekey the recovery key before anything else",
 				strings.Join(missing, ", "))
+		}
+
+		if err := b.checkSplit(ctx, titles); err != nil {
+			return err
 		}
 
 		b.Logger.InfoContext(ctx, "openbao already initialized; every recovery share is on file")
@@ -73,6 +101,12 @@ func (b *Bootstrap) Initialize(ctx context.Context) error {
 	if titles[RootTokenItem] {
 		stale = append(stale, RootTokenItem)
 	}
+
+	if titles[SplitItem] {
+		stale = append(stale, SplitItem)
+	}
+
+	stale = append(stale, b.extraShares(titles)...)
 
 	if len(stale) > 0 {
 		return fmt.Errorf("OpenBAO is not initialized but the keeper already holds %s from an earlier install: archive them, then run again",
@@ -161,7 +195,7 @@ func (b *Bootstrap) initialize(ctx context.Context) error {
 	// zeroes them, and the redactor knows them before anything is logged.
 	defer answer.wipe()
 
-	err := b.API.do(ctx, http.MethodPut, "sys/init", request, &answer)
+	err := b.API.doWithin(ctx, b.Settings.initTimeout(), http.MethodPut, "sys/init", request, &answer)
 	for _, share := range answer.RecoveryKeysB64 {
 		b.API.redactor.add(share)
 	}
@@ -169,7 +203,16 @@ func (b *Bootstrap) initialize(ctx context.Context) error {
 	b.API.redactor.add(answer.RootToken)
 
 	if err != nil {
-		return err
+		var refused *APIError
+		if errors.As(err, &refused) {
+			return err
+		}
+
+		// Sent, and no answer: the server may have finished initializing
+		// without anyone here holding its shares.
+		return fmt.Errorf("the init call got no answer (%w); the server may have initialized anyway, "+
+			"in which case its recovery shares are lost. If it now reports initialized and the keeper holds none: %s",
+			err, b.wipeAdvice())
 	}
 
 	b.Logger.InfoContext(ctx, "openbao initialized; storing the recovery shares and the root token",
@@ -178,7 +221,7 @@ func (b *Bootstrap) initialize(ctx context.Context) error {
 
 	if len(answer.RecoveryKeysB64) != shares || len(answer.RootToken) == 0 {
 		return fmt.Errorf("init answered %d recovery shares and a root token=%t: %s",
-			len(answer.RecoveryKeysB64), len(answer.RootToken) != 0, wipeAdvice)
+			len(answer.RecoveryKeysB64), len(answer.RootToken) != 0, b.wipeAdvice())
 	}
 
 	stamp := b.Now().UTC().Format(time.RFC3339)
@@ -201,6 +244,18 @@ func (b *Bootstrap) initialize(ctx context.Context) error {
 	if err := b.store(ctx, RootTokenItem, answer.RootToken, rootNotes); err != nil {
 		return err
 	}
+
+	split := []byte(fmt.Sprintf("%d/%d", shares, threshold))
+	err = b.Keeper.Create(ctx, SplitItem, split, "The recovery split this install was initialized with (shares/threshold). Not a secret.")
+
+	zero(split)
+
+	if err != nil {
+		return fmt.Errorf("the shares and the root token are stored, but recording the recovery split failed "+
+			"(run init again once the keeper works; it verifies and does not re-initialize): %w", b.API.redactor.scrubErr(err))
+	}
+
+	b.Founded = true
 
 	b.Logger.InfoContext(ctx, "recovery shares and root token stored and read back",
 		slog.String("keeper_items", RecoveryItem(1)+".."+RecoveryItem(shares)+", "+RootTokenItem),
@@ -247,14 +302,14 @@ func (b *Bootstrap) store(ctx context.Context, title string, value []byte, notes
 					return nil
 				}
 
-				return fmt.Errorf("keeper item %s read back differently from what OpenBAO issued: %s", title, wipeAdvice)
+				return fmt.Errorf("keeper item %s read back differently from what OpenBAO issued: %s", title, b.wipeAdvice())
 			}
 		}
 
 		err = b.API.redactor.scrubErr(err)
 
 		if b.Retry == nil || !b.Retry(ctx, fmt.Errorf("store %s: %w", title, err)) {
-			return fmt.Errorf("store %s: %w: %s", title, err, wipeAdvice)
+			return fmt.Errorf("store %s: %w: %s", title, err, b.wipeAdvice())
 		}
 	}
 }
@@ -271,4 +326,47 @@ func (b *Bootstrap) recoveryItems(titles map[string]bool, present bool) []string
 	}
 
 	return out
+}
+
+// extraShares lists keeper items numbered past the configured shares: the
+// remains of a larger split, whose extra shares this run would never prove.
+func (b *Bootstrap) extraShares(titles map[string]bool) []string {
+	var extra []string
+
+	for title := range titles {
+		var n int
+		if _, err := fmt.Sscanf(title, "openbao-recovery-%d", &n); err == nil && title == RecoveryItem(n) && n > b.Settings.shares() {
+			extra = append(extra, title)
+		}
+	}
+
+	slices.Sort(extra)
+
+	return extra
+}
+
+// checkSplit refuses a run told a recovery split the install was not
+// initialized with: it would check, and drill, only some of the shares.
+func (b *Bootstrap) checkSplit(ctx context.Context, titles map[string]bool) error {
+	if extra := b.extraShares(titles); len(extra) > 0 {
+		return fmt.Errorf("the keeper holds %s beyond the %d shares configured: the settings disagree with the split "+
+			"the install was initialized with, and those shares would never be proven", strings.Join(extra, ", "), b.Settings.shares())
+	}
+
+	if !titles[SplitItem] {
+		return nil // an install from before the split was recorded
+	}
+
+	recorded, err := b.Keeper.Reveal(ctx, SplitItem)
+	if err != nil {
+		return fmt.Errorf("read the recorded recovery split: %w", b.API.redactor.scrubErr(err))
+	}
+	defer zero(recorded)
+
+	if want := fmt.Sprintf("%d/%d", b.Settings.shares(), b.Settings.threshold()); string(recorded) != want {
+		return fmt.Errorf("the install was initialized with recovery split %s (shares/threshold) but the settings say %s: "+
+			"proving only some of the shares would risk the root token for nothing", recorded, want)
+	}
+
+	return nil
 }
