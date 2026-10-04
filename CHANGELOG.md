@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`examples/org`: the worked example, in six capability levels, each proven with no cluster.** One made-up organisation built up from level 0 (the server preset, its serving certificate and alerts) through 1 (KV per environment, a JWT mount per cluster, the External Secrets stores, snapshot and restore check), 2 (SSH user and host CAs, host certificates through the aws auth plugin), 3 (the private-PKI contract, cert-manager issuers, trust bundle, the restore check's PKI proof), 4 (a URI trust domain with a root-signed environment CA, the identity issuer, the approver layer) to 5 (a project namespace and the admission policy). A level directory holds complete `spec.yaml`, `contract.yaml` and chart values files, and each level contains the one below it. CI proves each level by contract validation, the `pkg/apply` preview under Pulumi's mocks (resources committed per level, nothing of a higher level registered, nothing below dropped or renamed), `helm template` of both charts against committed goldens (`hack/golden.sh examples`), and checks that the chart values and the desired state agree (every store and issuer logs in as a declared role, with the audience cert-manager asks for, and may sign where it signs). New `just examples` recipe and CI job; `just check` includes it. `hack/leak-canary.sh` now also holds `examples/org` to made-up names and the reserved example domains. See [examples/org](examples/org/README.md).
+
 ## v0.30.1
 
 ### Fixed

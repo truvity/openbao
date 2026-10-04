@@ -26,7 +26,7 @@ jobs:
       # job summary, and fails this job when a rule fails.
       policy-conformance: true
       policy-conformance-strict: true
-      recipes: '["build", "lint", "test", "leak-canary"]'
+      recipes: '["build", "lint", "test", "examples", "leak-canary"]'
 
   # The server HCL the library renders (pkg/serverpreset) against a real
   # `bao` of each release we run, offline: conformance/server_config_test.go

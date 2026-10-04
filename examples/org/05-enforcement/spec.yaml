@@ -1,0 +1,135 @@
+# Level 5: level 4 plus a project namespace (billing) below dev: the unit a
+# project's mTLS level is chosen for. Every name is a placeholder.
+roster:
+  issuer: https://issuer.example.com
+  ttl: 1h
+  claimMappings: {email: email, name: name}
+  description: tokens from the issuer, for people and jobs
+operators: operators
+operatorsTtl: 15m
+metadata: {source: org example}
+credentialMaxTtl: 1h
+root:
+  jobs:
+    mount: jwt-hub
+    description: tokens minted by the cluster the server runs on
+    issuer: https://oidc.hub.example.com
+    workloads:
+      - role: openbao-snapshot
+        subject: system:serviceaccount:openbao:openbao-snapshot
+        ttl: 15m
+        access:
+          - {op: rules, rules: [{path: sys/storage/raft/snapshot, capabilities: [read]}]}
+      - role: openbao-restore-check
+        subject: system:serviceaccount:openbao:openbao-restore-check
+        ttl: 15m
+        access:
+          - {op: rules, rules: [{path: sys/namespaces, capabilities: [list]}]}
+          - {op: canary, namespace: dev, mount: kv, path: restore-canary}
+          - {op: canary, namespace: prod, mount: kv, path: restore-canary}
+          - {op: ca, mount: pki-internal, issuer: example-internal-2026-01}
+          - {op: ca, namespace: dev, mount: pki-internal, issuer: example-internal-2026-01-dev}
+          - {op: ca, namespace: prod, mount: pki-internal, issuer: example-internal-2026-01-prod}
+environments:
+  - name: dev
+    kv: {path: kv, description: the dev environment's secrets, canary: restore-canary}
+    # billing keeps its secrets in a namespace of its own, with a mount and
+    # nothing that admits anybody.
+    projects:
+      - name: billing
+        kv: {path: kv, description: the billing project's own secrets}
+    trusts:
+      - mount: jwt-dev
+        description: tokens minted by the dev cluster
+        issuer: https://oidc.dev.example.com
+        workloads:
+          - role: example-app
+            subject: system:serviceaccount:external-secrets:external-secrets
+            ttl: 1h
+            policy: read-example-app
+            access: [{op: read, prefix: example-app}]
+          - role: example-identity
+            subject: system:serviceaccount:cert-manager:openbao-issuer
+            audience: vault://example-identity
+            ttl: 15m
+            policy: pki-example-identity
+            access: [{op: sign, mount: pki-workload, role: identity}]
+          - role: example-private
+            subject: system:serviceaccount:cert-manager:openbao-issuer
+            audience: vault://example-private
+            ttl: 15m
+            policy: pki-example-private
+            access: [{op: sign, mount: pki-internal, role: server}]
+          - role: runner
+            subject: system:serviceaccount:runners:runner
+            ttl: 15m
+            policy: dev:ssh:user
+    ssh:
+      shape:
+        userKeyType: ed25519
+        hostKeyType: ed25519
+        keyIdFormat: "{{token_display_name}}"
+        extension: permit-pty
+        userTtl: 30m
+        userMaxTtl: 1h
+        hostTtl: 24h
+        hostMaxTtl: 24h
+      user:
+        mount: ssh
+        description: the dev SSH user CA
+        keyType: ed25519
+        roles:
+          - {name: user, principal: builder, policy: "dev:ssh:user"}
+          - {name: ci, principal: ci, forceCommand: run-job --stdio, policy: "dev:ssh:ci"}
+      host:
+        mount: ssh-host
+        description: the dev SSH host CA
+        keyType: ed25519
+    hostAuth:
+      mount: aws
+      pluginVersion: v0.1.1
+      description: the dev fleet's own instance role, for its SSH host certificate
+      serverId: openbao-dev
+      ttl: 5m
+    hostLogins:
+      - role: builder-host
+        instanceRoleArn: arn:aws:iam::111122223333:role/example-builder
+        signingRole: builder
+        domain: builder.internal.example.org
+        policy: builder-host-sign
+    grants:
+      - name: dev:kv:writer
+        access: [{op: all}]
+      - name: dev:billing:deployer
+        access: [{op: secrets, project: billing, write: true}]
+    reserved:
+      - {prefix: restore-canary, owner: the restore canary}
+  - name: prod
+    kv: {path: kv, description: the prod environment's secrets, canary: restore-canary}
+    trusts:
+      - mount: jwt-prod
+        description: tokens minted by the prod cluster
+        issuer: https://oidc.prod.example.com
+        workloads:
+          - role: example-app
+            subject: system:serviceaccount:external-secrets:external-secrets
+            ttl: 1h
+            policy: read-example-app
+            access: [{op: read, prefix: example-app}]
+          - role: example-identity
+            subject: system:serviceaccount:cert-manager:openbao-issuer
+            audience: vault://example-identity
+            ttl: 15m
+            policy: pki-example-identity
+            access: [{op: sign, mount: pki-workload, role: identity}]
+          - role: example-private
+            subject: system:serviceaccount:cert-manager:openbao-issuer
+            audience: vault://example-private
+            ttl: 15m
+            policy: pki-example-private
+            access: [{op: sign, mount: pki-internal, role: server}]
+    grants:
+      - name: prod:kv:writer
+        access: [{op: all}]
+    reserved:
+      - {prefix: restore-canary, owner: the restore canary}

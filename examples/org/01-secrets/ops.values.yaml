@@ -1,0 +1,46 @@
+# Level 1: level 0 plus the two jobs that log in to the server: a snapshot
+# and a weekly restore that reads each environment's canary back. Both log in
+# through the jwt-hub mount in root that spec.yaml declares for them.
+namespace: openbao
+auth:
+  mountPath: jwt-hub
+serverCertificate:
+  enabled: true
+  externalDnsName: openbao.example.internal
+  issuerRef:
+    name: example-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+certificateExpiry:
+  enabled: true
+  clusterName: example-cluster
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
+networkPolicy:
+  enabled: true
+  clientCidrs: ["10.0.0.0/8"]
+snapshot:
+  enabled: true
+  upload:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
+restoreCheck:
+  enabled: true
+  sealConfig: |
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+  fetch:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
+  canary:
+    enabled: true
+    namespaces: [dev, prod]

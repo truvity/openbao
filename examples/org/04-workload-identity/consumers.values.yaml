@@ -1,0 +1,37 @@
+# Level 4: level 3 plus the identity issuer csi-driver-spiffe requests from,
+# and the approver layer: an exact policy per OpenBAO-backed issuer, and no
+# policy for the identity issuer, whose own approver is the only one for it
+# (docs/approver.md). The blanket approver is switched off in cert-manager's
+# own values, which this chart does not render.
+server: https://openbao.example.internal:8200
+caBundle: ZXhhbXBsZS1jYQ==
+vaultNamespace: dev
+auth:
+  mountPath: jwt-dev
+stores:
+  - name: example-app
+    conditions:
+      - namespaces: [example-app]
+pki:
+  enabled: true
+  trustAnchors:
+    - name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  issuers:
+    - name: example-private
+      signPath: pki-internal/sign/server
+      role: example-private
+    - name: example-identity
+      identity: true
+      signPath: pki-workload/sign/identity
+      role: example-identity
+approverPolicy:
+  enabled: true
+  issuers:
+    example-private:
+      commonName: smoke.dev.internal.example.org
+      dnsNames: ["*.dev.internal.example.org"]
+certificates:
+  - name: example-private-smoke
+    commonName: smoke.dev.internal.example.org
+    dnsNames: [smoke.dev.internal.example.org]

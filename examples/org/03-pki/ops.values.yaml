@@ -1,0 +1,75 @@
+# Level 3: level 2 plus the restore check's PKI proof: the restored server's
+# chain is walked from the committed root down to each environment's issuing
+# CA.
+namespace: openbao
+auth:
+  mountPath: jwt-hub
+serverCertificate:
+  enabled: true
+  externalDnsName: openbao.example.internal
+  issuerRef:
+    name: example-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+certificateExpiry:
+  enabled: true
+  clusterName: example-cluster
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
+networkPolicy:
+  enabled: true
+  clientCidrs: ["10.0.0.0/8"]
+snapshot:
+  enabled: true
+  upload:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
+restoreCheck:
+  enabled: true
+  sealConfig: |
+    seal "awskms" {
+      region     = "eu-example-1"
+      kms_key_id = "alias/openbao-unseal"
+    }
+  fetch:
+    s3:
+      enabled: true
+      bucket: example-openbao-backups
+      region: eu-example-1
+  canary:
+    enabled: true
+    namespaces: [dev, prod]
+  # The restored PKI is judged against a root held outside the server.
+  pki:
+    enabled: true
+    trustAnchor:
+      name: example-root-2026
+      certificate: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClpYaGhiWEJzWlMxeWIyOTAKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+    intermediate:
+      mount: pki-internal
+      issuer: example-internal-2026-01
+    issuing:
+      mount: pki-internal
+      issuerPrefix: example-internal-2026-01
+    namespaces: [dev, prod]
+    domain: internal.example.org
+pluginCatalog:
+  enabled: true
+  clusterName: example-cluster
+  plugins:
+    - type: auth
+      name: aws
+      version: v0.1.1
+      description: the aws auth method, for SSH host certificates
+      oci: true
+      declarative: true
+  alert:
+    alertmanager:
+      enabled: true
+      url: http://alertmanager.example.svc:9093
+      release: openbao
