@@ -28,13 +28,66 @@ jobs:
       policy-conformance-strict: true
       recipes: '["build", "lint", "test", "leak-canary"]'
 
+  # The server HCL the library renders (pkg/serverpreset) against a real
+  # `bao` of each release we run, offline: conformance/server_config_test.go
+  # starts the server in a network namespace with no interface and requires
+  # it to reach the seal (which needs AWS, so it stops there) and `bao
+  # operator diagnose` to parse the same file. A config error on either
+  # release fails the leg. The binary is the official release tarball,
+  # verified against the SHA-256 pinned here (from the release's
+  # checksums.txt); a version bump is a change to this matrix.
+  server-config:
+    name: server-config (${{ matrix.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "2.6.2"
+            sha256: 8dc11cc5fca0b539a9e352727dacb4e2d304daffcf9a66e0718ac325a20d05aa
+          - version: "2.7.0"
+            sha256: c3ab5de9e778223445487ccbfb16c291bf491642b688f3a3df5aeba23d9b3667
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install bao ${{ matrix.version }}
+        env:
+          VERSION: ${{ matrix.version }}
+          SHA256: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          archive="openbao_${VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/openbao/openbao/releases/download/v${VERSION}/${archive}"
+          echo "${SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bao"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/bao" bao
+          "$RUNNER_TEMP/bao/bao" version | grep -F "OpenBao v${VERSION} "
+
+      # The runner image restricts unprivileged user namespaces through
+      # AppArmor; the test needs one (unshare -rn) to take the network away.
+      - name: Allow unprivileged namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Server config conformance
+        env:
+          OPENBAO_BAO_BINARY: ${{ runner.temp }}/bao/bao
+        run: go test ./conformance/ -run 'TestServerAccepts|TestServerStartsOn|TestDiagnose' -count=1 -v
+
   # Stable name for branch protection: the matrix reports as
   # "recipes / lint" and so on, so a required context called "check"
   # would never arrive and every PR would hang waiting for it.
   check:
-    needs: recipes
+    needs: [recipes, server-config]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: '[ "${{ needs.recipes.result }}" = "success" ]'
+      - run: '[ "${{ needs.recipes.result }}" = "success" ] && [ "${{ needs.server-config.result }}" = "success" ]'
