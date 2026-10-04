@@ -86,7 +86,7 @@ Before a pod is ready no Service has an endpoint, so `--port-forward` (with
 voter through `kubectl port-forward` and reads the **public** `ca.crt` of the
 serving Secret; nothing else is used (kubectl does fetch the whole Secret to
 filter it, so that kubeconfig can read the private key: use a narrowly-scoped one).
-`--tls-server-name` and `--kube-context` are required with it. The forward is its own process group and outlives the caller's cancellation: it ends only when the command's cleanups are done, so a Ctrl-C does not cut the tunnel the cleanups need.
+`--tls-server-name` and `--kube-context` are required with it. The forward is its own process group (and on Linux the kernel SIGTERMs it if openbaoctl dies, SIGKILL included; on other systems a SIGKILLed openbaoctl leaves the `kubectl port-forward` running: kill it by hand) and outlives the caller's cancellation: it ends only when the command's cleanups are done, so a Ctrl-C does not cut the tunnel the cleanups need.
 
 ### Printing the shares
 
@@ -153,15 +153,17 @@ login token (everything the operator policy grants).
   including after Ctrl-C or SIGTERM: `openbaoctl` turns those into context
   cancellation, and the cleanups run on a context of their own (30 seconds,
   independent of the caller's). A cleanup that fails is part of the returned
-  error, with the command to run by hand. The first Ctrl-C starts the cleanups; a second one is swallowed until they finish (30 seconds at most), so wait or use SIGKILL. A SIGKILL, or a power loss, runs
+  error, with the command to run by hand. The first Ctrl-C starts the cleanups; a second one is swallowed until they finish (30 seconds at most), so wait. SIGHUP, SIGINT and SIGTERM all start the cleanups. A SIGKILL, or a power loss, runs
   nothing: an open generation then blocks the next run until it is cancelled
   with `bao operator generate-root -cancel`, and a generated root token
   survives until revoked by accessor.
 - *The init call's answer lost.* `init` gets its own, longer bound (five
-  minutes). If no answer arrives the server may still have initialized; the
-  error says the shares may be lost and gives the wipe advice, and a re-run that
-  finds an initialized server with nothing on file says the same instead of
-  suggesting a rekey (which needs the lost shares).
+  minutes). If no answer arrives it asks the server again: still uninitialized
+  means nothing was lost and no advice to wipe is given; now initialized means
+  this run's shares are lost and the wipe advice follows. A *re-run* that finds
+  an initialized server with nothing on file gives **no** wipe advice at all
+  (it is almost certainly the wrong keeper): see "Recovering from a failed
+  init".
 
 **Out of scope, by design.**
 

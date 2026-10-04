@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,6 +39,10 @@ func fakeKubectl(target string, args []string) int {
 
 		return 0
 	case slicesContain(args, "port-forward"):
+		if path := os.Getenv("BOOTSTRAP_FAKE_KUBECTL_PROC_FILE"); path != "" {
+			_ = os.WriteFile(path, []byte(fmt.Sprintf("%d %d %d", os.Getpid(), syscall.Getpgrp(), pdeathsig())), 0o600)
+		}
+
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return 1
@@ -133,4 +139,38 @@ func newBareFake() *fakeBao {
 		tokens: map[string]fakeToken{}, mounts: map[string]mount{}, roles: map[string]map[string]any{},
 		policies: map[string]string{}, groups: map[string]*group{},
 	}
+}
+
+// The forward is its own process group (the terminal's SIGINT does not reach
+// it) and, where the OS can, dies with its parent.
+func TestTheForwardLeavesOurProcessGroupAndDiesWithItsParent(t *testing.T) {
+	fake := newBareFake()
+	server := httptest.NewTLSServer(fake)
+	t.Cleanup(server.Close)
+
+	procFile := filepath.Join(t.TempDir(), "proc")
+	t.Setenv("BOOTSTRAP_FAKE_KUBECTL_TARGET", strings.TrimPrefix(server.URL, "https://"))
+	t.Setenv("BOOTSTRAP_FAKE_KUBECTL_CA", base64.StdEncoding.EncodeToString(pemOf(server)))
+	t.Setenv("BOOTSTRAP_FAKE_KUBECTL_PROC_FILE", procFile)
+
+	self, err := os.Executable()
+	require.NoError(t, err)
+
+	_, stop, err := PortForward{Namespace: "ns", Pod: "pod", TLSSecret: "tls", TLSServerName: "example.com", Kubectl: self}.
+		Connect(context.Background())
+	require.NoError(t, err)
+
+	defer stop()
+
+	raw, err := os.ReadFile(procFile)
+	require.NoError(t, err)
+
+	var pid, pgid, sig int
+
+	_, err = fmt.Sscanf(string(raw), "%d %d %d", &pid, &pgid, &sig)
+	require.NoError(t, err)
+
+	assert.Equal(t, pid, pgid, "the forward is not the leader of a process group of its own")
+	assert.NotEqual(t, syscall.Getpgrp(), pgid, "the forward shares our process group, so a terminal Ctrl-C reaches it")
+	assert.Equal(t, wantedPdeathsig, sig, "the forward would outlive a SIGKILLed parent")
 }

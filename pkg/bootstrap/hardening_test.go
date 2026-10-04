@@ -271,6 +271,27 @@ func TestWipeAdviceOnlyAfterThisRunInitializedTheServer(t *testing.T) {
 	assert.Contains(t, err.Error(), "delete its three data PVCs")
 }
 
+// T1: an unanswered init on a server that stayed empty lost nothing, and says so.
+func TestALostInitAnswerFromAnUninitializedServerGetsNoWipeAdvice(t *testing.T) {
+	bootstrap, fake, _ := newBootstrap(t, &bytes.Buffer{})
+	fake.initNeverApplies = true
+	fake.initDelay = 300 * time.Millisecond
+	bootstrap.Settings.InitTimeout = 50 * time.Millisecond
+
+	err := bootstrap.Initialize(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing was lost")
+
+	for _, advice := range []string{"PVC", "scale the", "StatefulSet", "delete its"} {
+		assert.NotContains(t, err.Error(), advice)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	assert.False(t, fake.initialized)
+}
+
 // R3: a failed recording of the split can be repaired without re-initializing.
 func TestTheRecoverySplitCanBeRecordedAfterwards(t *testing.T) {
 	bootstrap, _, keeper := newBootstrap(t, &bytes.Buffer{})
