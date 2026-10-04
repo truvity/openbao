@@ -106,7 +106,7 @@ func (l OperatorLogin) roster() model.Roster {
 // (unless [Settings.AllowNonEmpty]) one that already has mounts beyond the
 // operators' door.
 func (b *Bootstrap) Configure(ctx context.Context, login OperatorLogin) error {
-	defer b.wipe()
+	defer b.begin()()
 
 	titles, err := b.Keeper.Titles(ctx)
 	if err != nil {

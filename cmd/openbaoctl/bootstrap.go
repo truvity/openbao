@@ -70,7 +70,7 @@ func defaultBootstrapEnv() bootstrapEnv {
 
 func connectionFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{Name: flagAddr, Usage: "the API's base URL (scheme, host, port); needs --" + flagCAFile},
+		&cli.StringFlag{Name: flagAddr, Usage: "the API's https base URL; must be the bootstrap node (the first Raft voter), not a load balancer or a follower; needs --" + flagCAFile},
 		&cli.StringFlag{Name: flagCAFile, Usage: "PEM file of the CA the server's certificate chains to; TLS is always verified"},
 		&cli.StringFlag{Name: flagTLSServerName, Usage: "a name the server certificate holds (needed with --" + flagPortForward + ")"},
 		&cli.BoolFlag{Name: flagPortForward, Usage: "reach the bootstrap pod through kubectl port-forward instead of --" + flagAddr},
@@ -197,6 +197,11 @@ func connect(ctx context.Context, cmd *cli.Command) (*bootstrap.Client, func(), 
 	case forward && cmd.String(flagAddr) != "":
 		return nil, nil, fmt.Errorf("--%s and --%s are two ways to reach the server: choose one", flagPortForward, flagAddr)
 	case forward:
+		if cmd.String(flagTLSServerName) == "" {
+			return nil, nil, fmt.Errorf("--%s is required with --%s: the forward is on 127.0.0.1, which the serving certificate does not hold",
+				flagTLSServerName, flagPortForward)
+		}
+
 		if cmd.String(flagKubeContext) == "" {
 			return nil, nil, fmt.Errorf("--%s is required with --%s: a bootstrap goes to the cluster named here, never the current kube context",
 				flagKubeContext, flagPortForward)
@@ -258,11 +263,24 @@ func runInit(ctx context.Context, env bootstrapEnv, cmd *cli.Command) error {
 		return err
 	}
 
-	if cmd.Bool(flagPrintShares) {
+	return maybePrintShares(ctx, env, cmd.Bool(flagPrintShares), b, keeper)
+}
+
+// maybePrintShares prints the shares only when asked AND only when this very
+// run initialized the server: the flag is "print what you just made", never a
+// way to dump the shares of an install that was initialized earlier.
+func maybePrintShares(ctx context.Context, env bootstrapEnv, asked bool, b *bootstrap.Bootstrap, keeper bootstrap.Keeper) error {
+	switch {
+	case !asked:
+		return nil
+	case !b.Founded:
+		_, _ = fmt.Fprintln(env.stderr, "the recovery shares were NOT printed: this run did not initialize the server, "+
+			"and --"+flagPrintShares+" only prints the shares of the run that creates them")
+
+		return nil
+	default:
 		return printShares(ctx, env, keeper, b.Settings)
 	}
-
-	return nil
 }
 
 // printShares is the one place a recovery share leaves the keeper, and only

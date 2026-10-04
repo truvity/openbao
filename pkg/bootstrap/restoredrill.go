@@ -48,6 +48,8 @@ const (
 	readyPrefix = "drill copy ready"
 	// DefaultDrillHold is how long the scratch pod lives at the latest.
 	DefaultDrillHold = 3 * time.Hour
+	// MaxDrillHold caps Hold: the copy holds every secret in the snapshot.
+	MaxDrillHold = 12 * time.Hour
 )
 
 var bucketFlag = regexp.MustCompile(`--bucket ([^ ]+)`)
@@ -196,6 +198,10 @@ func (d RestoreDrill) BuildPod(cronJobJSON []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the %s CronJob has no pod template", d.cronJob())
 	}
 
+	if d.hold() <= 0 || d.hold() > MaxDrillHold {
+		return nil, fmt.Errorf("the drill's hold %s is outside (0, %s]: the copy holds every secret in the snapshot", d.hold(), MaxDrillHold)
+	}
+
 	spec["activeDeadlineSeconds"] = int64(d.hold().Seconds())
 
 	if err := d.waitForNetworkPolicy(spec); err != nil {
@@ -277,9 +283,12 @@ func (d RestoreDrill) holdContainer(spec map[string]any) error {
 	return fmt.Errorf("the %s CronJob has no %q container to hold the drill copy in", d.cronJob(), d.container())
 }
 
-// Start creates the pod and waits until the copy is restored and ready.
-func (d RestoreDrill) Start(ctx context.Context) error {
-	if _, err := d.run(ctx, nil, "get", "pod", d.pod()); err == nil {
+// Start creates the pod and waits until the copy is restored and ready. If it
+// fails or is cancelled after the pod exists, the pod is deleted (on a
+// context of its own) rather than left holding a copy of every secret; a
+// delete that fails is reported with the command to run.
+func (d RestoreDrill) Start(ctx context.Context) (err error) {
+	if _, getErr := d.run(ctx, nil, "get", "pod", d.pod()); getErr == nil {
 		return fmt.Errorf("%s already exists; stop it first", d.pod())
 	}
 
@@ -292,6 +301,21 @@ func (d RestoreDrill) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	// A failed apply may still have created the pod.
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		cleanup, cancel := cleanupContext(ctx)
+		defer cancel()
+
+		if stopErr := d.Stop(cleanup); stopErr != nil {
+			err = errors.Join(err, fmt.Errorf("the drill pod %s could NOT be deleted and still holds a copy of the data: "+
+				"delete it with `kubectl -n %s delete pod %s`: %w", d.pod(), d.Namespace, d.pod(), stopErr))
+		}
+	}()
 
 	if _, err := d.run(ctx, pod, "apply", "-f", "-"); err != nil {
 		return err
@@ -307,8 +331,8 @@ func (d RestoreDrill) Start(ctx context.Context) error {
 			return nil
 		}
 
-		phase, err := d.run(ctx, nil, "get", "pod", d.pod(), "-o", "jsonpath={.status.phase}")
-		if err == nil && strings.TrimSpace(string(phase)) == "Failed" {
+		phase, phaseErr := d.run(ctx, nil, "get", "pod", d.pod(), "-o", "jsonpath={.status.phase}")
+		if phaseErr == nil && strings.TrimSpace(string(phase)) == "Failed" {
 			d.dumpLogs(ctx)
 
 			return errors.New("the drill pod failed")

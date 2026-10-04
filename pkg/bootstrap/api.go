@@ -40,8 +40,17 @@ type (
 )
 
 // NewClient talks to base (scheme, host and port, no path) over httpClient.
+//
+// The client never follows a redirect: a 3xx is an error. Go would re-send the
+// token header, and for 307 and 308 the body (a recovery share), to wherever
+// the answer points, an http:// URL included. Calls are bounded by
+// [RequestTimeout] each through their context, not by the http.Client.
 func NewClient(base string, httpClient *http.Client) *Client {
-	return &Client{base: base, http: httpClient, redactor: &redactor{}}
+	own := *httpClient
+	own.Timeout = 0
+	own.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	return &Client{base: base, http: &own, redactor: &redactor{}}
 }
 
 // NewTLSClient talks to base over TLS, trusting only caPEM and expecting the
@@ -57,7 +66,6 @@ func NewTLSClient(base string, caPEM []byte, serverName string) (*Client, error)
 	}
 
 	return NewClient(base, &http.Client{
-		Timeout: RequestTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: serverName, MinVersion: tls.VersionTLS12},
 		},
@@ -69,7 +77,7 @@ func NewTLSClient(base string, caPEM []byte, serverName string) (*Client, error)
 func (c *Client) WithToken(token []byte) *Client {
 	c.redactor.add(token)
 
-	return &Client{base: c.base, http: c.http, token: bytes.Clone(token), redactor: c.redactor}
+	return &Client{base: c.base, http: c.http, token: track(bytes.Clone(token)), redactor: c.redactor}
 }
 
 // Wipe zeroes the client's token.
@@ -97,6 +105,14 @@ func hasStatus(err error, status int) bool {
 // not nil). Error text carries OpenBAO's own messages, never the request, and
 // is scrubbed. The request and answer buffers are zeroed once used.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doWithin(ctx, RequestTimeout, method, path, body, out)
+}
+
+// doWithin is [Client.do] with its own bound on the call.
+func (c *Client) doWithin(ctx context.Context, limit time.Duration, method, path string, body, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+
 	var payload io.Reader
 
 	if body != nil {
@@ -105,7 +121,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 			return fmt.Errorf("encode %s /v1/%s: %w", method, path, c.redactor.scrubErr(err))
 		}
 
-		defer zero(raw)
+		defer zero(track(raw))
 
 		payload = bytes.NewReader(raw)
 	}
@@ -130,7 +146,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	defer func() { _ = response.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAnswer))
-	defer zero(raw)
+	defer zero(track(raw))
 
 	if err != nil {
 		return fmt.Errorf("read %s /v1/%s: %w", method, path, c.redactor.scrubErr(err))

@@ -15,6 +15,10 @@ const (
 	DefaultVoters            = 3
 	DefaultAuditDevice       = "to-stdout"
 	DefaultReadyTimeout      = 5 * time.Minute
+	// DefaultInitTimeout bounds the init call alone: it generates keys and
+	// writes the seal config, and takes far longer than any other call. A
+	// client that gives up while the server finishes loses the shares.
+	DefaultInitTimeout = 5 * time.Minute
 )
 
 type (
@@ -31,6 +35,8 @@ type (
 		AuditDevice string
 		// ReadyTimeout bounds the wait for an unsealed, fully joined cluster.
 		ReadyTimeout time.Duration
+		// InitTimeout bounds the init call; default [DefaultInitTimeout].
+		InitTimeout time.Duration
 		// Description names the install in the notes of each keeper item
 		// (free text: an endpoint, a cluster). Never a secret.
 		Description string
@@ -61,6 +67,11 @@ type (
 		// settling for a group member on file. The caller owns the slice; it
 		// is not zeroed here.
 		OperatorJWT []byte
+
+		// Founded is set by Initialize: true when this run initialized the
+		// server (and so just stored its shares), false when it only verified
+		// an initialized one.
+		Founded bool
 	}
 )
 
@@ -96,6 +107,14 @@ func (s Settings) audit() string {
 	return s.AuditDevice
 }
 
+func (s Settings) initTimeout() time.Duration {
+	if s.InitTimeout == 0 {
+		return DefaultInitTimeout
+	}
+
+	return s.InitTimeout
+}
+
 func (s Settings) readyTimeout() time.Duration {
 	if s.ReadyTimeout == 0 {
 		return DefaultReadyTimeout
@@ -123,7 +142,32 @@ func (s Settings) validate() error {
 	return nil
 }
 
-// wipe zeroes every secret the run remembered.
-func (b *Bootstrap) wipe() {
-	b.API.redactor.wipe()
+// begin fills in what a caller may leave out (a nil Logger discards, a nil
+// Now is the wall clock, a zero Poll is five seconds) and returns the cleanup
+// every step defers.
+func (b *Bootstrap) begin() func() {
+	if b.Logger == nil {
+		b.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	if b.Now == nil {
+		b.Now = time.Now
+	}
+
+	if b.Poll == 0 {
+		b.Poll = 5 * time.Second
+	}
+
+	return b.API.redactor.wipe
+}
+
+// cleanupTimeout bounds a cleanup that must run after the caller's context
+// is gone.
+const cleanupTimeout = 30 * time.Second
+
+// cleanupContext is a context for the cleanups that undo what a step started
+// (cancel a root generation, revoke a token it made): it survives the
+// caller's cancellation, which is exactly when those cleanups matter.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 }

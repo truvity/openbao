@@ -93,8 +93,12 @@ func TestTheBootstrapCommandsRefuseWhatIsUnsafeOrAmbiguous(t *testing.T) {
 			args: []string{"init", "--" + flagAddr, "https://x", "--" + flagPortForward, "--" + flagKubeContext, "c"},
 			want: "choose one",
 		},
+		"init port-forward without a TLS server name": {
+			args: []string{"init", "--" + flagPortForward, "--" + flagKubeContext, "c"},
+			want: "--" + flagTLSServerName + " is required",
+		},
 		"init port-forward without a kube context": {
-			args: []string{"init", "--" + flagPortForward},
+			args: []string{"init", "--" + flagPortForward, "--" + flagTLSServerName, "x"},
 			want: "--" + flagKubeContext + " is required",
 		},
 	} {
@@ -176,4 +180,35 @@ func TestReadTokenTrimsAndNeverEchoes(t *testing.T) {
 
 	_, err = readToken(nil, filepath.Join(t.TempDir(), "missing"))
 	assert.Error(t, err)
+}
+
+// L2: the flag prints what the run just made, never an earlier install's shares.
+func TestThePrintFlagPrintsOnlyWhatThisRunCreated(t *testing.T) {
+	keeper := memoryKeeper{}
+	for n := 1; n <= 5; n++ {
+		keeper[bootstrap.RecoveryItem(n)] = fmt.Sprintf("share-%d-value", n)
+	}
+
+	for name, tc := range map[string]struct {
+		asked, founded bool
+		wantPrinted    bool
+	}{
+		"asked, and this run initialized": {asked: true, founded: true, wantPrinted: true},
+		"asked, but only verified":        {asked: true, founded: false},
+		"not asked, this run initialized": {asked: false, founded: true},
+		"not asked, only verified":        {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+
+			b := &bootstrap.Bootstrap{Founded: tc.founded}
+			require.NoError(t, maybePrintShares(context.Background(), bootstrapEnv{stdout: &out, stderr: &errOut}, tc.asked, b, keeper))
+
+			if tc.wantPrinted {
+				assert.Contains(t, out.String(), "share-1-value")
+			} else {
+				assert.Empty(t, out.String(), "shares were printed for an install this run did not create")
+			}
+		})
+	}
 }

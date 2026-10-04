@@ -2,8 +2,10 @@ package bootstrap
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -43,7 +45,7 @@ func (s *secret) UnmarshalJSON(raw []byte) error {
 		return errors.New("a secret field holds an escape sequence")
 	}
 
-	*s = bytes.Clone(inner)
+	*s = track(bytes.Clone(inner))
 
 	return nil
 }
@@ -57,11 +59,23 @@ func (s secret) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	out := make([]byte, 0, len(s)+2)
+	out := track(make([]byte, 0, len(s)+2))
 	out = append(out, '"')
 	out = append(out, s...)
 
 	return append(out, '"'), nil
+}
+
+// trackSecret, when set (tests only), sees every buffer this package
+// allocates for a secret, so a test can prove each one is zeroed.
+var trackSecret func([]byte)
+
+func track(b []byte) []byte {
+	if trackSecret != nil {
+		trackSecret(b)
+	}
+
+	return b
 }
 
 // zero overwrites b. The compiler may not elide it: the slice is read
@@ -86,7 +100,7 @@ func (r *redactor) add(s []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.secrets = append(r.secrets, bytes.Clone(s))
+	r.secrets = append(r.secrets, track(bytes.Clone(s)))
 }
 
 // wipe zeroes and forgets every remembered secret.
@@ -120,19 +134,32 @@ func (r *redactor) scrub(text string) string {
 
 	text = tokenShape.ReplaceAllString(text, redacted)
 
-	return shareShape.ReplaceAllString(text, redacted)
+	return shareShape.ReplaceAllStringFunc(text, func(run string) string {
+		// A share is random base64: mixed case and digits. A path or a URL of
+		// the same length is lowercase words and stays readable.
+		if strings.ContainsAny(run, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") && strings.ContainsAny(run, "0123456789") {
+			return redacted
+		}
+
+		return run
+	})
 }
 
-// scrubbed is an error whose text has been scrubbed. The original stays
-// reachable through errors.As and errors.Is, never through its text.
+// scrubbed is an error whose text has been scrubbed. It does not wrap the
+// original: a chain walk (errors.Unwrap, a reporter that dumps the chain)
+// must not reach the unscrubbed text. It answers errors.Is for the two
+// context errors, which callers branch on, and for nothing else.
 type scrubbed struct {
-	text string
-	err  error
+	text     string
+	canceled bool
+	deadline bool
 }
 
 func (e *scrubbed) Error() string { return e.text }
 
-func (e *scrubbed) Unwrap() error { return e.err }
+func (e *scrubbed) Is(target error) bool {
+	return (e.canceled && target == context.Canceled) || (e.deadline && target == context.DeadlineExceeded)
+}
 
 // scrubErr returns err with its text scrubbed (the same error when nothing
 // changed).
@@ -142,9 +169,15 @@ func (r *redactor) scrubErr(err error) error {
 	}
 
 	text := err.Error()
-	if clean := r.scrub(text); clean != text {
-		return &scrubbed{text: clean, err: err}
+
+	clean := r.scrub(text)
+	if clean == text {
+		return err
 	}
 
-	return err
+	return &scrubbed{
+		text:     clean,
+		canceled: errors.Is(err, context.Canceled),
+		deadline: errors.Is(err, context.DeadlineExceeded),
+	}
 }

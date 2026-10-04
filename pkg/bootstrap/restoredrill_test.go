@@ -114,10 +114,22 @@ type kubectlDouble struct {
 	exists  bool
 	logs    []string
 	phase   string
+	// deleteFails makes the pod delete fail; cancel is called on the first
+	// logs call, to cancel the caller's context mid-wait.
+	deleteFails bool
+	cancel      func()
 }
 
-func (k *kubectlDouble) run(_ context.Context, stdin []byte, args ...string) ([]byte, error) {
+func (k *kubectlDouble) run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	k.calls = append(k.calls, strings.Join(args, " "))
+
+	if slices.Contains(args, "delete") && (ctx.Err() != nil || k.deleteFails) {
+		return nil, errors.New("delete refused")
+	}
+
+	if slices.Contains(args, "logs") && k.cancel != nil {
+		k.cancel()
+	}
 
 	switch {
 	case strings.Contains(strings.Join(args, " "), "get pod openbao-drill -o"):
@@ -192,4 +204,62 @@ func TestRestoreDrillStartReportsAFailedPodWithoutTokens(t *testing.T) {
 // podTemplate wraps a pod spec in the CronJob around it.
 func podTemplate(spec string) string {
 	return `{"spec":{"jobTemplate":{"spec":{"template":{"spec":` + spec + `}}}}}`
+}
+
+func deletedAfterApply(calls []string) bool {
+	applied := false
+
+	for _, call := range calls {
+		if strings.Contains(call, "apply") {
+			applied = true
+		}
+
+		if applied && strings.Contains(call, "delete pod openbao-drill") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// A failed or cancelled Start must not leave a copy of every secret running.
+func TestRestoreDrillStartDeletesThePodItCreatedWhenItFails(t *testing.T) {
+	t.Run("the pod fails", func(t *testing.T) {
+		kubectl := &kubectlDouble{phase: "Failed"}
+		drill := RestoreDrill{Namespace: "openbao", Poll: time.Millisecond, Stderr: &bytes.Buffer{}, Run: kubectl.run}
+
+		require.Error(t, drill.Start(context.Background()))
+		assert.True(t, deletedAfterApply(kubectl.calls), "%v", kubectl.calls)
+	})
+
+	t.Run("the caller cancels", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		kubectl := &kubectlDouble{phase: "Running", cancel: cancel}
+		drill := RestoreDrill{Namespace: "openbao", Poll: time.Millisecond, Stderr: &bytes.Buffer{}, Run: kubectl.run}
+
+		err := drill.Start(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.True(t, deletedAfterApply(kubectl.calls), "the delete must run on a context that survives the cancellation: %v", kubectl.calls)
+		assert.NotContains(t, err.Error(), "could NOT be deleted")
+	})
+
+	t.Run("the delete fails too", func(t *testing.T) {
+		kubectl := &kubectlDouble{phase: "Failed", deleteFails: true}
+		drill := RestoreDrill{Namespace: "openbao", Poll: time.Millisecond, Stderr: &bytes.Buffer{}, Run: kubectl.run}
+
+		err := drill.Start(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could NOT be deleted")
+		assert.Contains(t, err.Error(), "kubectl -n openbao delete pod openbao-drill")
+	})
+}
+
+func TestRestoreDrillHoldIsCapped(t *testing.T) {
+	for _, hold := range []time.Duration{MaxDrillHold + time.Second, -time.Hour} {
+		_, err := RestoreDrill{Hold: hold}.BuildPod([]byte(restoreCheckCronJob))
+		require.Error(t, err, hold)
+	}
+
+	_, err := RestoreDrill{Hold: MaxDrillHold}.BuildPod([]byte(restoreCheckCronJob))
+	require.NoError(t, err)
 }
