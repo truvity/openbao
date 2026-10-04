@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -141,7 +140,7 @@ func (p PortForward) forward(ctx context.Context) (port string, stop func(), err
 
 	cmd := p.kubectl(forwardCtx, "port-forward", "-n", p.Namespace, "pod/"+p.Pod, ":"+strconv.Itoa(p.remotePort()))
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = forwardProcAttr()
 
 	cmd.Stderr = p.Stderr
 	if cmd.Stderr == nil {

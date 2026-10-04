@@ -46,6 +46,9 @@ type (
 		// badEncoding makes a completed generation answer a token that is not
 		// base64.
 		badEncoding bool
+		// initNeverApplies makes init hang for initDelay and then fail without
+		// initializing: an unanswered call on a server that stays empty.
+		initNeverApplies bool
 		// generatedPolicies, when set, are what a token generated from the
 		// shares carries instead of root: a drill that must clean up after
 		// itself.
@@ -264,6 +267,12 @@ func (f *fakeBao) route(method, path, token string, body map[string]any) (int, a
 func (f *fakeBao) init(body map[string]any) (int, any) {
 	if f.initialized {
 		return http.StatusBadRequest, map[string]any{"errors": []string{"OpenBao is already initialized"}}
+	}
+
+	if f.initNeverApplies {
+		time.Sleep(f.initDelay)
+
+		return http.StatusInternalServerError, map[string]any{"errors": []string{"gave up"}}
 	}
 
 	f.initialized = true
