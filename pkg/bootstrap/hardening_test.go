@@ -113,7 +113,7 @@ func TestADecodeFailureSaysARootTokenExists(t *testing.T) {
 func TestAClientNeverFollowsARedirect(t *testing.T) {
 	var leaked atomic.Int32
 
-	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	plain := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		leaked.Add(1)
 		assert.Empty(t, r.Header.Get("X-Vault-Token"))
 	}))

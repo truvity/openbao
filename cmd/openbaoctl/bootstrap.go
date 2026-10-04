@@ -70,7 +70,10 @@ func defaultBootstrapEnv() bootstrapEnv {
 
 func connectionFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{Name: flagAddr, Usage: "the API's https base URL; must be the bootstrap node (the first Raft voter), not a load balancer or a follower; needs --" + flagCAFile},
+		&cli.StringFlag{
+			Name:  flagAddr,
+			Usage: "the API's https base URL; must be the bootstrap node (the first Raft voter), not a load balancer or a follower; needs --" + flagCAFile,
+		},
 		&cli.StringFlag{Name: flagCAFile, Usage: "PEM file of the CA the server's certificate chains to; TLS is always verified"},
 		&cli.StringFlag{Name: flagTLSServerName, Usage: "a name the server certificate holds (needed with --" + flagPortForward + ")"},
 		&cli.BoolFlag{Name: flagPortForward, Usage: "reach the bootstrap pod through kubectl port-forward instead of --" + flagAddr},
