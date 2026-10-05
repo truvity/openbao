@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`pkg/kv`: one HTTP client for a namespace's KV v2 mount.** `kv.New(addr, namespace, mount, caPEM)`, then `Login` on a JWT mount, `Read` (nil when the secret is absent, an error on a refusal), `Write`, `Revoke`. It trusts the server through the given CA bundle alone and never switches verification off. It is the estate's Pulumi programs' client moved out of the consuming repository, so one implementation serves every importer.
+
 ## v0.31.0
 
 ### Changed
