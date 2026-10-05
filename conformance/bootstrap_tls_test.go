@@ -41,8 +41,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/ceremony"
-	"github.com/truvity/openbao/pkg/kmssigner"
+	"github.com/truvity/secrets/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/kmssigner"
 )
 
 const bootstrapDNSName = "openbao.example.internal"

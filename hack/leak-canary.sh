@@ -97,7 +97,7 @@ org_files=$(git ls-files -z -- 'examples/org' | tr '\0' '\n')
 if [ -n "$org_files" ]; then
   # shellcheck disable=SC2086
   names=$(grep -InEi 'truvity|opwerm|nexus|trustform|trust-form' $org_files 2>/dev/null \
-            | grep -vE 'github\.com/truvity/openbao' | head -5)
+            | grep -vE 'github\.com/truvity/secrets' | head -5)
   if [ -n "$names" ]; then
     echo "LEAK: examples/org names an organisation — it describes a made-up one:"
     echo "$names" | sed 's/^/    /'

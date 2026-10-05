@@ -19,7 +19,7 @@ import (
 // `auth_type=iam`): a caller's own signed STS `GetCallerIdentity` request,
 // handed over whole so OpenBAO can replay it against AWS and learn who
 // signed it -- never a bearer credential of the caller's own. See
-// https://openbao.org/api-docs/auth/aws/#login and truvity/openbao's own
+// https://openbao.org/api-docs/auth/aws/#login and truvity/secrets's own
 // pkg/model.AWSAuthMount doc comment (this tool is that mount's one
 // intended caller).
 type loginRequest struct {
@@ -69,7 +69,7 @@ const (
 // X-Vault-AWS-IAM-Server-ID header is set on the request BEFORE signing,
 // so SigV4 covers it: exactly what a mount pinning
 // AWSAuthMount.IAMServerIDHeaderValue checks for on the OpenBAO side
-// (truvity/openbao docs/safety.md "AWS IAM auth").
+// (truvity/secrets docs/safety.md "AWS IAM auth").
 type stsLogin struct{}
 
 func (stsLogin) Login(ctx context.Context, role, serverIDHeader string) (loginRequest, error) {

@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/bootstrap"
-	"github.com/truvity/openbao/pkg/bootstrap/filekeeper"
+	"github.com/truvity/secrets/pkg/bootstrap"
+	"github.com/truvity/secrets/pkg/bootstrap/filekeeper"
 )
 
 var _ bootstrap.Keeper = (*filekeeper.Keeper)(nil)

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // DefaultTokenTTL is how long an operator login lives unless

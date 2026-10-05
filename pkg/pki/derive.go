@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // The derivation: a validated [Contract] plus the facts it cannot know (the
@@ -35,7 +35,7 @@ type (
 		// THIS environment has not been through the ceremony's second
 		// phase (the signed certificate is not committed yet). Nothing is
 		// derived for such an environment in that domain: its mount and
-		// key exist only through [github.com/truvity/openbao/pkg/apply]'s
+		// key exist only through [github.com/truvity/secrets/pkg/apply]'s
 		// BootstrapEnvironmentCA, and the installed CA, its roles and
 		// everything that follows them appear once the artifact does.
 		PendingCAs []string

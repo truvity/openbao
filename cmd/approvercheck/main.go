@@ -37,7 +37,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/truvity/openbao/pkg/approvercheck"
+	"github.com/truvity/secrets/pkg/approvercheck"
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"k8s.io/client-go/dynamic"

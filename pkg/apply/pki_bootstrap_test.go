@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/apply"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/apply"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // devPKIMount locates the "dev" namespace's "pki" mount in the shared

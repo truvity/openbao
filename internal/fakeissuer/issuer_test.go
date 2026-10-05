@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/internal/fakeissuer"
+	"github.com/truvity/secrets/internal/fakeissuer"
 )
 
 func getJSON(t *testing.T, address string, into any) {

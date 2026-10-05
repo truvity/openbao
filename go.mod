@@ -1,4 +1,4 @@
-module github.com/truvity/openbao
+module github.com/truvity/secrets
 
 go 1.27.0
 

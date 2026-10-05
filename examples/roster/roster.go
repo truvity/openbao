@@ -13,7 +13,7 @@
 // golden, so the example a reader copies is the one that is proven.
 package roster
 
-import "github.com/truvity/openbao/pkg/model"
+import "github.com/truvity/secrets/pkg/model"
 
 // The names the example uses, which the conformance test asserts against.
 const (

@@ -37,11 +37,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/truvity/openbao/examples/roster"
-	"github.com/truvity/openbao/internal/fakeissuer"
-	"github.com/truvity/openbao/internal/replay"
-	"github.com/truvity/openbao/pkg/apply"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/examples/roster"
+	"github.com/truvity/secrets/internal/fakeissuer"
+	"github.com/truvity/secrets/internal/replay"
+	"github.com/truvity/secrets/pkg/apply"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 const (

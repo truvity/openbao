@@ -16,10 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/examples/org"
-	"github.com/truvity/openbao/pkg/apply"
-	"github.com/truvity/openbao/pkg/model"
-	"github.com/truvity/openbao/pkg/pki"
+	"github.com/truvity/secrets/examples/org"
+	"github.com/truvity/secrets/pkg/apply"
+	"github.com/truvity/secrets/pkg/model"
+	"github.com/truvity/secrets/pkg/pki"
 )
 
 const stubChain = "-----BEGIN CERTIFICATE-----\nexample external intermediate\n-----END CERTIFICATE-----\n"

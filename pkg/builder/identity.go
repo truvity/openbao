@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 type (

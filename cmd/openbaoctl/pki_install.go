@@ -23,7 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/truvity/openbao/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/ceremony"
 )
 
 // THE OTHER HALF OF THE BREAK-GLASS CEREMONY.

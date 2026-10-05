@@ -78,9 +78,9 @@ release:
 
     Charts: `oci://ghcr.io/truvity/charts/openbao-ops` and
     `oci://ghcr.io/truvity/charts/openbao-consumers` at `{{ .Version }}`.
-    Go module: `go get github.com/truvity/openbao@{{ .Tag }}`.
+    Go module: `go get github.com/truvity/secrets@{{ .Tag }}`.
     CLI: the `openbaoctl` archives below, or
-    `go run github.com/truvity/openbao/cmd/openbaoctl@{{ .Tag }} --help`.
+    `go run github.com/truvity/secrets/cmd/openbaoctl@{{ .Tag }} --help`.
     approvercheck: the `approvercheck_*` archives below.
     openbao-hostcert: the archives below, plus
     `openbao-hostcert.service`/`openbao-hostcert.timer` -- checksum

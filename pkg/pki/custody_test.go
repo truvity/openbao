@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/custody"
+	"github.com/truvity/secrets/pkg/custody"
 )
 
 const (

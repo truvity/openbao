@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/truvity/openbao/pkg/pki"
+	"github.com/truvity/secrets/pkg/pki"
 )
 
 var errCustodyCheckRequired = fmt.Errorf(

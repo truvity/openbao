@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/examples/roster"
+	"github.com/truvity/secrets/examples/roster"
 )
 
 const goldenPath = "desired.yaml"

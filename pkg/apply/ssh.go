@@ -9,7 +9,7 @@ import (
 	vaultssh "github.com/pulumi/pulumi-vault/sdk/v7/go/vault/ssh"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // sshMount registers the SSH engine, its CA and its roles, all protected:

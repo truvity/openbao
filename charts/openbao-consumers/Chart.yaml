@@ -12,9 +12,9 @@ type: application
 # release-public.yaml).
 version: 0.0.0
 appVersion: 0.0.0
-home: https://github.com/truvity/openbao
+home: https://github.com/truvity/secrets
 sources:
-  - https://github.com/truvity/openbao
+  - https://github.com/truvity/secrets
 keywords:
   - openbao
   - external-secrets

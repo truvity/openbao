@@ -11,8 +11,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/truvity/openbao/pkg/bootstrap"
-	"github.com/truvity/openbao/pkg/bootstrap/filekeeper"
+	"github.com/truvity/secrets/pkg/bootstrap"
+	"github.com/truvity/secrets/pkg/bootstrap/filekeeper"
 )
 
 const (

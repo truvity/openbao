@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/truvity/openbao/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/ceremony"
 )
 
 // estateFixture is testdata/contract-estate.yaml copied under a temp

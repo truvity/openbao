@@ -26,8 +26,8 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	"github.com/truvity/openbao/pkg/apply"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/apply"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 type (

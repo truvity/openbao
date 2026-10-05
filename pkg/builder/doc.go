@@ -2,7 +2,7 @@
 // but its PKI -- from declarative contracts, one per engine, and writes it
 // as a [model.Desired] for pkg/apply.
 //
-// The model ([github.com/truvity/openbao/pkg/model]) says WHAT a server is
+// The model ([github.com/truvity/secrets/pkg/model]) says WHAT a server is
 // configured with. This package says what a platform's rows MEAN in it: a
 // cluster's workload that reads one prefix is a login on that cluster's JWT
 // mount pinned to one ServiceAccount, and the one policy it carries; a group
@@ -35,7 +35,7 @@
 // server that registers its plugins itself names none, and only needs
 // [PluginCatalogRule] for the job that watches the catalog.
 //
-// The PKI is pkg/pki's: [github.com/truvity/openbao/pkg/pki.Derivation.Apply]
+// The PKI is pkg/pki's: [github.com/truvity/secrets/pkg/pki.Derivation.Apply]
 // joins its mounts to what [Spec.Build] returns, and a workload that carries
 // a PKI role's sign path is an ordinary [Workload] whose Access is a
 // [Sign].

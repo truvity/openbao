@@ -7,7 +7,7 @@ particular (names, accounts, regions, clusters, service accounts, addresses)
 is an argument.
 
 ```go
-import "github.com/truvity/openbao/pkg/awsserver"
+import "github.com/truvity/secrets/pkg/awsserver"
 
 key, err := awsserver.NewUnsealKey(ctx, awsserver.UnsealKeyArgs{
     Name:               "unseal",

@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/builder"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/builder"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 func rulesFor(t *testing.T, access builder.Access, projects ...builder.Project) []model.Rule {

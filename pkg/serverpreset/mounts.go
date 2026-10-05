@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // awsAuthPlugin is the catalog entry an AWS auth mount resolves to.

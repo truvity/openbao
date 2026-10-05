@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truvity/openbao/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/ceremony"
 )
 
 // ceremonyGeneration is RootGeneration plus the state gate every signing

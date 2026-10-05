@@ -17,7 +17,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/truvity/openbao/pkg/kmssigner"
+	"github.com/truvity/secrets/pkg/kmssigner"
 )
 
 type (
