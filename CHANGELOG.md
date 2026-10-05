@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Changed
+
+- **The repository is `truvity/secrets`, and the Go module path moves with it: `github.com/truvity/secrets`.** The repository was `truvity/openbao`; it becomes the home of the secrets concern (OpenBAO now; cert-manager, trust-manager and External Secrets presets are planned, see the README). An importer changes its import paths from `github.com/truvity/openbao/...` to `github.com/truvity/secrets/...` and takes this version; nothing else moves. Earlier versions stay resolvable under the old path. Chart names and OCI paths (`openbao-ops`, `openbao-consumers`), the `openbaoctl` and `openbao-hostcert` binaries and every Go package name are unchanged.
+
 ## v0.30.2
 
 ### Added

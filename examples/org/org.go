@@ -17,11 +17,11 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/examples/server"
-	"github.com/truvity/openbao/pkg/builder"
-	"github.com/truvity/openbao/pkg/model"
-	"github.com/truvity/openbao/pkg/pki"
-	"github.com/truvity/openbao/pkg/serverpreset"
+	"github.com/truvity/secrets/examples/server"
+	"github.com/truvity/secrets/pkg/builder"
+	"github.com/truvity/secrets/pkg/model"
+	"github.com/truvity/secrets/pkg/pki"
+	"github.com/truvity/secrets/pkg/serverpreset"
 )
 
 // Files are the example's inputs and goldens.

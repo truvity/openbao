@@ -13,7 +13,7 @@ package server
 import (
 	"strconv"
 
-	"github.com/truvity/openbao/pkg/serverpreset"
+	"github.com/truvity/secrets/pkg/serverpreset"
 )
 
 // Endpoint is the one name the serving certificate carries, and what every

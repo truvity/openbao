@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // Root is what the apply owns in the root namespace beside the operators'

@@ -13,9 +13,9 @@ import (
 	"github.com/urfave/cli/v3"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/pkg/ceremony"
-	"github.com/truvity/openbao/pkg/kmssigner"
-	"github.com/truvity/openbao/pkg/pki"
+	"github.com/truvity/secrets/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/kmssigner"
+	"github.com/truvity/secrets/pkg/pki"
 )
 
 const (

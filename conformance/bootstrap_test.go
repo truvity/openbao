@@ -37,10 +37,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/internal/fakeissuer"
-	"github.com/truvity/openbao/pkg/bootstrap"
-	"github.com/truvity/openbao/pkg/bootstrap/filekeeper"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/internal/fakeissuer"
+	"github.com/truvity/secrets/pkg/bootstrap"
+	"github.com/truvity/secrets/pkg/bootstrap/filekeeper"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 const bootstrapGroup = "example:operators"
@@ -174,7 +174,7 @@ audit "file" "to-stdout" {
 	require.NoError(t, err)
 	t.Cleanup(rig.issuer.Close)
 
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", rig.ctl, "github.com/truvity/openbao/cmd/openbaoctl")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", rig.ctl, "github.com/truvity/secrets/cmd/openbaoctl")
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, string(out))
 

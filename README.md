@@ -1,9 +1,31 @@
-# openbao
+# secrets
 
-OpenBAO for Kubernetes estates, as reusable mechanism: the two halves the
+The secrets concern for Kubernetes estates, starting with OpenBAO. OpenBAO for Kubernetes estates, as reusable mechanism: the two halves the
 upstream server chart leaves out, the desired state of OpenBAO's own
 configuration and its apply, and the KMS-rooted CA ceremony its PKI hangs
 from.
+
+## The secrets concern
+
+This repository was `truvity/openbao` until the 0.30 line and is the home of
+the estate's secrets concern: everything that holds, issues or delivers a
+secret or a certificate. Today that is OpenBAO, as described below. Planned
+next, as presets beside it (nothing of them ships yet):
+
+| Planned | What |
+|---|---|
+| cert-manager preset | The issuers, approver policy and certificate defaults a consuming cluster needs, today rendered by `charts/openbao-consumers` |
+| trust-manager preset | The trust bundle sources and targets, today rendered by `charts/openbao-consumers` |
+| External Secrets preset | Stores and the secret-delivery shape, today rendered by `charts/openbao-consumers` |
+
+What the rename changed, and what it did not:
+
+- The Go module is `github.com/truvity/secrets` from v0.31.0 on; an importer
+  changes its import paths (`go get github.com/truvity/secrets@v0.31.0`).
+  Earlier versions stay available under `github.com/truvity/openbao`.
+- The chart names (`openbao-ops`, `openbao-consumers`), their OCI paths under
+  `oci://ghcr.io/truvity/charts/`, the `openbaoctl` and `openbao-hostcert`
+  binaries and the Go package names are unchanged.
 
 | Artifact | What |
 |---|---|
@@ -25,7 +47,7 @@ from.
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from v0.1.0 on; from v0.2.0 on the same tag is also the Go module
-`github.com/truvity/openbao`'s version (`pkg/model` and `pkg/apply` from
+`github.com/truvity/secrets`'s version (`pkg/model` and `pkg/apply` from
 v0.3.0 on), and `openbaoctl` is attached to the GitHub Release.
 
 ## Who it is for
@@ -234,7 +256,7 @@ For the ceremony, a hierarchy file (or a `pkg/pki` contract, `--contract`; see
 ([docs/ceremony.md](docs/ceremony.md) walks through all of them):
 
 ```sh
-go install github.com/truvity/openbao/cmd/openbaoctl@v0.20.0  # or the release archive
+go install github.com/truvity/secrets/cmd/openbaoctl@v0.20.0  # or the release archive
 openbaoctl pki sign-intermediate --hierarchy pki.yaml --trust-domain private \
   --csr private.csr --print-template                         # no credential; prints the hash
 openbaoctl pki sign-intermediate --hierarchy pki.yaml --trust-domain private \

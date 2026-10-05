@@ -22,7 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/truvity/openbao/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/ceremony"
 )
 
 const (

@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/internal/fakeissuer"
+	"github.com/truvity/secrets/internal/fakeissuer"
 )
 
 // The watches (charts/openbao-ops: snapshotAge, jobSuccess,

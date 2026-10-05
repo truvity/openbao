@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/model"
-	"github.com/truvity/openbao/pkg/serverpreset"
+	"github.com/truvity/secrets/pkg/model"
+	"github.com/truvity/secrets/pkg/serverpreset"
 )
 
 func awsAuthPlugin() serverpreset.Plugin {

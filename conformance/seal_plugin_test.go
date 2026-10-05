@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/examples/server"
-	"github.com/truvity/openbao/pkg/serverpreset"
+	"github.com/truvity/secrets/examples/server"
+	"github.com/truvity/secrets/pkg/serverpreset"
 )
 
 // sealRehearsalVariable gates the seal-plugin rehearsal. It needs a Docker

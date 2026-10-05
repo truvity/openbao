@@ -7,7 +7,7 @@ import (
 	"github.com/pulumi/pulumi-vault/sdk/v7/go/vault/pkisecret"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // PKIRoleResourceName is the logical name [Deploy] gives a PKI role's
@@ -15,7 +15,7 @@ import (
 // keeps signing the same names but moves to a different issuer (an
 // environment's CA moving from a shared domain intermediate to its own
 // root-signed one, see [EnvironmentCARoleRename] and
-// [github.com/truvity/openbao/pkg/pki], "per-environment identity CAs"),
+// [github.com/truvity/secrets/pkg/pki], "per-environment identity CAs"),
 // this name changes too, and [Options.Rename] is what keeps the role's
 // OpenBAO object ("<mount>/roles/<name>") in place across that move.
 func PKIRoleResourceName(issuer, role string) string {
@@ -84,7 +84,7 @@ type (
 	// needs to create ONLY the key-generation half of one environment's
 	// own root-signed CA: phase A of its two-phase ceremony
 	// (docs/pki.md, "per-environment identity CAs";
-	// [github.com/truvity/openbao/pkg/pki]'s own doc has the mechanism).
+	// [github.com/truvity/secrets/pkg/pki]'s own doc has the mechanism).
 	// Nothing here is signed, and no issuer is named: the root cannot
 	// sign a request that does not exist yet.
 	BootstrapEnvironmentCAOptions struct {
@@ -105,7 +105,7 @@ type (
 		// (!MountExists).
 		MountDescription string
 		// KeyName is the new CA's key name inside the mount --
-		// [github.com/truvity/openbao/pkg/pki]'s
+		// [github.com/truvity/secrets/pkg/pki]'s
 		// URITrustDomain.EnvironmentCAIssuerName(environment),
 		// typically: the same name the CA is later named with in phase
 		// B, once its certificate is signed and committed.
@@ -137,8 +137,8 @@ type (
 // BootstrapEnvironmentCA registers phase A of one environment's
 // root-signed CA and returns the certificate signing request (PEM) to
 // export as a Pulumi output for the offline ceremony
-// ([github.com/truvity/openbao/pkg/pki] `Contract.EnvironmentCASpec` +
-// [github.com/truvity/openbao/pkg/ceremony] `PrepareIntermediate`/
+// ([github.com/truvity/secrets/pkg/pki] `Contract.EnvironmentCASpec` +
+// [github.com/truvity/secrets/pkg/ceremony] `PrepareIntermediate`/
 // `SignIntermediate`) to sign.
 //
 // This runs OUTSIDE [Deploy]'s generic desired-state path on purpose:

@@ -38,10 +38,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/internal/replay"
-	"github.com/truvity/openbao/pkg/apply"
-	"github.com/truvity/openbao/pkg/ceremony"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/internal/replay"
+	"github.com/truvity/secrets/pkg/apply"
+	"github.com/truvity/secrets/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 const (

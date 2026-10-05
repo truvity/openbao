@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/apply"
+	"github.com/truvity/secrets/pkg/apply"
 )
 
 const skipEnv = "EXAMPLE_SKIP_SNAPSHOT"

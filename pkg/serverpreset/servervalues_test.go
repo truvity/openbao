@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/pkg/serverpreset"
+	"github.com/truvity/secrets/pkg/serverpreset"
 )
 
 const (

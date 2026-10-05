@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 
-	"github.com/truvity/openbao/pkg/bootstrap"
+	"github.com/truvity/secrets/pkg/bootstrap"
 )
 
 // memoryKeeper is a Keeper that holds items in a map.

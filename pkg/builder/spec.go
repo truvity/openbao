@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // Spec is everything the desired state of a server depends on, but its PKI

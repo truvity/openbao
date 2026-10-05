@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/kms/types"
 
-	"github.com/truvity/openbao/pkg/ceremony"
+	"github.com/truvity/secrets/pkg/ceremony"
 )
 
 // fakeKMS is a stand-in for AWS KMS: it signs with an in-memory P-384 key

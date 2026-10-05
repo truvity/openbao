@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // generationInfo is what a trust domain needs to know about the root

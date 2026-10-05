@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/openbao/pkg/serverpreset"
+	"github.com/truvity/secrets/pkg/serverpreset"
 )
 
 // address, in this file, is always freeAddress(t)'s picked loopback host:port,

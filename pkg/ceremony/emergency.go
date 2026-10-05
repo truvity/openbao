@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truvity/openbao/pkg/kmssigner"
+	"github.com/truvity/secrets/pkg/kmssigner"
 )
 
 // THE BREAK-GLASS SERVER CERTIFICATE.

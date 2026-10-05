@@ -8,7 +8,7 @@ import (
 	"github.com/pulumi/pulumi-vault/sdk/v7/go/vault/pkisecret"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // importedIssuerUsage is what an issuer signed into a mount may do: sign

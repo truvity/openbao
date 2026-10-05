@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/truvity/openbao/pkg/builder"
-	"github.com/truvity/openbao/pkg/model"
+	"github.com/truvity/secrets/pkg/builder"
+	"github.com/truvity/secrets/pkg/model"
 )
 
 // example is the authored contract of a small estate (testdata/spec.yaml),

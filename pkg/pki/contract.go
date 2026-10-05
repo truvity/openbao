@@ -3,7 +3,7 @@
 // roles each domain offers per environment, and the migration and alerting
 // policy that goes with a root that can never be re-signed.
 //
-// It is the layer above [github.com/truvity/openbao/pkg/ceremony]: this
+// It is the layer above [github.com/truvity/secrets/pkg/ceremony]: this
 // package decides WHAT is signed -- the subjects, lifetimes, name
 // constraints and path lengths a domain's certificates must carry, and the
 // invariants that make the whole hierarchy self-consistent -- and hands the
@@ -113,7 +113,7 @@ type (
 		ArtifactDir string `yaml:"artifactDir,omitempty"`
 		// SerialNamespace prefixes every deterministic serial's
 		// domain-separation label (see
-		// [github.com/truvity/openbao/pkg/ceremony]); empty means that
+		// [github.com/truvity/secrets/pkg/ceremony]); empty means that
 		// package's own default, [ceremony.DefaultSerialNamespace]
 		// (`private-pki`), the one default every document names. NEVER
 		// CHANGE IT once a generation has
@@ -208,8 +208,8 @@ type (
 	// name pattern -- never a credential.
 	RootCustody struct {
 		// Provider must be "aws-kms": the only custody
-		// [github.com/truvity/openbao/pkg/custody] and
-		// [github.com/truvity/openbao/pkg/kmssigner] support today.
+		// [github.com/truvity/secrets/pkg/custody] and
+		// [github.com/truvity/secrets/pkg/kmssigner] support today.
 		Provider  string `yaml:"provider"`
 		AccountID string `yaml:"accountId"`
 		// Profile is the AWS shared-config profile a ceremony starts from.

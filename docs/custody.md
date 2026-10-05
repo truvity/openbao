@@ -10,7 +10,7 @@ needs before its first ceremony, and nothing that signs:
 | generation × region | the Sign alarm: an SNS topic with e-mail subscriptions, an EventBridge rule matching CloudTrail's `kms:Sign` on that key, a CloudWatch alarm on the rule |
 
 ```go
-import "github.com/truvity/openbao/pkg/custody"
+import "github.com/truvity/secrets/pkg/custody"
 
 keys, err := custody.Deploy(ctx, custody.Args{
     AccountID:                     "111122223333",
