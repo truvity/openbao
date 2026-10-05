@@ -70,7 +70,9 @@ for p in "${patterns[@]}"; do
   # Exclude this script: it necessarily contains the patterns it bans.
   hits=$(printf '%s\0' "${tracked[@]}" \
            | grep -zZvE '^(hack/leak-canary\.sh|go\.mod|go\.sum)$' \
-           | xargs -0 -r grep -InE "$p" 2>/dev/null)
+           | xargs -0 -r grep -InE "$p" 2>/dev/null \
+           | sed -E 's#truvity/secrets##g' | grep -E "$p")
+  # (the repository's own name, truvity/secrets, is public and is not an SSM path)
   if [ "$p" = "$account_id" ] && [ -n "$hits" ]; then
     hits=$(printf '%s\n' "$hits" | sed -E "s/$documented_placeholders/<placeholder>/g" | grep -E "$p")
   fi
