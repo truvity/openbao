@@ -7,6 +7,8 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+## v0.31.6
+
 ### Added
 
 - **The presets as a Go package.** `github.com/truvity/secrets/charts/openbao-consumers/presets` embeds the three values presets (`Names`, `Raw`, `Values`), for a consumer that composes an upstream chart's values in code under its own instead of copying the file. The chart does not package the `.go` files (`.helmignore`).
