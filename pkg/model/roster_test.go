@@ -232,3 +232,9 @@ func ExampleRoster() {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestRosterClientSecret(t *testing.T) {
+	if got := model.RosterClientSecret(model.RosterUIClient); got != "openbao-ui-client" {
+		t.Errorf("RosterClientSecret = %q", got)
+	}
+}
