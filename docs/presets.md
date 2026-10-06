@@ -25,3 +25,18 @@ Check a preset against the upstream chart:
 helm template x cert-manager --repo https://charts.jetstack.io \
   -f charts/openbao-consumers/presets/cert-manager.yaml
 ```
+
+## From Go
+
+A consumer that composes the upstream chart's values in code (one Argo CD
+source, the preset under its own values) reads the same files from the module:
+
+```go
+import "github.com/truvity/secrets/charts/openbao-consumers/presets"
+
+base, err := presets.Values(presets.CertManager) // map[string]any
+```
+
+They are versioned with the module, so the preset a consumer runs is the one
+its `go.mod` pins.
+
