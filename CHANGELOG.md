@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **Presets for cert-manager, trust-manager and External Secrets.** Three values files under `charts/openbao-consumers/presets/`, for the upstream charts an OpenBAO-backed cluster runs on: CRDs, metrics scraping, requests, and control-plane HA for the two cert-manager charts. Opt-in (`-f`, or Argo CD `valueFiles`), before your own values; scheduling stays yours. See [docs/presets.md](docs/presets.md).
+
 ## v0.31.2
 
 ### Added

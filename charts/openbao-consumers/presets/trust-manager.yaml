@@ -1,0 +1,30 @@
+# Values for the UPSTREAM trust-manager chart (charts.jetstack.io), for a
+# cluster that distributes OpenBAO's private-PKI trust bundles
+# (charts/openbao-consumers `pki.bundle`, `pki.bundles`). Pass this file
+# with `-f` (or Argo CD `valueFiles`) BEFORE your own values; your values
+# win where they set the same key.
+#
+# What it sets, and why:
+#   - the public Debian package is NOT injected into every workload's trust
+#     store: the bundles carry the private roots only;
+#   - the trust namespace is cert-manager, where openbao-consumers renders
+#     the trust anchors' ConfigMaps (`pki.certManager.namespace`);
+#   - Secret targets are off: a consumer that needs a Bundle delivered as a
+#     Secret turns them on and names the Secrets it authorises
+#     (`secretTargets.authorizedSecrets`), so trust-manager is never granted
+#     a write to Secrets in general;
+#   - requests, and two replicas under a PDB (it serves the Bundle
+#     validating webhook).
+defaultPackage:
+  enabled: false
+app:
+  trust:
+    namespace: cert-manager
+secretTargets:
+  enabled: false
+resources:
+  requests: {cpu: 25m, memory: 64Mi}
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

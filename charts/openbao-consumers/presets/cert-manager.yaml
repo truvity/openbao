@@ -1,0 +1,42 @@
+# Values for the UPSTREAM cert-manager chart (charts.jetstack.io), for a
+# cluster whose issuers are backed by OpenBAO (charts/openbao-consumers).
+# Pass this file with `-f` (or Argo CD `valueFiles`) BEFORE your own values;
+# your values win where they set the same key. Nothing here is specific to
+# one estate: scheduling constraints (node selectors, tolerations, affinity)
+# are yours to add.
+#
+# What it sets, and why:
+#   - the CRDs are installed with the chart;
+#   - the controller's, webhook's and cainjector's metrics are scraped
+#     (ServiceMonitor): the issuance alerts of openbao-consumers read
+#     certmanager_* and, with no series, would report cert-manager itself
+#     as absent;
+#   - requests on every component, so the pods are not the first probe-kill
+#     victims under node contention;
+#   - control-plane HA: two replicas under leader election, a PDB that keeps
+#     one up, for the controller, the webhook and the cainjector.
+crds:
+  enabled: true
+prometheus:
+  servicemonitor:
+    enabled: true
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+webhook:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+cainjector:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
