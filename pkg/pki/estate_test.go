@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -113,6 +114,11 @@ func TestEstateRoundTripThroughDiskAndFS(t *testing.T) {
 		t.Fatalf("TrustAnchors through the file system = %v, %v", anchors, err)
 	}
 
+	bundle, err := fsContract.TrustBundlePEM()
+	if err != nil || strings.Count(bundle, "-----BEGIN CERTIFICATE-----\n") != 1 || !strings.HasSuffix(bundle, "-----END CERTIFICATE-----\n") {
+		t.Fatalf("TrustBundlePEM = %q, %v", bundle, err)
+	}
+
 	prod, err := fsContract.EnvironmentCASpec("identity", "prod", "prod.example.private", "example-root-2026-09")
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +131,10 @@ func TestEstateRoundTripThroughDiskAndFS(t *testing.T) {
 	empty, err := LoadFS(fstest.MapFS{"contract.yaml": &fstest.MapFile{Data: mustRead(t, filepath.Join(dir, "contract.yaml"))}}, "contract.yaml", "cfg")
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if _, err := empty.TrustBundlePEM(); err == nil {
+		t.Fatal("a trust bundle over a missing artifact was accepted")
 	}
 
 	if _, err := empty.TrustAnchors(); err == nil {

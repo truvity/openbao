@@ -5,6 +5,13 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.32.0
+
+### Added
+
+- **`pki.Contract.TrustBundlePEM`**: the trust bundle every client of the private services verifies against, one PEM CERTIFICATE block per trusted generation in the authored order; an empty set is an error.
+- **`pki.Contract.VerifyCustodyOutputs`**: the signing-request-free half of `VerifyCustody`, for a consumer that only reads the custody outputs.
+
 ## v0.31.8
 
 ### Added

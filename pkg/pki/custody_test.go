@@ -58,6 +58,23 @@ func TestDefaultAliasPrefixIsAccepted(t *testing.T) {
 	require.NoError(t, validOutputs().Validate())
 }
 
+func TestVerifyCustodyOutputs(t *testing.T) {
+	require.NoError(t, validContract().VerifyCustodyOutputs(validOutputs()))
+	require.Error(t, validContract().VerifyCustodyOutputs(nil))
+
+	extra := validOutputs()
+	other := extra.Generations["example-root-2026-01"]
+	other.Alias = custody.DefaultAliasPrefix + "other"
+	extra.Generations["other"] = other
+	require.ErrorContains(t, validContract().VerifyCustodyOutputs(extra), "does not author")
+
+	moved := validOutputs()
+	generation := moved.Generations["example-root-2026-01"]
+	generation.PrimaryKeyARN = strings.Replace(testKey, "111122223333", "999999999999", 1)
+	moved.Generations["example-root-2026-01"] = generation
+	require.Error(t, validContract().VerifyCustodyOutputs(moved))
+}
+
 func TestVerifyCustodyRefusals(t *testing.T) {
 	cases := []struct {
 		name    string
