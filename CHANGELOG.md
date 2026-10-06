@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`pkg/awsserver`: `NewServer`, a server's whole AWS side.** The unseal key and role, the snapshot and restore-check roles, the watches' and the certificate-expiry topics with their roles, and the endpoint record, from caller inputs, with the outputs the charts read; the backup-dependent pieces and the endpoint are skipped until what they need exists. `WithLegacyParent` adopts roles created under another component type. Moved out of the consuming repository; no resource name changes.
+
 ## v0.31.7
 
 ### Added
