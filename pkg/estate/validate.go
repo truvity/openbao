@@ -74,6 +74,11 @@ func writersByName(in *Inputs, writers []Writer, clusters []Cluster, what string
 	return out, nil
 }
 
+// Validate holds one writer, or exporter, to its shape (what says which, in
+// the refusal): the rule [Build] applies, for an estate that wants it to fail
+// where its configuration is loaded and tested instead of where it is built.
+func (w Writer) Validate(canary, what string) error { return w.validate(canary, what) }
+
 // validate holds one writer to its shape: a name and a subject, and in every
 // environment at least one prefix, each one plain KV path segment that is
 // not the restore canary.

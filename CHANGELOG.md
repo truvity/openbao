@@ -5,6 +5,15 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.35.0
+
+### Added
+
+- **`estate.PKI.Issuer`, `SharedLoginIssuer`, `IdentityIssuer`, `IdentityEnvironmentSigned`, `IdentityEnvironmentCA`**: the consumer's view of the private PKI. What a cluster's cert-manager needs per trust domain (the ClusterIssuer, its sign path on the issuing mount, the login role, the extra audience of a shared login, and the certificate policy of the role it signs through, read from the contract) comes from the inputs the server's side is derived from, and the identity domain's issuer and CA bundle wait for the environment's own signed CA. Also `estate.CertManagerAudiencePrefix`.
+- **`estate.ConfigOutputs`**: the configuration stack's public outputs as an estate commits them, with `Validate`, `ValidateSSHKeyTypes`, `SSHUserCAPublicKey`, `SSHHostCAPublicKey` and `Ready`.
+- **`estate.Writer.Validate`**: the shape rule `Build` applies to writers and exporters, for an estate that wants it to fail at load and test time.
+- **`model.RosterClientSecret`**: the name of the Secret the issuer delivers for one of its confidential clients.
+
 ## v0.34.0
 
 ### Added

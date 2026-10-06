@@ -33,6 +33,11 @@ const (
 	RosterUIClient = "openbao-ui"
 )
 
+// RosterClientSecret is the name of the Secret the issuer delivers for one
+// of its confidential clients, holding `client-id` and `client-secret`:
+// the UI's is RosterClientSecret(RosterUIClient).
+func RosterClientSecret(client string) string { return client + "-client" }
+
 type (
 	// Roster is an OIDC issuer whose tokens carry a flat groups claim --
 	// access-roster's access-issuer, or any issuer shaped like it -- as an
