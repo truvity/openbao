@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	// DefaultAPIPort is the API listener's port inside the pod, and
-	// DefaultClusterPort the Raft/cluster listener's.
-	DefaultAPIPort     = 8200
+	// DefaultAPIPort is the API listener's port inside the pod.
+	DefaultAPIPort = 8200
+	// DefaultClusterPort is the Raft/cluster listener's.
 	DefaultClusterPort = 8201
 	// DefaultMetricsPort is the port of the metrics-only listener, the one
 	// port a metrics agent may reach (charts/openbao-ops serverMetrics.port).
@@ -24,9 +24,10 @@ const (
 	// StatefulSet and its pods, and the prefix of the headless Service.
 	StatefulSetName = "openbao"
 
-	// AuthAWSImage and AuthAWSBinary are the openbao-plugins `auth-aws`
-	// release's OCI repository and its binary's own name inside that image.
-	AuthAWSImage  = "ghcr.io/openbao/openbao-plugin-auth-aws"
+	// AuthAWSImage is the openbao-plugins `auth-aws` release's OCI
+	// repository.
+	AuthAWSImage = "ghcr.io/openbao/openbao-plugin-auth-aws"
+	// AuthAWSBinary is that image's binary's own name.
 	AuthAWSBinary = "openbao-plugin-auth-aws"
 
 	chartUserConfig = "/openbao/userconfig/"
