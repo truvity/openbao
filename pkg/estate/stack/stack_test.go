@@ -1,4 +1,4 @@
-package estate
+package stack
 
 import (
 	"context"
@@ -14,6 +14,8 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 	"github.com/truvity/secrets/pkg/apply"
+	"github.com/truvity/secrets/pkg/estate"
+	"github.com/truvity/secrets/pkg/estate/internal/example"
 	"github.com/truvity/secrets/pkg/model"
 )
 
@@ -44,24 +46,24 @@ func (r *recorder) Call(args pulumi.MockCallArgs) (resource.PropertyMap, error) 
 	return args.Args, nil
 }
 
-func (f *fakeChains) DomainIntermediate(trustDomain, generation string) (Chain, error) {
+func (f *fakeChains) DomainIntermediate(trustDomain, generation string) (estate.Chain, error) {
 	return f.chain("domain " + trustDomain + " " + generation)
 }
 
-func (f *fakeChains) EnvironmentCA(environment, zone, generation string) (Chain, error) {
+func (f *fakeChains) EnvironmentCA(environment, zone, generation string) (estate.Chain, error) {
 	return f.chain("environment " + environment + " " + zone + " " + generation)
 }
 
-func (f *fakeChains) chain(what string) (Chain, error) {
+func (f *fakeChains) chain(what string) (estate.Chain, error) {
 	f.mu.Lock()
 	f.asked = append(f.asked, what)
 	f.mu.Unlock()
 
-	return Chain{PEM: "-----BEGIN CERTIFICATE-----\n" + what + "\n-----END CERTIFICATE-----\n", ArtifactPath: "pki-roots/" + what}, nil
+	return estate.Chain{PEM: "-----BEGIN CERTIFICATE-----\n" + what + "\n-----END CERTIFICATE-----\n", ArtifactPath: "pki-roots/" + what}, nil
 }
 
-func deployOptions(chains Chains) DeployOptions {
-	return DeployOptions{
+func deployOptions(chains estate.Chains) Options {
+	return Options{
 		Address: "https://bao.example.org",
 		Login: apply.Login{
 			Mount: model.RosterMount, Role: model.RosterRole,
@@ -79,9 +81,9 @@ func deployOptions(chains Chains) DeployOptions {
 // CA bootstrapped under the name the apply adopts once it is signed, and the
 // signed artifacts the ceremony committed for every external issuer.
 func TestDeployAppliesUnderTheAdoptedNames(t *testing.T) {
-	in := exampleInputs(t)
+	in := example.Inputs(t, "../testdata/contract.yaml")
 
-	desired, err := Build(in)
+	desired, err := estate.Build(in)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -96,7 +98,7 @@ func TestDeployAppliesUnderTheAdoptedNames(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest pki-identity-prod-root-signed-csr",
+		"vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest pki-identity-beta-root-signed-csr",
 		"vault:pkiSecret/secretBackendIntermediateCertRequest:SecretBackendIntermediateCertRequest pki-example-private-csr",
 	} {
 		if !slices.Contains(mocks.names, want) {
@@ -115,7 +117,7 @@ func TestDeployAppliesUnderTheAdoptedNames(t *testing.T) {
 	if want := []string{
 		"domain origin example-root-2026-09",
 		"domain private example-root-2026-09",
-		"environment dev dev.example.private example-root-2026-09",
+		"environment alpha alpha.example.private example-root-2026-09",
 	}; !slices.Equal(chains.asked, want) {
 		t.Errorf("chains asked for %v, want %v", chains.asked, want)
 	}
@@ -123,16 +125,16 @@ func TestDeployAppliesUnderTheAdoptedNames(t *testing.T) {
 
 // Without a loader, or with a request output missing, the stack refuses.
 func TestDeployRefuses(t *testing.T) {
-	in := exampleInputs(t)
+	in := example.Inputs(t, "../testdata/contract.yaml")
 
-	desired, err := Build(in)
+	desired, err := estate.Build(in)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 
-	for name, mutate := range map[string]func(*DeployOptions){
-		"no chain loader":   func(o *DeployOptions) { o.Chains = nil },
-		"no request output": func(o *DeployOptions) { delete(o.DomainCSROutputs, "origin") },
+	for name, mutate := range map[string]func(*Options){
+		"no chain loader":   func(o *Options) { o.Chains = nil },
+		"no request output": func(o *Options) { delete(o.DomainCSROutputs, "origin") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			opts := deployOptions(&fakeChains{})

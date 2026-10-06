@@ -11,6 +11,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 - **`pkg/awsserver`: `NewServer`, a server's whole AWS side.** The unseal key and role, the snapshot and restore-check roles, the watches' and the certificate-expiry topics with their roles, and the endpoint record, from caller inputs, with the outputs the charts read; the backup-dependent pieces and the endpoint are skipped until what they need exists. `WithLegacyParent` adopts roles created under another component type. Moved out of the consuming repository; no resource name changes.
 
+### Changed
+
+- **`estate.Deploy` and `estate.OIDCClientSecret` move to `pkg/estate/stack`** (`stack.Deploy`, `stack.Options`, `stack.OIDCClientSecret`), so `pkg/estate` links no Pulumi and an estate's configuration loaders can build and review the state without the provider SDKs. `Chains`, `Chain`, `Desired.SignedChain` and the new `Desired.PrivateZone` stay in `pkg/estate`. A consumer of v0.31.7 renames the calls; nothing else changes.
+
 ## v0.31.7
 
 ### Added

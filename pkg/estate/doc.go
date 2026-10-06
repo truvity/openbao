@@ -20,5 +20,7 @@
 // [Groups] and [PKI] carry the conventions -- so the consuming repository
 // keeps only its facts and a thin binder filling the inputs. [StoreKinds]
 // evaluates the rules that say which store kinds a cluster runs, and
-// [Deploy] (deploy.go) is the Pulumi program that applies the result.
+// pkg/estate/stack is the Pulumi program that applies the result; this
+// package links no Pulumi, so a configuration loader can build and review
+// the state alone.
 package estate
