@@ -70,7 +70,7 @@ func TestVerifyCustodyOutputs(t *testing.T) {
 
 	moved := validOutputs()
 	generation := moved.Generations["example-root-2026-01"]
-	generation.PrimaryKeyARN = strings.Replace(testKey, "111122223333", "999999999999", 1)
+	generation.PrimaryKeyARN = strings.Replace(testKey, "111122223333", "444455556666", 1)
 	moved.Generations["example-root-2026-01"] = generation
 	require.Error(t, validContract().VerifyCustodyOutputs(moved))
 }
