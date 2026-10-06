@@ -7,6 +7,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Added
+
+- **`pkg/estate`: `Deploy`, the stack.** `estate.Deploy(ctx, &desired, opts)` applies the state through `pkg/apply` under the adopted names, loads every External issuer's chain from the ceremony's committed artifacts (`Chains`; `Desired.SignedChain` for a caller applying a trimmed model), bootstraps an identity environment CA that is not signed yet, and exports the namespaces, the trust root, the SSH CA keys and the certificate requests the ceremony signs. `estate.OIDCClientSecret` reads a delivered OIDC client secret and checks its client id. Moved out of the consuming repository; no resource name changes.
+
 ## v0.31.6
 
 ### Added
