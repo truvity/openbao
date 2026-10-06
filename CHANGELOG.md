@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`pkg/apply`: the operator-side helpers an estate's stack needs around `Deploy`.** `RosterLogin` and `RosterToken` (the operator's login into root through `accessctl token`), `RenameFrom` (an `Options.Rename` that keeps the names resources already have), `WriteCABundle` (the PEM file the provider verifies the server with) and `DeliveredSecret.Key` (one decoded key of a Secret another system delivers, read before the apply touches the server). Moved out of the consuming repository; no resource name changes.
+
 ## v0.31.1
 
 ### Added
