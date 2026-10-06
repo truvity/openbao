@@ -8,9 +8,10 @@ decides **which inputs make which contract entry**, and writes the whole
 desired state.
 
 ```
-your facts ──binder──▶ estate.Inputs ──Build──▶ estate.Desired ──Model──▶ model.Desired ──▶ pkg/apply
-(clusters, projects,    (this page)              │ (the review)                 (what is applied)
- writers, grants, PKI)                           └── LegacyResourceNames ──▶ apply.Options.Rename
+your facts ──binder──▶ estate.Inputs ──Build──▶ estate.Desired ──Deploy──▶ pkg/apply, exports
+(clusters, projects,    (this page)              │ (the review)
+ writers, grants, PKI)                           ├── Model ──▶ model.Desired (what is applied)
+                                                 └── LegacyResourceNames ──▶ apply.Options.Rename
 ```
 
 A consuming repository keeps its facts and a binder that fills
@@ -82,3 +83,30 @@ it to `apply.RenameFrom`, and the first preview after adopting is empty.
 cluster, a cluster list, one kind per tailnet, a client secret held on
 another cluster), in the order of the rules. The rules are the estate's
 data; the facts come from what the cluster runs.
+
+## The stack
+
+`estate.Deploy(ctx, &desired, opts)` is the Pulumi program: it applies
+`Desired.Model` through `pkg/apply` under `LegacyResourceNames`, and exports
+what consumers read:
+
+| Output | What |
+|---|---|
+| `namespaces` | the environment namespaces; its presence marks the configuration deployed |
+| `trustRootCaPem` | the legacy root's certificate, a public trust anchor |
+| `sshUserCaPublicKeys`, `sshHostCaPublicKeys` | each environment's SSH user and host CA keys, by environment |
+| `opts.DomainCSROutputs[domain]` | each trust domain's intermediate request, for the root ceremony |
+| `opts.EnvironmentCSROutput` | every identity environment CA's request, by environment, whichever phase it is in |
+
+An External issuer's chain is THE COMMITTED ARTIFACT, never a fresh
+signature: `opts.Chains` loads it from where the ceremony committed it and
+re-proves it against the contract before the server is touched
+(`Desired.SignedChain` is the same lookup, for a caller applying a trimmed
+model itself). An identity environment CA that is not `PKI.Signed` yet is
+bootstrapped beside the apply: its mount and the request of the key the
+server generates, under the name the apply adopts once it is signed.
+
+`opts.BeforeApply` runs before the login on an apply only (a snapshot
+belongs there, `apply.SnapshotJob`). `estate.OIDCClientSecret` reads the web
+UI's client secret from the Secret the identity provider delivers, checking
+the client id, before anything touches the server.
