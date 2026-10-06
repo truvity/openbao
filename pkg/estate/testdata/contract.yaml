@@ -130,7 +130,7 @@ trustDomains:
         leafMaximum: 24h
         renewBefore: 10m
       issuingMount: pki-identity
-      environments: [dev, prod]
+      environments: [alpha, beta]
       role:
         name: identity
         uriSanPattern: "spiffe://{zone}/*"

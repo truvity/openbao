@@ -8,7 +8,7 @@ decides **which inputs make which contract entry**, and writes the whole
 desired state.
 
 ```
-your facts ──binder──▶ estate.Inputs ──Build──▶ estate.Desired ──Deploy──▶ pkg/apply, exports
+your facts ──binder──▶ estate.Inputs ──Build──▶ estate.Desired ──stack.Deploy──▶ pkg/apply, exports
 (clusters, projects,    (this page)              │ (the review)
  writers, grants, PKI)                           ├── Model ──▶ model.Desired (what is applied)
                                                  └── LegacyResourceNames ──▶ apply.Options.Rename
@@ -86,7 +86,7 @@ data; the facts come from what the cluster runs.
 
 ## The stack
 
-`estate.Deploy(ctx, &desired, opts)` is the Pulumi program: it applies
+`stack.Deploy(ctx, &desired, opts)` (`pkg/estate/stack`) is the Pulumi program: it applies
 `Desired.Model` through `pkg/apply` under `LegacyResourceNames`, and exports
 what consumers read:
 
@@ -107,6 +107,6 @@ bootstrapped beside the apply: its mount and the request of the key the
 server generates, under the name the apply adopts once it is signed.
 
 `opts.BeforeApply` runs before the login on an apply only (a snapshot
-belongs there, `apply.SnapshotJob`). `estate.OIDCClientSecret` reads the web
+belongs there, `apply.SnapshotJob`). `stack.OIDCClientSecret` reads the web
 UI's client secret from the Secret the identity provider delivers, checking
 the client id, before anything touches the server.

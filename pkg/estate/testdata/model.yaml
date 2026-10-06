@@ -193,34 +193,58 @@ root:
         - path: pki-origin/issuer/example-origin-2026-09/json
           capabilities:
             - read
-        - path: dev/kv/data/canary
+        - path: alpha/kv/data/canary
           capabilities:
             - read
-        - path: dev/pki/cert/ca
+        - path: alpha/pki/cert/ca
           capabilities:
             - read
-        - path: dev/pki/issuer/example-root-dev/json
+        - path: alpha/pki/issuer/example-root-alpha/json
           capabilities:
             - read
-        - path: dev/pki/cert/*
+        - path: alpha/pki/cert/*
           capabilities:
             - read
-        - path: dev/pki/issue/restore-check
+        - path: alpha/pki/issue/restore-check
           capabilities:
             - update
-        - path: dev/pki/issuer/example-private-2026-09-dev/json
+        - path: alpha/pki/issuer/example-private-2026-09-alpha/json
           capabilities:
             - read
-        - path: dev/pki-origin/cert/ca
+        - path: alpha/pki-origin/cert/ca
           capabilities:
             - read
-        - path: dev/pki-origin/issuer/example-origin-2026-09-dev/json
+        - path: alpha/pki-origin/issuer/example-origin-2026-09-alpha/json
           capabilities:
             - read
-        - path: dev/pki-identity/cert/ca
+        - path: alpha/pki-identity/cert/ca
           capabilities:
             - read
-        - path: dev/pki-identity/issuer/example-identity-2026-09-dev-root-signed/json
+        - path: alpha/pki-identity/issuer/example-identity-2026-09-alpha-root-signed/json
+          capabilities:
+            - read
+        - path: beta/kv/data/canary
+          capabilities:
+            - read
+        - path: beta/pki/cert/ca
+          capabilities:
+            - read
+        - path: beta/pki/issuer/example-root-beta/json
+          capabilities:
+            - read
+        - path: beta/pki/cert/*
+          capabilities:
+            - read
+        - path: beta/pki/issue/restore-check
+          capabilities:
+            - update
+        - path: beta/pki/issuer/example-private-2026-09-beta/json
+          capabilities:
+            - read
+        - path: beta/pki-origin/cert/ca
+          capabilities:
+            - read
+        - path: beta/pki-origin/issuer/example-origin-2026-09-beta/json
           capabilities:
             - read
         - path: ops/kv/data/canary
@@ -247,30 +271,6 @@ root:
         - path: ops/pki-origin/issuer/example-origin-2026-09-ops/json
           capabilities:
             - read
-        - path: prod/kv/data/canary
-          capabilities:
-            - read
-        - path: prod/pki/cert/ca
-          capabilities:
-            - read
-        - path: prod/pki/issuer/example-root-prod/json
-          capabilities:
-            - read
-        - path: prod/pki/cert/*
-          capabilities:
-            - read
-        - path: prod/pki/issue/restore-check
-          capabilities:
-            - update
-        - path: prod/pki/issuer/example-private-2026-09-prod/json
-          capabilities:
-            - read
-        - path: prod/pki-origin/cert/ca
-          capabilities:
-            - read
-        - path: prod/pki-origin/issuer/example-origin-2026-09-prod/json
-          capabilities:
-            - read
     - name: snapshot
       rules:
         - path: sys/storage/raft/snapshot
@@ -294,27 +294,27 @@ root:
       doors:
         - oidc
 namespaces:
-  - name: dev
+  - name: alpha
     kv:
       - path: kv
-        description: the dev secrets
+        description: the alpha secrets
         canary: canary
     pki:
       - path: pki
-        description: dev legacy certificates
+        description: alpha legacy certificates
         defaultLeaseTtl: 720h
         maxLeaseTtl: 2160h
-        defaultIssuer: example-root-dev
+        defaultIssuer: example-root-alpha
         issuers:
-          - name: example-root-dev
-            commonName: dev.example.private Intermediate CA
+          - name: example-root-alpha
+            commonName: alpha.example.private Intermediate CA
             organization: Example Org
             keyCurve: P-256
             ttl: 26280h
             maxPathLength: 0
             nameConstraints:
               permittedDnsDomains:
-                - dev.example.private
+                - alpha.example.private
               excludedIpRanges:
                 - 0.0.0.0/0
                 - ::/0
@@ -325,15 +325,15 @@ namespaces:
             signedBy:
               mount: pki-example-private
               issuer: example-private
-          - name: example-private-2026-09-dev
-            commonName: dev.example.private Issuing CA
+          - name: example-private-2026-09-alpha
+            commonName: alpha.example.private Issuing CA
             organization: Example Org
             keyCurve: P-384
             ttl: 26280h
             maxPathLength: 1
             nameConstraints:
               permittedDnsDomains:
-                - dev.example.private
+                - alpha.example.private
                 - cluster.local
               excludedIpRanges:
                 - 0.0.0.0/0
@@ -343,9 +343,9 @@ namespaces:
               issuer: example-private-2026-09
         roles:
           - name: cert-manager
-            issuer: example-root-dev
+            issuer: example-root-alpha
             allowedDomains:
-              - dev.example.private
+              - alpha.example.private
             allowBareDomains: true
             allowSubdomains: true
             allowWildcardCertificates: false
@@ -355,9 +355,9 @@ namespaces:
             ttl: 720h
             maxTtl: 2160h
           - name: private
-            issuer: example-private-2026-09-dev
+            issuer: example-private-2026-09-alpha
             allowedDomains:
-              - dev.example.private
+              - alpha.example.private
             allowBareDomains: true
             allowSubdomains: true
             allowWildcardCertificates: false
@@ -368,7 +368,7 @@ namespaces:
             maxTtl: 2160h
             renewBefore: 240h
           - name: workload
-            issuer: example-private-2026-09-dev
+            issuer: example-private-2026-09-alpha
             allowedDomains:
               - svc.cluster.local
             allowBareDomains: false
@@ -381,9 +381,9 @@ namespaces:
             maxTtl: 2160h
             renewBefore: 240h
           - name: restore-check
-            issuer: example-private-2026-09-dev
+            issuer: example-private-2026-09-alpha
             allowedDomains:
-              - restore-check.dev.example.private
+              - restore-check.alpha.example.private
             allowBareDomains: true
             allowSubdomains: false
             allowWildcardCertificates: false
@@ -394,7 +394,7 @@ namespaces:
             maxTtl: 1h
         credentialRoles:
           - name: db-client
-            issuer: example-private-2026-09-dev
+            issuer: example-private-2026-09-alpha
             subjectMount: jwt-roster
             cnValidations:
               - email
@@ -404,13 +404,13 @@ namespaces:
             ttl: 1h
             maxTtl: 1h
       - path: pki-origin
-        description: dev.example.net Issuing CA; the origin chain's leaves in dev
+        description: alpha.example.net Issuing CA; the origin chain's leaves in alpha
         defaultLeaseTtl: 720h
         maxLeaseTtl: 2160h
-        defaultIssuer: example-origin-2026-09-dev
+        defaultIssuer: example-origin-2026-09-alpha
         issuers:
-          - name: example-origin-2026-09-dev
-            commonName: dev.example.net Issuing CA
+          - name: example-origin-2026-09-alpha
+            commonName: alpha.example.net Issuing CA
             organization: Example Org
             keyCurve: P-384
             ttl: 26280h
@@ -420,9 +420,9 @@ namespaces:
               issuer: example-origin-2026-09
         roles:
           - name: origin
-            issuer: example-origin-2026-09-dev
+            issuer: example-origin-2026-09-alpha
             allowedDomains:
-              - '*.dev.example.net'
+              - '*.alpha.example.net'
             allowBareDomains: true
             allowSubdomains: false
             allowWildcardCertificates: true
@@ -433,13 +433,13 @@ namespaces:
             maxTtl: 2160h
             renewBefore: 240h
       - path: pki-identity
-        description: dev.example.private Workload Identity CA; the identity chain's leaves in dev
+        description: alpha.example.private Workload Identity CA; the identity chain's leaves in alpha
         defaultLeaseTtl: 1h
         maxLeaseTtl: 24h
-        defaultIssuer: example-identity-2026-09-dev-root-signed
+        defaultIssuer: example-identity-2026-09-alpha-root-signed
         issuers:
-          - name: example-identity-2026-09-dev-root-signed
-            commonName: dev.example.private Workload Identity CA
+          - name: example-identity-2026-09-alpha-root-signed
+            commonName: alpha.example.private Workload Identity CA
             organization: Example Org
             keyCurve: P-384
             ttl: 26280h
@@ -449,17 +449,17 @@ namespaces:
                 - 0.0.0.0/0
                 - ::/0
               permittedUriDomains:
-                - dev.example.private
+                - alpha.example.private
             external: true
         roles:
           - name: identity
-            issuer: example-identity-2026-09-dev-root-signed
+            issuer: example-identity-2026-09-alpha-root-signed
             allowedDomains: []
             allowBareDomains: false
             allowSubdomains: false
             allowWildcardCertificates: false
             allowedUriSans:
-              - spiffe://dev.example.private/*
+              - spiffe://alpha.example.private/*
             server: true
             client: true
             keyCurve: P-256
@@ -468,7 +468,7 @@ namespaces:
             renewBefore: 10m
     ssh:
       - path: ssh
-        description: the dev SSH user CA
+        description: the alpha SSH user CA
         keyType: ed25519
         roles:
           - name: ci
@@ -484,7 +484,7 @@ namespaces:
             maxTtl: 1h
     sshHost:
       - path: ssh-host
-        description: the dev workers' host CA
+        description: the alpha workers' host CA
         keyType: ed25519
         roles:
           - name: worker
@@ -498,9 +498,9 @@ namespaces:
             ttl: 24h
             maxTtl: 24h
     auth:
-      - path: jwt-dev
-        description: tokens minted by cluster dev
-        discoveryUrl: https://oidc.example.org/dev
+      - path: jwt-alpha
+        description: tokens minted by cluster alpha
+        discoveryUrl: https://oidc.example.org/alpha
         roles:
           - name: app
             boundAudiences:
@@ -516,7 +516,7 @@ namespaces:
             boundSubject: system:serviceaccount:runners:a
             userClaim: sub
             policies:
-              - dev:ssh:ci
+              - alpha:ssh:ci
             ttl: 15m
           - name: runner-b
             boundAudiences:
@@ -524,7 +524,7 @@ namespaces:
             boundSubject: system:serviceaccount:runners:b
             userClaim: sub
             policies:
-              - dev:ssh:ci
+              - alpha:ssh:ci
             ttl: 15m
           - name: worker-host
             boundAudiences:
@@ -619,12 +619,12 @@ namespaces:
           - path: kv
             description: the team secrets
     policies:
-      - name: dev:db:client
+      - name: alpha:db:client
         rules:
           - path: pki/sign/db-client
             capabilities:
               - update
-      - name: dev:openbao:writer
+      - name: alpha:openbao:writer
         rules:
           - path: kv/data/*
             capabilities:
@@ -662,7 +662,7 @@ namespaces:
               - delete
               - list
               - read
-      - name: dev:shop:approver
+      - name: alpha:shop:approver
         rules:
           - path: shop/kv/data/*
             capabilities:
@@ -676,12 +676,12 @@ namespaces:
               - delete
               - list
               - read
-      - name: dev:shop:dba
+      - name: alpha:shop:dba
         rules:
           - path: pki/sign/db-client
             capabilities:
               - update
-      - name: dev:shop:deployer
+      - name: alpha:shop:deployer
         rules:
           - path: shop/kv/data/*
             capabilities:
@@ -695,7 +695,7 @@ namespaces:
               - delete
               - list
               - read
-      - name: dev:shop:viewer
+      - name: alpha:shop:viewer
         rules:
           - path: shop/kv/data/*
             capabilities:
@@ -704,14 +704,14 @@ namespaces:
             capabilities:
               - list
               - read
-      - name: dev:ssh:ci
+      - name: alpha:ssh:ci
         rules:
           - path: ssh/sign/ci
             capabilities:
               - update
             deniedParameters:
               - critical_options
-      - name: dev:team:approver
+      - name: alpha:team:approver
         rules:
           - path: team/kv/data/*
             capabilities:
@@ -725,7 +725,7 @@ namespaces:
               - delete
               - list
               - read
-      - name: dev:team:deployer
+      - name: alpha:team:deployer
         rules:
           - path: team/kv/data/*
             capabilities:
@@ -739,7 +739,7 @@ namespaces:
               - delete
               - list
               - read
-      - name: dev:team:viewer
+      - name: alpha:team:viewer
         rules:
           - path: team/kv/data/*
             capabilities:
@@ -801,57 +801,449 @@ namespaces:
               - read
               - update
     groups:
-      - name: dev:db:client
+      - name: alpha:db:client
         policies:
-          - dev:db:client
+          - alpha:db:client
         doors:
           - jwt-roster
           - oidc
-      - name: dev:openbao:writer
+      - name: alpha:openbao:writer
         policies:
-          - dev:openbao:writer
+          - alpha:openbao:writer
         doors:
           - jwt-roster
           - oidc
-      - name: dev:shop:approver
+      - name: alpha:shop:approver
         policies:
-          - dev:shop:approver
+          - alpha:shop:approver
         doors:
           - jwt-roster
           - oidc
-      - name: dev:shop:dba
+      - name: alpha:shop:dba
         policies:
-          - dev:shop:dba
+          - alpha:shop:dba
         doors:
           - jwt-roster
           - oidc
-      - name: dev:shop:deployer
+      - name: alpha:shop:deployer
         policies:
-          - dev:shop:deployer
+          - alpha:shop:deployer
         doors:
           - jwt-roster
           - oidc
-      - name: dev:shop:viewer
+      - name: alpha:shop:viewer
         policies:
-          - dev:shop:viewer
+          - alpha:shop:viewer
         doors:
           - jwt-roster
           - oidc
-      - name: dev:team:approver
+      - name: alpha:team:approver
         policies:
-          - dev:team:approver
+          - alpha:team:approver
         doors:
           - jwt-roster
           - oidc
-      - name: dev:team:deployer
+      - name: alpha:team:deployer
         policies:
-          - dev:team:deployer
+          - alpha:team:deployer
         doors:
           - jwt-roster
           - oidc
-      - name: dev:team:viewer
+      - name: alpha:team:viewer
         policies:
-          - dev:team:viewer
+          - alpha:team:viewer
+        doors:
+          - jwt-roster
+          - oidc
+  - name: beta
+    kv:
+      - path: kv
+        description: the beta secrets
+        canary: canary
+    pki:
+      - path: pki
+        description: beta legacy certificates
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-root-beta
+        issuers:
+          - name: example-root-beta
+            commonName: beta.example.private Intermediate CA
+            organization: Example Org
+            keyCurve: P-256
+            ttl: 26280h
+            maxPathLength: 0
+            nameConstraints:
+              permittedDnsDomains:
+                - beta.example.private
+              excludedIpRanges:
+                - 0.0.0.0/0
+                - ::/0
+              permittedEmailAddresses:
+                - .invalid
+              permittedUriDomains:
+                - .invalid
+            signedBy:
+              mount: pki-example-private
+              issuer: example-private
+          - name: example-private-2026-09-beta
+            commonName: beta.example.private Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 1
+            nameConstraints:
+              permittedDnsDomains:
+                - beta.example.private
+                - cluster.local
+              excludedIpRanges:
+                - 0.0.0.0/0
+                - ::/0
+            signedBy:
+              mount: pki-example-private
+              issuer: example-private-2026-09
+        roles:
+          - name: cert-manager
+            issuer: example-root-beta
+            allowedDomains:
+              - beta.example.private
+            allowBareDomains: true
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-256
+            ttl: 720h
+            maxTtl: 2160h
+          - name: private
+            issuer: example-private-2026-09-beta
+            allowedDomains:
+              - beta.example.private
+            allowBareDomains: true
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: workload
+            issuer: example-private-2026-09-beta
+            allowedDomains:
+              - svc.cluster.local
+            allowBareDomains: false
+            allowSubdomains: true
+            allowWildcardCertificates: false
+            server: true
+            client: true
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+          - name: restore-check
+            issuer: example-private-2026-09-beta
+            allowedDomains:
+              - restore-check.beta.example.private
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: false
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+        credentialRoles:
+          - name: db-client
+            issuer: example-private-2026-09-beta
+            subjectMount: jwt-roster
+            cnValidations:
+              - email
+            server: false
+            client: true
+            keyCurve: P-384
+            ttl: 1h
+            maxTtl: 1h
+      - path: pki-origin
+        description: beta.example.net Issuing CA; the origin chain's leaves in beta
+        defaultLeaseTtl: 720h
+        maxLeaseTtl: 2160h
+        defaultIssuer: example-origin-2026-09-beta
+        issuers:
+          - name: example-origin-2026-09-beta
+            commonName: beta.example.net Issuing CA
+            organization: Example Org
+            keyCurve: P-384
+            ttl: 26280h
+            maxPathLength: 1
+            signedBy:
+              mount: pki-origin
+              issuer: example-origin-2026-09
+        roles:
+          - name: origin
+            issuer: example-origin-2026-09-beta
+            allowedDomains:
+              - shop.example.net
+            allowBareDomains: true
+            allowSubdomains: false
+            allowWildcardCertificates: true
+            server: true
+            client: false
+            keyCurve: P-384
+            ttl: 720h
+            maxTtl: 2160h
+            renewBefore: 240h
+    ssh:
+      - path: ssh
+        description: the beta SSH user CA
+        keyType: ed25519
+        roles:
+          - name: user
+            allowedUsers:
+              - ops
+            defaultUser: ops
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            extensions:
+              - permit-pty
+            ttl: 1h
+            maxTtl: 1h
+    sshHost:
+      - path: ssh-host
+        description: the beta fleets' host CA
+        keyType: ed25519
+        roles:
+          - name: edge
+            allowedDomains:
+              - edge.example.net
+            allowBareDomains: false
+            allowSubdomains: true
+            keyTypes:
+              - ed25519
+            keyIdFormat: '{{token_display_name}}'
+            ttl: 24h
+            maxTtl: 24h
+    auth:
+      - path: jwt-beta
+        description: tokens minted by cluster beta
+        discoveryUrl: https://oidc.example.org/beta
+        roles:
+          - name: app
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:external-secrets:external-secrets
+            userClaim: sub
+            policies:
+              - eso-app
+            ttl: 1h
+          - name: cert-manager
+            boundAudiences:
+              - openbao-cert-manager
+            boundSubject: system:serviceaccount:cert-manager:cert-manager
+            userClaim: sub
+            policies:
+              - pki-cert-manager
+            ttl: 15m
+          - name: private-ca
+            boundAudiences:
+              - openbao-private-ca
+            boundSubject: system:serviceaccount:cert-manager:cert-manager
+            userClaim: sub
+            policies:
+              - pki-private-ca
+            ttl: 15m
+          - name: origin-ca
+            boundAudiences:
+              - openbao-origin-ca
+            boundSubject: system:serviceaccount:cert-manager:cert-manager
+            userClaim: sub
+            policies:
+              - pki-origin-ca
+            ttl: 15m
+      - path: jwt-ops
+        description: tokens minted by cluster ops
+        discoveryUrl: https://oidc.example.org/ops
+        roles:
+          - name: metrics-reader
+            boundAudiences:
+              - openbao
+            boundSubject: system:serviceaccount:external-secrets:external-secrets
+            userClaim: sub
+            policies:
+              - metrics-reader
+            ttl: 1h
+      - path: jwt-roster
+        discoveryUrl: https://id.example.org
+        roles:
+          - name: roster
+            boundAudiences:
+              - openbao
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+            ttl: 1h
+      - path: oidc
+        type: oidc
+        clientId: openbao-ui
+        defaultRole: roster
+        discoveryUrl: https://id.example.org
+        roles:
+          - name: roster
+            type: oidc
+            boundAudiences:
+              - openbao-ui
+            userClaim: sub
+            groupsClaim: groups
+            claimMappings:
+              email: email
+            allowedRedirectUris:
+              - https://bao.example.org/ui/vault/auth/oidc/oidc/callback
+            oidcScopes:
+              - profile
+              - email
+            ttl: 1h
+    awsAuth:
+      - path: aws
+        description: the beta fleets' instance roles
+        iamServerIdHeaderValue: bao.beta.example.org
+        roles:
+          - name: edge-host
+            boundIamPrincipalArns:
+              - arn:aws:iam::111122223333:role/beta-edge
+            resolveAwsUniqueIds: false
+            policies:
+              - edge-sign
+            ttl: 15m
+            maxTtl: 15m
+        pluginVersion: v0.1.0
+    policies:
+      - name: beta:db:client
+        rules:
+          - path: pki/sign/db-client
+            capabilities:
+              - update
+      - name: beta:openbao:writer
+        rules:
+          - path: kv/data/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: kv/metadata/*
+            capabilities:
+              - delete
+              - list
+              - read
+      - name: beta:shop:approver
+        rules:
+          - path: kv/data/shop/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: kv/metadata/shop/*
+            capabilities:
+              - delete
+              - list
+              - read
+      - name: beta:shop:dba
+        rules:
+          - path: pki/sign/db-client
+            capabilities:
+              - update
+      - name: beta:shop:deployer
+        rules:
+          - path: kv/data/shop/*
+            capabilities:
+              - create
+              - delete
+              - patch
+              - read
+              - update
+          - path: kv/metadata/shop/*
+            capabilities:
+              - delete
+              - list
+              - read
+      - name: beta:ssh:user
+        rules:
+          - path: ssh/sign/user
+            capabilities:
+              - update
+      - name: eso-app
+        rules:
+          - path: kv/data/app/*
+            capabilities:
+              - read
+          - path: kv/metadata/app/*
+            capabilities:
+              - list
+              - read
+      - name: metrics-reader
+        rules:
+          - path: kv/data/metrics/write-token
+            capabilities:
+              - read
+      - name: pki-cert-manager
+        rules:
+          - path: pki/sign/cert-manager
+            capabilities:
+              - update
+      - name: pki-origin-ca
+        rules:
+          - path: pki-origin/sign/origin
+            capabilities:
+              - update
+      - name: pki-private-ca
+        rules:
+          - path: pki/sign/private
+            capabilities:
+              - update
+          - path: pki/sign/workload
+            capabilities:
+              - update
+          - path: pki/sign/restore-check
+            capabilities:
+              - update
+      - name: edge-sign
+        rules:
+          - path: ssh-host/sign/edge
+            capabilities:
+              - update
+    groups:
+      - name: beta:db:client
+        policies:
+          - beta:db:client
+        doors:
+          - jwt-roster
+          - oidc
+      - name: beta:openbao:writer
+        policies:
+          - beta:openbao:writer
+        doors:
+          - jwt-roster
+          - oidc
+      - name: beta:shop:approver
+        policies:
+          - beta:shop:approver
+        doors:
+          - jwt-roster
+          - oidc
+      - name: beta:shop:dba
+        policies:
+          - beta:shop:dba
+        doors:
+          - jwt-roster
+          - oidc
+      - name: beta:shop:deployer
+        policies:
+          - beta:shop:deployer
         doors:
           - jwt-roster
           - oidc
@@ -1276,398 +1668,6 @@ namespaces:
       - name: ops:openbao:writer
         policies:
           - ops:openbao:writer
-        doors:
-          - jwt-roster
-          - oidc
-  - name: prod
-    kv:
-      - path: kv
-        description: the prod secrets
-        canary: canary
-    pki:
-      - path: pki
-        description: prod legacy certificates
-        defaultLeaseTtl: 720h
-        maxLeaseTtl: 2160h
-        defaultIssuer: example-root-prod
-        issuers:
-          - name: example-root-prod
-            commonName: prod.example.private Intermediate CA
-            organization: Example Org
-            keyCurve: P-256
-            ttl: 26280h
-            maxPathLength: 0
-            nameConstraints:
-              permittedDnsDomains:
-                - prod.example.private
-              excludedIpRanges:
-                - 0.0.0.0/0
-                - ::/0
-              permittedEmailAddresses:
-                - .invalid
-              permittedUriDomains:
-                - .invalid
-            signedBy:
-              mount: pki-example-private
-              issuer: example-private
-          - name: example-private-2026-09-prod
-            commonName: prod.example.private Issuing CA
-            organization: Example Org
-            keyCurve: P-384
-            ttl: 26280h
-            maxPathLength: 1
-            nameConstraints:
-              permittedDnsDomains:
-                - prod.example.private
-                - cluster.local
-              excludedIpRanges:
-                - 0.0.0.0/0
-                - ::/0
-            signedBy:
-              mount: pki-example-private
-              issuer: example-private-2026-09
-        roles:
-          - name: cert-manager
-            issuer: example-root-prod
-            allowedDomains:
-              - prod.example.private
-            allowBareDomains: true
-            allowSubdomains: true
-            allowWildcardCertificates: false
-            server: true
-            client: true
-            keyCurve: P-256
-            ttl: 720h
-            maxTtl: 2160h
-          - name: private
-            issuer: example-private-2026-09-prod
-            allowedDomains:
-              - prod.example.private
-            allowBareDomains: true
-            allowSubdomains: true
-            allowWildcardCertificates: false
-            server: true
-            client: true
-            keyCurve: P-384
-            ttl: 720h
-            maxTtl: 2160h
-            renewBefore: 240h
-          - name: workload
-            issuer: example-private-2026-09-prod
-            allowedDomains:
-              - svc.cluster.local
-            allowBareDomains: false
-            allowSubdomains: true
-            allowWildcardCertificates: false
-            server: true
-            client: true
-            keyCurve: P-384
-            ttl: 720h
-            maxTtl: 2160h
-            renewBefore: 240h
-          - name: restore-check
-            issuer: example-private-2026-09-prod
-            allowedDomains:
-              - restore-check.prod.example.private
-            allowBareDomains: true
-            allowSubdomains: false
-            allowWildcardCertificates: false
-            server: true
-            client: false
-            keyCurve: P-384
-            ttl: 1h
-            maxTtl: 1h
-        credentialRoles:
-          - name: db-client
-            issuer: example-private-2026-09-prod
-            subjectMount: jwt-roster
-            cnValidations:
-              - email
-            server: false
-            client: true
-            keyCurve: P-384
-            ttl: 1h
-            maxTtl: 1h
-      - path: pki-origin
-        description: prod.example.net Issuing CA; the origin chain's leaves in prod
-        defaultLeaseTtl: 720h
-        maxLeaseTtl: 2160h
-        defaultIssuer: example-origin-2026-09-prod
-        issuers:
-          - name: example-origin-2026-09-prod
-            commonName: prod.example.net Issuing CA
-            organization: Example Org
-            keyCurve: P-384
-            ttl: 26280h
-            maxPathLength: 1
-            signedBy:
-              mount: pki-origin
-              issuer: example-origin-2026-09
-        roles:
-          - name: origin
-            issuer: example-origin-2026-09-prod
-            allowedDomains:
-              - shop.example.net
-            allowBareDomains: true
-            allowSubdomains: false
-            allowWildcardCertificates: true
-            server: true
-            client: false
-            keyCurve: P-384
-            ttl: 720h
-            maxTtl: 2160h
-            renewBefore: 240h
-    ssh:
-      - path: ssh
-        description: the prod SSH user CA
-        keyType: ed25519
-        roles:
-          - name: user
-            allowedUsers:
-              - ops
-            defaultUser: ops
-            keyTypes:
-              - ed25519
-            keyIdFormat: '{{token_display_name}}'
-            extensions:
-              - permit-pty
-            ttl: 1h
-            maxTtl: 1h
-    sshHost:
-      - path: ssh-host
-        description: the prod fleets' host CA
-        keyType: ed25519
-        roles:
-          - name: edge
-            allowedDomains:
-              - edge.example.net
-            allowBareDomains: false
-            allowSubdomains: true
-            keyTypes:
-              - ed25519
-            keyIdFormat: '{{token_display_name}}'
-            ttl: 24h
-            maxTtl: 24h
-    auth:
-      - path: jwt-prod
-        description: tokens minted by cluster prod
-        discoveryUrl: https://oidc.example.org/prod
-        roles:
-          - name: app
-            boundAudiences:
-              - openbao
-            boundSubject: system:serviceaccount:external-secrets:external-secrets
-            userClaim: sub
-            policies:
-              - eso-app
-            ttl: 1h
-          - name: cert-manager
-            boundAudiences:
-              - openbao-cert-manager
-            boundSubject: system:serviceaccount:cert-manager:cert-manager
-            userClaim: sub
-            policies:
-              - pki-cert-manager
-            ttl: 15m
-          - name: private-ca
-            boundAudiences:
-              - openbao-private-ca
-            boundSubject: system:serviceaccount:cert-manager:cert-manager
-            userClaim: sub
-            policies:
-              - pki-private-ca
-            ttl: 15m
-          - name: origin-ca
-            boundAudiences:
-              - openbao-origin-ca
-            boundSubject: system:serviceaccount:cert-manager:cert-manager
-            userClaim: sub
-            policies:
-              - pki-origin-ca
-            ttl: 15m
-      - path: jwt-ops
-        description: tokens minted by cluster ops
-        discoveryUrl: https://oidc.example.org/ops
-        roles:
-          - name: metrics-reader
-            boundAudiences:
-              - openbao
-            boundSubject: system:serviceaccount:external-secrets:external-secrets
-            userClaim: sub
-            policies:
-              - metrics-reader
-            ttl: 1h
-      - path: jwt-roster
-        discoveryUrl: https://id.example.org
-        roles:
-          - name: roster
-            boundAudiences:
-              - openbao
-            userClaim: sub
-            groupsClaim: groups
-            claimMappings:
-              email: email
-            ttl: 1h
-      - path: oidc
-        type: oidc
-        clientId: openbao-ui
-        defaultRole: roster
-        discoveryUrl: https://id.example.org
-        roles:
-          - name: roster
-            type: oidc
-            boundAudiences:
-              - openbao-ui
-            userClaim: sub
-            groupsClaim: groups
-            claimMappings:
-              email: email
-            allowedRedirectUris:
-              - https://bao.example.org/ui/vault/auth/oidc/oidc/callback
-            oidcScopes:
-              - profile
-              - email
-            ttl: 1h
-    awsAuth:
-      - path: aws
-        description: the prod fleets' instance roles
-        iamServerIdHeaderValue: bao.prod.example.org
-        roles:
-          - name: edge-host
-            boundIamPrincipalArns:
-              - arn:aws:iam::111122223333:role/prod-edge
-            resolveAwsUniqueIds: false
-            policies:
-              - edge-sign
-            ttl: 15m
-            maxTtl: 15m
-        pluginVersion: v0.1.0
-    policies:
-      - name: eso-app
-        rules:
-          - path: kv/data/app/*
-            capabilities:
-              - read
-          - path: kv/metadata/app/*
-            capabilities:
-              - list
-              - read
-      - name: metrics-reader
-        rules:
-          - path: kv/data/metrics/write-token
-            capabilities:
-              - read
-      - name: pki-cert-manager
-        rules:
-          - path: pki/sign/cert-manager
-            capabilities:
-              - update
-      - name: pki-origin-ca
-        rules:
-          - path: pki-origin/sign/origin
-            capabilities:
-              - update
-      - name: pki-private-ca
-        rules:
-          - path: pki/sign/private
-            capabilities:
-              - update
-          - path: pki/sign/workload
-            capabilities:
-              - update
-          - path: pki/sign/restore-check
-            capabilities:
-              - update
-      - name: prod:db:client
-        rules:
-          - path: pki/sign/db-client
-            capabilities:
-              - update
-      - name: prod:openbao:writer
-        rules:
-          - path: kv/data/*
-            capabilities:
-              - create
-              - delete
-              - patch
-              - read
-              - update
-          - path: kv/metadata/*
-            capabilities:
-              - delete
-              - list
-              - read
-      - name: prod:shop:approver
-        rules:
-          - path: kv/data/shop/*
-            capabilities:
-              - create
-              - delete
-              - patch
-              - read
-              - update
-          - path: kv/metadata/shop/*
-            capabilities:
-              - delete
-              - list
-              - read
-      - name: prod:shop:dba
-        rules:
-          - path: pki/sign/db-client
-            capabilities:
-              - update
-      - name: prod:shop:deployer
-        rules:
-          - path: kv/data/shop/*
-            capabilities:
-              - create
-              - delete
-              - patch
-              - read
-              - update
-          - path: kv/metadata/shop/*
-            capabilities:
-              - delete
-              - list
-              - read
-      - name: prod:ssh:user
-        rules:
-          - path: ssh/sign/user
-            capabilities:
-              - update
-      - name: edge-sign
-        rules:
-          - path: ssh-host/sign/edge
-            capabilities:
-              - update
-    groups:
-      - name: prod:db:client
-        policies:
-          - prod:db:client
-        doors:
-          - jwt-roster
-          - oidc
-      - name: prod:openbao:writer
-        policies:
-          - prod:openbao:writer
-        doors:
-          - jwt-roster
-          - oidc
-      - name: prod:shop:approver
-        policies:
-          - prod:shop:approver
-        doors:
-          - jwt-roster
-          - oidc
-      - name: prod:shop:dba
-        policies:
-          - prod:shop:dba
-        doors:
-          - jwt-roster
-          - oidc
-      - name: prod:shop:deployer
-        policies:
-          - prod:shop:deployer
         doors:
           - jwt-roster
           - oidc
