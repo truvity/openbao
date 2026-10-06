@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.36.0
+
+### Added
+
+- **`estate.Ops*` constants and `estate.OpsJobs`**: the ServiceAccount names, snapshot prefixes and limits `charts/openbao-ops` defaults to, as Go constants held equal to the chart's `values.yaml` by a test, and `Jobs` for the chart's jobs as shipped. An estate that runs the chart as shipped passes none of them as values and states none of them in code.
+
 ## v0.35.0
 
 ### Added
