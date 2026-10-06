@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`pkg/custody`: `Args.WithPlacements` and `Custody.Export`.** The two pieces an estate's custody stack wrote around `Deploy`. `WithPlacements` takes the generations as a contract authors them, each with its custody account, profile and trusted principal, and refuses placements that disagree (the two roles are one pair for every generation). `Export` publishes the role ARNs and each generation's alias, key ARNs and regions under the names consumers already read. No resource name changes.
+
 ## v0.31.3
 
 ### Added
