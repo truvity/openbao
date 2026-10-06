@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/truvity/secrets/pkg/estate"
 	"github.com/truvity/secrets/pkg/estate/internal/example"
 )
 
