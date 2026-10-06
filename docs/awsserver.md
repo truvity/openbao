@@ -33,6 +33,28 @@ _, err = awsserver.NewPodRole(ctx, awsserver.PodRoleArgs{
 })
 ```
 
+## The whole server
+
+`NewServer` composes the constructors into a server's whole AWS side and
+exports what the server's charts read:
+
+| Piece | Output |
+|---|---|
+| the auto-unseal key, its replica and aliases, and the unseal role | `unsealKeyArn`, `unsealReplicaKeyArn`, `unsealKeyAlias`, `unsealRoleArn` |
+| the snapshot and restore-check roles, once `Backups` is given | `snapshotRoleArn`, `snapshotBucket`, `restoreCheckRoleArn` |
+| the watches' topic and its four roles (snapshot age, job success, root generation, plugin catalog), once `Backups` is given | `watchTopicArn`, `snapshotAgeRoleArn`, `jobSuccessRoleArn`, `rootGenerationRoleArn`, `pluginCatalogRoleArn` |
+| the certificate-expiry topic and its role | `tlsExpiryTopicArn`, `tlsExpiryRoleArn` |
+| the endpoint record, once `Endpoint` is given | `loadBalancerDns`; `endpoint` always |
+
+Each role is bound to one ServiceAccount in the server's namespace, with the
+least-privilege policy for its job. What another control plane creates (the
+snapshot bucket, the load balancer) is optional: until it exists the
+dependent pieces are skipped with a warning, and a re-run completes them.
+
+`WithLegacyParent(ctx, type)` adopts roles created under another component
+type, named after each role: every role, inline policy and association
+carries an alias to the URN it has in state.
+
 ## The alias contract
 
 A resource's Pulumi URN is its type, its logical name and its parents. The
