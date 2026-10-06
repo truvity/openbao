@@ -1,0 +1,3 @@
+# The Go package that embeds the presets (presets/presets.go) is not part
+# of the chart.
+*.go
