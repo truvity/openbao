@@ -27,8 +27,8 @@ func TestConfigOutputs(t *testing.T) {
 
 	good := &estate.ConfigOutputs{SSHUserCAPublicKeys: map[string]string{"ops": ed25519 + "\n"}}
 	require.NoError(t, good.Validate())
-	require.NoError(t, good.ValidateSSHKeyTypes("ssh-ed25519", "ssh-ed25519"))
-	require.ErrorContains(t, good.ValidateSSHKeyTypes("ssh-rsa", "ssh-ed25519"), "want ssh-rsa")
+	require.NoError(t, good.ValidateSSHKeyTypes("ed25519", "ed25519"))
+	require.ErrorContains(t, good.ValidateSSHKeyTypes("rsa", "ed25519"), "want rsa")
 	assert.Equal(t, ed25519, good.SSHUserCAPublicKey("ops"))
 
 	require.Error(t, (&estate.ConfigOutputs{SSHHostCAPublicKeys: map[string]string{"ops": "not a key"}}).Validate())

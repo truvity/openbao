@@ -85,8 +85,9 @@ func (o *ConfigOutputs) Validate() error {
 	return nil
 }
 
-// ValidateSSHKeyTypes holds every exported SSH CA key to the type the
-// estate configured its CAs with (ssh.KeyAlgoED25519, for one).
+// ValidateSSHKeyTypes holds every exported SSH CA key to the key type the
+// estate configured its CAs with, as the server names it ("ed25519", "rsa",
+// "ecdsa": [SSHNames.CAKeyType], [SSHNames.HostKeyType]).
 func (o *ConfigOutputs) ValidateSSHKeyTypes(userType, hostType string) error {
 	for _, set := range []struct {
 		name, want string
@@ -98,13 +99,27 @@ func (o *ConfigOutputs) ValidateSSHKeyTypes(userType, hostType string) error {
 				return fmt.Errorf("%s.%s is not one plain OpenSSH public key", set.name, env)
 			}
 
-			if key.Type() != set.want {
+			if !sshKeyIs(key.Type(), set.want) {
 				return fmt.Errorf("%s.%s has type %s, want %s", set.name, env, key.Type(), set.want)
 			}
 		}
 	}
 
 	return nil
+}
+
+// sshKeyIs reports whether an OpenSSH key algorithm is the server's key type.
+func sshKeyIs(algorithm, keyType string) bool {
+	switch keyType {
+	case "ed25519":
+		return algorithm == ssh.KeyAlgoED25519
+	case "rsa":
+		return algorithm == ssh.KeyAlgoRSA
+	case "ecdsa":
+		return strings.HasPrefix(algorithm, "ecdsa-sha2-")
+	default:
+		return algorithm == keyType
+	}
 }
 
 func plainKey(raw string) (ssh.PublicKey, error) {
