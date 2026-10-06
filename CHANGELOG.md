@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.34.0
+
+### Added
+
+- **`builder.CISecretGrants`**: the CI job secrets' path grammar and policy naming. A map of secret path to the groups that read it becomes the sorted single-secret `SecretGrant`s `Environment.Secrets` takes, with each policy named by `builder.CISecretPolicy` (`ci/goreleaser` is `ci-goreleaser`); it refuses a path that is not `<prefix>/<key>` of lower-case segments, a path nobody reads, and two paths that derive one policy name.
+
 ## v0.33.0
 
 ### Added
