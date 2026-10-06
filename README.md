@@ -9,14 +9,14 @@ from.
 
 This repository was `truvity/openbao` until the 0.30 line and is the home of
 the estate's secrets concern: everything that holds, issues or delivers a
-secret or a certificate. Today that is OpenBAO, as described below. Planned
-next, as presets beside it (nothing of them ships yet):
+secret or a certificate. Today that is OpenBAO, as described below, with
+three values presets beside it ([docs/presets.md](docs/presets.md)):
 
-| Planned | What |
+| Preset | What |
 |---|---|
-| cert-manager preset | The issuers, approver policy and certificate defaults a consuming cluster needs, today rendered by `charts/openbao-consumers` |
-| trust-manager preset | The trust bundle sources and targets, today rendered by `charts/openbao-consumers` |
-| External Secrets preset | Stores and the secret-delivery shape, today rendered by `charts/openbao-consumers` |
+| `charts/openbao-consumers/presets/cert-manager.yaml` | The upstream cert-manager install an OpenBAO-backed cluster needs: CRDs, metrics, requests, control-plane HA |
+| `charts/openbao-consumers/presets/trust-manager.yaml` | The upstream trust-manager install that distributes the trust bundles: private roots only, Secret targets off, requests, HA |
+| `charts/openbao-consumers/presets/external-secrets.yaml` | The upstream External Secrets install the stores run on: CRDs, metrics, requests |
 
 What the rename changed, and what it did not:
 
