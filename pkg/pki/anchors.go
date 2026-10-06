@@ -1,7 +1,9 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"time"
 )
@@ -52,6 +54,39 @@ func (c *Contract) TrustAnchors() ([]TrustAnchor, error) {
 	}
 
 	return anchors, nil
+}
+
+// TrustBundlePEM is the one set of CA certificates every client of the
+// estate's private services verifies against: the committed root of every
+// generation Migration.TrustedGenerations names ([Contract.TrustAnchors]),
+// as PEM CERTIFICATE blocks, each newline-terminated, in the authored
+// order. One derivation, so no consumer can trust a different set from
+// another. An empty set is an error: a bundle that trusts nothing is a
+// misconfiguration, never a bundle.
+func (c *Contract) TrustBundlePEM() (string, error) {
+	anchors, err := c.TrustAnchors()
+	if err != nil {
+		return "", err
+	}
+
+	var out bytes.Buffer
+
+	for _, anchor := range anchors {
+		block, _ := pem.Decode([]byte(anchor.CertificatePEM))
+		if block == nil {
+			return "", fmt.Errorf("pki: trust anchor %s is not PEM", anchor.GenerationID)
+		}
+
+		if err := pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes}); err != nil {
+			return "", err
+		}
+	}
+
+	if out.Len() == 0 {
+		return "", fmt.Errorf("pki: the trust bundle is empty: no generation is trusted")
+	}
+
+	return out.String(), nil
 }
 
 func (c *Contract) loadTrustAnchor(generation *RootGeneration) (*TrustAnchor, error) {

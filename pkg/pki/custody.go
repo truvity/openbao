@@ -272,6 +272,25 @@ func (c *Contract) VerifyCustody(outputs *CustodyOutputs, generationID string, r
 	return verdict, nil
 }
 
+// VerifyCustodyOutputs is the part of [Contract.VerifyCustody] that needs no
+// signing request: the outputs are internally consistent and every authored
+// generation is published, and nothing else is, in the authored account and
+// regions. A consumer that only reads the outputs (to build a client for the
+// custody roles) calls this before it trusts any field of them.
+func (c *Contract) VerifyCustodyOutputs(outputs *CustodyOutputs) error {
+	if outputs == nil {
+		return fmt.Errorf("custody outputs are required")
+	}
+
+	if err := outputs.Validate(); err != nil {
+		return fmt.Errorf("custody outputs: %w", err)
+	}
+
+	_, err := c.verifyGenerations(outputs)
+
+	return err
+}
+
 // verifyGenerations binds every authored generation to its published one.
 func (c *Contract) verifyGenerations(outputs *CustodyOutputs) ([]string, error) {
 	authored := make([]string, 0, len(c.Generations))
