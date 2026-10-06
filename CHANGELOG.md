@@ -5,6 +5,16 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## v0.33.0
+
+### Added
+
+- **`serverpreset.Config.ApplyHA`**: the reference HA shape in one call: the API, cluster and metrics listeners, Raft retry-joining every pod by name through the headless Service, the Kubernetes service registration, the declarative audit device and standby reads off. Also `serverpreset.AuthAWSPlugin(version, sha256ByArch)` (the aws auth method's catalog entry), `ZoneSpread(release)`, `PodName`, and the port, path and name constants they use.
+
+### Changed
+
+- **`ServerValues` gives the tls-reload sidecar the Pod Security "restricted" container context** when `TLSReload.SecurityContext` is nil (it named none, which failed `restricted` on that one container).
+
 ## v0.32.0
 
 ### Added

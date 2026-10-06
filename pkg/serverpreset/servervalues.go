@@ -52,7 +52,8 @@ type (
 		Environment map[string]string
 		// TLSReload, when non-nil, adds the signalling sidecar of
 		// [Config.TLSReloadSidecarContainer] and shareProcessNamespace. Empty
-		// fields are filled from the server: Image from Image, CertificateFile
+		// fields are filled from the server: Image from Image, SecurityContext
+		// from the Pod Security "restricted" context, CertificateFile
 		// from Listener.TLSCertFile, CertificateVolume from the chart's
 		// "userconfig-<TLSSecretName>" volume, PluginVolume from
 		// PluginVolumeName.
@@ -191,10 +192,7 @@ func (c *Config) ServerValues(opts ServerValuesOptions) (map[string]any, error) 
 	server["podManagementPolicy"] = "Parallel"
 	server["extraEnvironmentVars"] = env
 	server["extraVolumes"] = []any{map[string]any{"type": "secret", "name": opts.TLSSecretName}}
-	server["statefulSet"] = map[string]any{"securityContext": map[string]any{"container": map[string]any{
-		"allowPrivilegeEscalation": false,
-		"capabilities":             map[string]any{"drop": []any{"ALL"}},
-	}}}
+	server["statefulSet"] = map[string]any{"securityContext": map[string]any{"container": restrictedContainerSecurityContext()}}
 
 	if c.Telemetry != nil && c.Telemetry.MetricsAddress != "" {
 		port, err := portOf(c.Telemetry.MetricsAddress)
@@ -222,6 +220,13 @@ func (c *Config) ServerValues(opts ServerValuesOptions) (map[string]any, error) 
 
 		if tr.PluginVolume == "" {
 			tr.PluginVolume = opts.PluginVolumeName
+		}
+
+		// The sidecar needs no privilege and no capability; without a
+		// context it would fail Pod Security "restricted" on this one
+		// container.
+		if tr.SecurityContext == nil {
+			tr.SecurityContext = restrictedContainerSecurityContext()
 		}
 
 		sidecar, err := c.TLSReloadSidecarContainer(tr)
