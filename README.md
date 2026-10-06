@@ -37,6 +37,7 @@ What the rename changed, and what it did not:
 | `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format |
 | `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region |
 | `pkg/awsserver` (Go, Pulumi) | The server's AWS side from caller inputs: the multi-region auto-unseal key and replica, Pod Identity roles with least-privilege policies, alert topics, the Object Lock snapshot bucket with replication, the endpoint record; a per-resource options hook for adopting existing state |
+| `pkg/estate` (Go) | One server serving several Kubernetes clusters, from typed inputs: which clusters, stores, runners, writers, host fleets, project groups and PKI contract make which login, policy, group, SSH engine and PKI mount, as a reviewed view and as the `pkg/model` state `pkg/apply` converges on, with the names existing state is adopted under ([docs/estate.md](docs/estate.md)) |
 | `pkg/pki` (Go) | The authored private-PKI contract above `pkg/ceremony`: root generations, trust domains, per-environment roles, and per-environment identity CAs |
 | `pkg/kmssigner` (Go) | A `crypto.Signer` over a KMS P-384 key |
 | `pkg/bootstrap`, `openbaoctl init`/`configure`/`revoke-root`/`drill` (Go) | Takes a fresh server to its first operator login and retires the root token, recovery shares and root token in the caller's custody (a `Keeper`), never logged: init, the operators' door, the generate-root drill that proves every share, root revocation guarded by a proven operator login ([docs/bootstrap.md](docs/bootstrap.md)) |
@@ -336,6 +337,9 @@ touches a key (see Status); it does not serve an estate on another cloud.
   contracts that derive the rest of the desired state (logins, SSH and
   host-certificate engines, groups, project namespaces, root jobs) from an
   estate's rows, in a stable order
+- [docs/estate.md](docs/estate.md) — `pkg/estate`, the layer above
+  `pkg/builder` and `pkg/pki`: an estate's typed inputs to its whole
+  desired state, and the names existing state is adopted under
 - [docs/model.md](docs/model.md) — OpenBAO's desired state per engine,
   its apply, and the resource names an existing configuration adopts
 - [docs/integrations/access-roster.md](docs/integrations/access-roster.md)

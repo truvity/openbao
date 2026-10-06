@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Added
+
+- **`pkg/estate`: an estate's whole desired state from typed inputs.** `estate.Build(estate.Inputs)` derives one server serving several Kubernetes clusters -- the store logins, CI runners, host-signing workers, the management cluster's writers, exporters and service, host fleets, project grants, CI secret reads, root jobs, and the private PKI with a legacy chain beside it -- as a reviewed view (`Desired`) and as the `pkg/model` state `pkg/apply` converges on (`Desired.Model`). `Desired.LegacyResourceNames` is the rename map that adopts existing state with an empty preview, and `StoreKinds` evaluates the rules that say which store kinds a cluster runs. Every name is an input. Moved out of the consuming repository; no resource name changes. See [docs/estate.md](docs/estate.md).
+
 ## v0.31.4
 
 ### Added
