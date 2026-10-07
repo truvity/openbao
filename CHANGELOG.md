@@ -7,6 +7,8 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+## v0.38.0
+
 ### Added
 
 - **`pkg/esoaws`: External Secrets reading AWS Parameter Store in another account**, with each cluster in exactly one `IdentityMode` (no default; the two are mutually exclusive). `PodIdentity`, for EKS: `NewClusterIdentity` makes the External Secrets controller's Pod Identity role in the cluster's account, which may only assume the listed reader roles (exact ARNs). `WebIdentity`, for any cluster whose ServiceAccount issuer AWS can reach: nothing ambient; `NewReaders` registers the cluster's issuer as an IAM OIDC provider (or takes an existing one), and each reader role trusts one ServiceAccount's tokens (`sub` and `aud`). `NewReaders` makes one reader role per grant in the parameters' account, reading exact parameters or prefixes (`GetParametersByPath` on prefixes only), with `kms:Decrypt` through SSM only when the parameters use a customer-managed key; the default `aws/ssm` key needs no grant, because the read happens inside the parameters' account. Every trust that allows `sts:TagSession` admits only EKS Pod Identity's tag keys, and an inline policy over IAM's 10,240 characters is refused before anything registers. Outputs: `ClusterIdentity.RoleARN`, `Readers.RoleARNs` by grant and `Readers.OIDCProviderARNs` by cluster. See [docs/esoaws.md](docs/esoaws.md).
