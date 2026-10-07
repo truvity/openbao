@@ -1,0 +1,6 @@
+# The role is one role, never a pattern.
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-*
+    conditions: [{namespaces: [a]}]

@@ -1,0 +1,37 @@
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-app-config
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "55"
+spec:
+  conditions:
+    - namespaces:
+      - example-app
+  provider:
+    aws:
+      service: ParameterStore
+      region: "eu-example-1"
+      role: "arn:aws:iam::444455556666:role/a-app-config"
+
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-app-credentials
+  annotations:
+    example.com/owner: platform
+spec:
+  conditions:
+    - namespaceSelector:
+        matchLabels:
+          example.com/app-credentials: "true"
+  provider:
+    aws:
+      service: ParameterStore
+      region: "eu-example-1"
+      role: "arn:aws:iam::444455556666:role/a-app-credentials"

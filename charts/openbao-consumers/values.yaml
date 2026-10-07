@@ -74,6 +74,20 @@ writers: []
 #    environments: [devel, prod] # one store per environment
 #    annotations: {}
 
+# Stores on AWS Systems Manager Parameter Store, in an account that need not
+# be the cluster's: one per (cluster, grant), named as given, no suffix.
+# External Secrets assumes `role` (the grant's reader role, in the
+# parameters' account) with its controller's own credentials, from EKS Pod
+# Identity, so a store carries no auth. Nothing here needs `server` or
+# `caBundle`. pkg/esoaws makes both roles; docs/esoaws.md walks the chain.
+awsStores: []
+#  - name: example-app-config
+#    region: eu-example-1
+#    role: arn:aws:iam::444455556666:role/example-app-config
+#    annotations: {}
+#    conditions:                 # required: without it every namespace can read
+#      - namespaces: [example-app]
+
 pki:
   enabled: false
   # On the objects cert-manager's login is made of (the ServiceAccount, its

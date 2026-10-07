@@ -1,0 +1,5 @@
+# Without a role the store would read as the controller itself.
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    conditions: [{namespaces: [a]}]

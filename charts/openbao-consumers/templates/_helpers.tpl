@@ -68,6 +68,17 @@ vault:
 {{- end -}}
 
 {{/*
+Refuse a ClusterSecretStore with no conditions: without them it is readable
+from every namespace on the cluster. `by` names the entry, as in
+"stores.<name>".
+*/}}
+{{- define "consumers.requireConditions" -}}
+{{- if not .conditions -}}
+{{- fail (printf "%s has no conditions — a ClusterSecretStore without them is readable from every namespace on the cluster" .by) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Claim one object identity, failing when two entries collide.
 */}}
 {{- define "consumers.claim" -}}

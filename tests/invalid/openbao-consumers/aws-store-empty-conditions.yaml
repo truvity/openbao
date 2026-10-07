@@ -1,0 +1,6 @@
+# An empty list of conditions is no conditions.
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    conditions: []

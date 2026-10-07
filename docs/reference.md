@@ -280,6 +280,7 @@ Stores and PKI are independent: an install may render either or both.
 |---|---|
 | `stores` | one ClusterSecretStore per kind, `<name>-<storeSuffix>` |
 | `writers` | one ClusterSecretStore per (writer, environment), `<name>-<environment>` |
+| `awsStores` | one ClusterSecretStore on AWS Parameter Store per entry, `<name>` ([esoaws.md](esoaws.md)) |
 | `pki.trustAnchors` | one ConfigMap per root, in `pki.certManager.namespace` |
 | `pki.issuers` | the login's ServiceAccount, Role and RoleBinding (`<issuerServiceAccount>-token`), and one issuer per entry |
 | `pki.bundle` | a trust-manager Bundle |
@@ -308,6 +309,11 @@ Stores and PKI are independent: an install may render either or both.
 | `writers[].serviceAccount` | *required* | The identity the store presents. |
 | `writers[].environments` | *required* | One store `<name>-<environment>` per entry, addressing that OpenBAO namespace. |
 | `writers[].annotations` | `{}` | |
+| `awsStores[].name` | *required* | The store's name, as given: one store per (cluster, grant). Needs no `server` or `caBundle`. |
+| `awsStores[].region` | *required* | The region of the parameters it reads. |
+| `awsStores[].role` | *required* | The grant's reader role in the parameters' account (`esoaws.Readers.RoleARNs`): one IAM role ARN, no wildcard. External Secrets assumes it with its controller's own Pod Identity credentials; the store names no auth. |
+| `awsStores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. |
+| `awsStores[].annotations` | `{}` | |
 | `pki.enabled` | `false` | Render the anchors, the issuers and the bundle. |
 | `pki.annotations` | `{}` | On the anchors and on the login's ServiceAccount, Role and RoleBinding. |
 | `pki.certManager.namespace` | `cert-manager` | Where the anchors, the login and namespaced issuers live; the default namespace of `certificates`. |
@@ -373,7 +379,7 @@ Stores and PKI are independent: an install may render either or both.
 | `certificates[].annotations`, `.labels` | `{}` | |
 
 Two entries that would render the same object — two stores, a store and a
-writer, two anchors, two issuers, two certificates or their Secrets — fail
+writer or an AWS store, two anchors, two issuers, two certificates or their Secrets — fail
 the render instead of overwriting each other.
 
 ## Hierarchy file

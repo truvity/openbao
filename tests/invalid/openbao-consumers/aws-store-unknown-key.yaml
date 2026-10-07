@@ -1,0 +1,7 @@
+# Auth is the controller's own Pod Identity; a store names none.
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    auth: {}
+    conditions: [{namespaces: [a]}]

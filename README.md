@@ -30,7 +30,7 @@ What the rename changed, and what it did not:
 | Artifact | What |
 |---|---|
 | `charts/openbao-ops` | Beside the server: snapshots verified before they are stored, a weekly restore that reads data back and walks the restored PKI from a root you hold, an alert before the serving certificate ends, watches for the failures that are otherwise silent, network policies, a serving certificate, and the sidecar that reloads it |
-| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (readers and writers), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates |
+| `charts/openbao-consumers` | On every consuming cluster: External Secrets stores (OpenBAO readers and writers, and AWS Parameter Store stores in another account), cert-manager issuers backed by OpenBAO's PKI, the trust anchors and bundle, and certificates |
 | `pkg/model` (Go) | OpenBAO's desired state per namespace and engine: KV mounts, JWT/OIDC auth mounts and roles, identity groups and aliases, policies, PKI mounts with issuers and roles, SSH CAs and roles; yaml-tagged, validated, no loader |
 | `pkg/apply` (Go, Pulumi) | Converges a server onto a `pkg/model` state with the Pulumi vault provider, after a pre-apply snapshot, with resource names an existing configuration adopts unchanged |
 | `pkg/serverpreset` (Go) | A reusable OpenBAO server preset for the plugin catalog, the `awskms` seal (built in on 2.6, an external plugin on 2.7), the listener and Raft |
