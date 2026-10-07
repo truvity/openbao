@@ -16,7 +16,7 @@ mode, and neither has a default.
 | | `PodIdentity` | `WebIdentity` |
 |---|---|---|
 | For | EKS | any cluster whose ServiceAccount issuer AWS can reach (self-hosted, and EKS too) |
-| What holds AWS credentials | the ESO controller, through EKS Pod Identity | nothing on the cluster |
+| What holds AWS credentials | the ESO controller, through EKS Pod Identity | nothing on the cluster, as far as this library is concerned (see below) |
 | Cluster side in AWS | `NewClusterIdentity`: a role and a Pod Identity association | nothing |
 | Parameters' side | one reader role per grant, trusting the cluster's role | an IAM OIDC provider for the cluster's issuer, and one reader role per grant trusting one ServiceAccount's tokens |
 | A store | names its reader `role`, no auth | names its own ServiceAccount (`auth.jwt.serviceAccountRef`), no `role` |
@@ -97,13 +97,22 @@ ServiceAccount of one store      sts:AssumeRoleWithWebIdentity
 The store carries no `role` of its own: ESO would assume it on top of the
 web identity, and the reader role does not trust itself.
 
+"Nothing on the cluster holds AWS credentials" is true only of what this
+library creates. It stays true only if nothing outside it grants the ESO
+controller's ServiceAccount AWS rights: no Pod Identity association or IRSA
+annotation of its own, and no node role reachable from its pods that may
+assume a reader role. If something does, the cluster is in effect in both
+modes, and the admission policy is needed again.
+
 The issuer must be reachable from AWS. The cluster's API server signs
 ServiceAccount tokens with an `iss` of its `--service-account-issuer`, and
 STS fetches that URL's `/.well-known/openid-configuration` and the keys it
 points to. On a self-hosted cluster that usually means publishing the
 discovery document and the JWKS on a public HTTPS host, such as a static
 bucket, and setting the API server's issuer to that URL. `IssuerURL` must
-match the tokens' `iss` exactly, with no trailing slash. An EKS cluster's
+match the tokens' `iss` exactly, with no trailing slash and the host in
+lower case (IAM names the provider and its condition keys by the URL as
+written). An EKS cluster's
 own issuer works too.
 
 ## Encryption: the default key is enough
@@ -160,8 +169,11 @@ So the unit of access is the grant: one reader role per audience, and one
 `ClusterSecretStore` per (cluster, grant), limited by `conditions` to the
 namespaces of that audience. A condition must select something: a
 non-empty list of namespaces, or a `namespaceSelector` with labels or
-expressions. An empty selector selects every namespace, so it is refused,
-and `awsStores` take no namespace regexes.
+expressions. An empty selector selects every namespace, so it is refused.
+An `awsStores` expression must use the `In` operator with at least one
+value: `NotIn`, `Exists` and `DoesNotExist` select namespaces nobody listed.
+`awsStores` take no namespace regexes. An OpenBAO store's regexes must be
+anchored (`^...$`), and none may match every namespace.
 
 What each mode guarantees beyond that:
 
@@ -188,14 +200,31 @@ create a `SecretStore` could set `role` to a reader's ARN and read that
 grant from their own namespace. Two controls close that:
 
 1. `aws.admissionPolicy`, a ValidatingAdmissionPolicy that the chart turns
-   on by default in `podIdentity` mode (Kubernetes 1.30+). It refuses an AWS
-   `SecretStore` or one of those generators without `secretRef` or `jwt`
-   auth, and an AWS `ClusterSecretStore` that is not one of this release's
-   `awsStores`. A store with its own keys or its own ServiceAccount is
-   admitted, because it reads as itself. `[Warn, Audit]` is the dry run.
-   One release should render a cluster's `awsStores`, since the policy
-   admits only its own. `just admission-conformance` proves it on a real API
-   server against ESO's CRDs.
+   on by default in `podIdentity` mode (Kubernetes 1.30+). It refuses:
+   - an AWS `SecretStore`, an `ECRAuthorizationToken` or `STSSessionToken`,
+     or a `ClusterGenerator` wrapping either, without `secretRef` or `jwt`
+     auth;
+   - an AWS `ClusterSecretStore` that is not one of this release's
+     `awsStores`;
+   - one of the release's own stores that differs from what the release
+     renders. In `podIdentity` mode it must assume exactly the rendered
+     `role`, with no `auth`, `additionalRoles`, `sessionTags`,
+     `transitiveTagKeys` or `externalID`. In `webIdentity` mode it must read
+     as exactly the rendered ServiceAccount, with no `role`, keys or extra
+     audiences. A GitOps apply leaves fields it does not declare in place,
+     so a store edited or created outside the release would otherwise keep
+     them.
+
+   A store with its own keys or its own ServiceAccount is admitted, because
+   it reads as itself. An update is judged even while its object waits on a
+   finalizer to be deleted, since ESO still reads it. Only a finalizer's
+   removal that leaves the spec as it was is let through. One release should
+   render a cluster's `awsStores`, since the policy admits only its own. In
+   `podIdentity` mode, turning the policy off, dropping `Deny` (the
+   `[Warn, Audit]` dry run) or setting `failurePolicy: Ignore` fails the
+   render unless `acknowledgeTenantsCanBorrowControllerIdentity: true` says
+   so. `just admission-conformance` proves all of it on a real API server,
+   against ESO's CRDs.
 2. In the upstream ESO chart, `rbac.aggregateToEdit: false` and
    `rbac.aggregateToAdmin: false`. Those settings add create on
    `secretstores`, `externalsecrets` and the generators to every

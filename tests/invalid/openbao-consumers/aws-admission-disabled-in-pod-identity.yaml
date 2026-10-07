@@ -1,0 +1,10 @@
+# Turning the guard off in podIdentity mode needs the acknowledgement.
+aws:
+  identity: podIdentity
+  admissionPolicy:
+    enabled: false
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    conditions: [{namespaces: [a]}]

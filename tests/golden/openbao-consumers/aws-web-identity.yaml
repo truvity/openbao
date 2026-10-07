@@ -73,51 +73,87 @@ spec:
         operations: ["CREATE", "UPDATE"]
       - apiGroups: ["generators.external-secrets.io"]
         apiVersions: ["*"]
-        resources: ["ecrauthorizationtokens", "stssessiontokens"]
+        resources: ["ecrauthorizationtokens", "stssessiontokens", "clustergenerators"]
         operations: ["CREATE", "UPDATE"]
   matchConditions:
-    # An object on its way out is never refused: a finalizer removal is an
-    # UPDATE, and refusing it would wedge the deletion.
-    - name: not-terminating
-      expression: '!has(dyn(object).metadata.deletionTimestamp)'
+    # An update to an object already being deleted that leaves its spec as
+    # it was (a finalizer's removal) is not judged, so a deletion cannot be
+    # wedged. Every other update is: an object held in deletion by a
+    # finalizer is still read by External Secrets, so a spec change while
+    # it waits is judged like any other.
+    - name: not-a-finalizer-release
+      expression: >-
+        !(request.operation == 'UPDATE' && has(dyn(oldObject).metadata.deletionTimestamp) &&
+        dyn(object).spec == dyn(oldObject).spec)
   variables:
     - name: obj
       expression: 'dyn(object)'
     - name: kind
       expression: 'request.kind.kind'
+    # Cluster-scoped kinds have no namespace to name.
+    - name: subject
+      expression: >-
+        variables.kind + ' ' + variables.obj.metadata.name +
+        (variables.kind == 'ClusterSecretStore' || variables.kind == 'ClusterGenerator' ? '' :
+        ' in namespace ' + request.namespace)
     - name: isStore
       expression: "variables.kind == 'SecretStore' || variables.kind == 'ClusterSecretStore'"
     - name: onAWS
       expression: >-
         variables.isStore && has(variables.obj.spec.provider) && has(variables.obj.spec.provider.aws)
-    # External Secrets uses its own credentials unless auth names a Secret
-    # or a ServiceAccount: an absent auth and an empty one are the same.
-    - name: auth
+    - name: aws
+      expression: "variables.onAWS ? variables.obj.spec.provider.aws : {}"
+    - name: storeOwnAuth
+      expression: "(has(variables.aws.auth) && (has(variables.aws.auth.secretRef) || has(variables.aws.auth.jwt)))"
+    # A generator that would act with the controller's credentials: a
+    # namespaced ECR or STS generator, or a ClusterGenerator wrapping one.
+    - name: generatorBorrows
       expression: >-
-        variables.onAWS ?
-        (has(variables.obj.spec.provider.aws.auth) ? variables.obj.spec.provider.aws.auth : {}) :
-        (has(variables.obj.spec.auth) ? variables.obj.spec.auth : {})
-    - name: ownAuth
-      expression: "has(variables.auth.secretRef) || has(variables.auth.jwt)"
+        (variables.kind == 'ECRAuthorizationToken' || variables.kind == 'STSSessionToken') ?
+        !(has(variables.obj.spec.auth) && (has(variables.obj.spec.auth.secretRef) || has(variables.obj.spec.auth.jwt))) :
+        variables.kind == 'ClusterGenerator' && has(variables.obj.spec.generator) && (
+        (has(variables.obj.spec.generator.ecrAuthorizationTokenSpec) && !(has(variables.obj.spec.generator.ecrAuthorizationTokenSpec.auth) && (has(variables.obj.spec.generator.ecrAuthorizationTokenSpec.auth.secretRef) || has(variables.obj.spec.generator.ecrAuthorizationTokenSpec.auth.jwt)))) ||
+        (has(variables.obj.spec.generator.stsSessionTokenSpec) && !(has(variables.obj.spec.generator.stsSessionTokenSpec.auth) && (has(variables.obj.spec.generator.stsSessionTokenSpec.auth.secretRef) || has(variables.obj.spec.generator.stsSessionTokenSpec.auth.jwt)))))
+    - name: expected
+      expression: '{"b-app-config":{"ns":"external-secrets","sa":"eso-b-app-config"},"b-app-credentials":{"ns":"external-secrets","sa":"eso-b-app-credentials"}}'
+    - name: releaseStore
+      expression: >-
+        variables.kind == 'ClusterSecretStore' && variables.onAWS && variables.obj.metadata.name in variables.expected
+    # What none of the release's stores says: more roles, a session's tags,
+    # an external id.
+    - name: extras
+      expression: >-
+        has(variables.aws.additionalRoles) || has(variables.aws.sessionTags) ||
+        has(variables.aws.transitiveTagKeys) || has(variables.aws.externalID)
   validations:
-    - expression: "variables.kind != 'SecretStore' || !variables.onAWS || variables.ownAuth"
+    - expression: "variables.kind != 'SecretStore' || !variables.onAWS || variables.storeOwnAuth"
       messageExpression: >-
-        'SecretStore ' + variables.obj.metadata.name + ' in namespace ' + request.namespace +
-        ' is on the aws provider with no auth of its own (secretRef or jwt): External Secrets would use its' +
+        variables.subject + ' is on the aws provider with no auth of its own (secretRef or jwt): External Secrets would use its' +
         ' controller\'s AWS identity, which may assume this cluster\'s parameter reader roles'
       reason: Forbidden
-    - expression: "variables.isStore || variables.ownAuth"
+    - expression: "!variables.generatorBorrows"
       messageExpression: >-
-        variables.kind + ' ' + variables.obj.metadata.name + ' in namespace ' + request.namespace +
-        ' names no auth of its own (secretRef or jwt): External Secrets would use its controller\'s AWS identity'
+        variables.subject + ' names no auth of its own (secretRef or jwt) for AWS: External Secrets would use its controller\'s AWS identity'
       reason: Forbidden
-    - expression: >-
-        variables.kind != 'ClusterSecretStore' || !variables.onAWS ||
-        variables.obj.metadata.name in ["b-app-config","b-app-credentials"]
+    - expression: "variables.kind != 'ClusterSecretStore' || !variables.onAWS || variables.releaseStore"
       messageExpression: >-
-        'ClusterSecretStore ' + variables.obj.metadata.name +
+        variables.subject +
         ' is on the aws provider but is not one of the stores release openbao-consumers renders (awsStores):' +
         ' every namespace its conditions admit would read with the controller\'s AWS identity'
+      reason: Forbidden
+    # webIdentity: the release's store reads as its one rendered
+    # ServiceAccount, and assumes nothing on top.
+    - expression: >-
+        !variables.releaseStore || (!variables.extras && !has(variables.aws.role) &&
+        has(variables.aws.auth) && !has(variables.aws.auth.secretRef) && has(variables.aws.auth.jwt) &&
+        variables.aws.auth.jwt.serviceAccountRef.name == variables.expected[variables.obj.metadata.name].sa &&
+        has(variables.aws.auth.jwt.serviceAccountRef.namespace) &&
+        variables.aws.auth.jwt.serviceAccountRef.namespace == variables.expected[variables.obj.metadata.name].ns &&
+        !has(variables.aws.auth.jwt.serviceAccountRef.audiences))
+      messageExpression: >-
+        variables.subject + ' is release openbao-consumers\'s, but differs from what it renders: it reads as ServiceAccount ' +
+        variables.expected[variables.obj.metadata.name].ns + '/' + variables.expected[variables.obj.metadata.name].sa +
+        ' only, with no role, secretRef, audiences, additionalRoles, sessionTags, transitiveTagKeys or externalID'
       reason: Forbidden
 
 ---

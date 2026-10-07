@@ -1,0 +1,10 @@
+# Exists selects whatever any namespace owner labels.
+aws:
+  identity: podIdentity
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    conditions:
+      - namespaceSelector:
+          matchExpressions: [{key: example.com/app, operator: Exists}]
