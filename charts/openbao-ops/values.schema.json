@@ -907,7 +907,8 @@
             "pathStyle": { "type": "boolean" },
             "existingSecret": { "type": "string" },
             "prefix": { "type": "string" },
-            "checksumAlgorithm": { "type": "string" }
+            "checksumAlgorithm": { "type": "string" },
+            "multipartThreshold": { "type": "string", "pattern": "^([0-9]+(KB|MB|GB)?)?$" }
           }
         }
       }

@@ -437,10 +437,15 @@ what it always did:
 {{- end -}}
 {{- end -}}
 
-{{/* The line a preset's script starts with when the bucket is addressed by path. */}}
+{{/* The line a preset's script starts with when the CLI needs a config
+       file: the bucket addressed by path, or a multipart threshold of its
+       own (the upload's, see snapshot.upload.s3.multipartThreshold). */}}
 {{- define "ops.s3Configure" -}}
-{{- if .s3.pathStyle -}}
-printf '[default]\ns3 =\n  addressing_style = path\n' > {{ .configFile }}
+{{- if or .s3.pathStyle .s3.multipartThreshold -}}
+printf '[default]\ns3 =\n
+{{- if .s3.pathStyle }}  addressing_style = path\n{{ end -}}
+{{- with .s3.multipartThreshold }}  multipart_threshold = {{ . }}\n{{ end -}}
+' > {{ .configFile }}
 {{- end -}}
 {{- end -}}
 
@@ -454,7 +459,7 @@ printf '[default]\ns3 =\n  addressing_style = path\n' > {{ .configFile }}
 - name: AWS_RESPONSE_CHECKSUM_VALIDATION
   value: when_required
 {{- end }}
-{{- if .s3.pathStyle }}
+{{- if or .s3.pathStyle .s3.multipartThreshold }}
 - name: AWS_CONFIG_FILE
   value: {{ .configFile }}
 {{- end }}

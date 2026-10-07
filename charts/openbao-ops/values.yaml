@@ -165,6 +165,14 @@ snapshot:
       # S3-compatible stores agree on, where the CLI's own default (CRC32,
       # on every request, since 2.23) is not.
       checksumAlgorithm: SHA256
+      # The size above which the CLI splits the upload into a multipart
+      # upload (its own default is 8MB). One PUT is the simpler request: a
+      # multipart upload into an SSE-KMS bucket also needs kms:Decrypt on
+      # the key, which a write-only backup role should not need, and a
+      # snapshot crossing 8MB turned a working job into AccessDenied on
+      # UploadPart. 1GB keeps every realistic snapshot a single PUT (S3
+      # takes up to 5GB in one). Empty keeps the CLI's default.
+      multipartThreshold: 1GB
 
 # ---------------------------------------------------------------------------
 restoreCheck:

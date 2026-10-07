@@ -603,11 +603,14 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
+                  printf '[default]\ns3 =\n  multipart_threshold = 1GB\n' > /tmp/aws-config
                   key="raft/$(cat /work/taken-at).snap"
                   aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
                 - name: AWS_REGION
                   value: eu-example-1
+                - name: AWS_CONFIG_FILE
+                  value: /tmp/aws-config
                 - name: HOME
                   value: /tmp
               volumeMounts:
@@ -738,11 +741,14 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
+                  printf '[default]\ns3 =\n  multipart_threshold = 1GB\n' > /tmp/aws-config
                   key="weekly/$(cat /work/taken-at).snap"
                   aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
                 - name: AWS_REGION
                   value: eu-example-1
+                - name: AWS_CONFIG_FILE
+                  value: /tmp/aws-config
                 - name: HOME
                   value: /tmp
               volumeMounts:

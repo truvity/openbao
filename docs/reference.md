@@ -73,6 +73,7 @@ Every part is off until enabled, so one install can carry any subset.
 | `upload.s3.pathStyle` | `false` | Address the bucket as `endpoint/bucket/key` rather than `bucket.endpoint/key`: a property of the store's certificate, so its own switch. The CLI reads it from its config file alone; the script writes that one line and `AWS_CONFIG_FILE` names it. |
 | `upload.s3.existingSecret` | `""` | A Secret holding `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_SESSION_TOKEN`), given through `envFrom`, for a store with no pod identity. Empty keeps the pod's ambient identity. |
 | `upload.s3.checksumAlgorithm` | `SHA256` | Sent with every object, whatever the store. |
+| `upload.s3.multipartThreshold` | `1GB` | The size above which the CLI splits the upload into parts (its own default is 8MB). One PUT needs only `kms:GenerateDataKey` on an SSE-KMS bucket; a multipart upload also needs `kms:Decrypt`. Written to the CLI's config file, which `AWS_CONFIG_FILE` names. Empty keeps the CLI's default. |
 
 ### restoreCheck
 
