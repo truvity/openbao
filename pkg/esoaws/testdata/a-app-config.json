@@ -1,0 +1,29 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:ssm:eu-example-1:444455556666:parameter/app/config/*",
+        "arn:aws:ssm:eu-example-1:444455556666:parameter/shared/endpoint",
+        "arn:aws:ssm:eu-example-1:444455556666:parameter/standalone"
+      ],
+      "Sid": "ReadParameters"
+    },
+    {
+      "Action": [
+        "ssm:GetParametersByPath"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:ssm:eu-example-1:444455556666:parameter/app/config",
+        "arn:aws:ssm:eu-example-1:444455556666:parameter/app/config/*"
+      ],
+      "Sid": "ReadParametersByPath"
+    }
+  ],
+  "Version": "2012-10-17"
+}

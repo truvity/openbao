@@ -74,14 +74,16 @@ server-config BAO=`command -v bao`:
     OPENBAO_BAO_BINARY={{ BAO }} go test ./conformance/ -run 'TestServerAccepts|TestServerStartsOn|TestDiagnose' -count=1 -v
 
 # Regenerate the golden renders, the ceremony's template goldens, the
-# model's example, the builder's example, the apply's registered resources and the access-roster
-# example — review the diff before committing.
+# model's example, the builder's example, the apply's registered resources, the
+# esoaws policy documents and the access-roster example — review the diff
+# before committing.
 golden:
     hack/golden.sh update
     UPDATE_GOLDEN=1 go test ./pkg/ceremony/ -run Golden
     UPDATE_GOLDEN=1 go test ./pkg/model/ -run Canonical
     UPDATE_GOLDEN=1 go test ./pkg/builder/ -run Golden
     UPDATE_GOLDEN=1 go test ./pkg/apply/ -run Golden
+    UPDATE_GOLDEN=1 go test ./pkg/esoaws/ -run 'TestTheClusterIdentity|TestTheReaders'
     UPDATE_GOLDEN=1 go test ./examples/roster/ -run Golden
     UPDATE_GOLDEN=1 go test ./examples/org/
 

@@ -7,6 +7,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Added
+
+- **`pkg/esoaws`: External Secrets reading AWS Parameter Store in another account.** `NewClusterIdentity` makes the External Secrets Operator's identity in the cluster's account: an EKS Pod Identity role (default `external-secrets/external-secrets`) that may only assume the listed reader roles. `NewReaders` makes one reader role per grant in the parameters' account. Each role trusts exactly the cluster identity and reads exact parameters or prefixes (`GetParametersByPath` on prefixes only), with `kms:Decrypt` through SSM only when the parameters use a customer-managed key. The default `aws/ssm` key needs no grant, because the read happens inside the parameters' account. Outputs: `ClusterIdentity.RoleARN` and `Readers.RoleARNs` by grant. See [docs/esoaws.md](docs/esoaws.md).
+
 ### Changed
 
 - **`openbao-ops`: the snapshot upload is one PUT up to 1GB** (`snapshot.upload.s3.multipartThreshold`, default `1GB`; the AWS CLI's own is 8MB). A snapshot that grew past 8MB became a multipart upload, which into an SSE-KMS bucket also needs `kms:Decrypt` on the key, and a write-only backup role got `AccessDenied` on `UploadPart`. Empty keeps the CLI's default.

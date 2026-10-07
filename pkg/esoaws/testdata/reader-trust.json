@@ -1,0 +1,16 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ],
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::111122223333:role/a-external-secrets"
+      },
+      "Sid": "ExternalSecretsOperator"
+    }
+  ],
+  "Version": "2012-10-17"
+}
