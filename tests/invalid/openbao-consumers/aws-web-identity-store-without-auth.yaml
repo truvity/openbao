@@ -1,0 +1,16 @@
+# Mixing: one store without its own identity on a web-identity cluster,
+# beside one that has it. The first would fall back to ambient credentials.
+aws:
+  identity: webIdentity
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    auth:
+      jwt:
+        serviceAccountRef: {name: app-config, namespace: external-secrets}
+    conditions: [{namespaces: [a]}]
+  - name: app-credentials
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-credentials
+    conditions: [{namespaces: [b]}]

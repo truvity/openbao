@@ -125,11 +125,14 @@ package:
 # Everything CI runs on a pull request.
 check: build lint test examples leak-canary
 
-# The admission policy of openbao-consumers, proved on a real API server:
-# creates a throwaway kind cluster (its own temporary kubeconfig, never the
-# ambient one), installs the rendered ValidatingAdmissionPolicy, asserts what
-# is admitted and refused, and deletes the cluster. Needs docker, kind,
-# kubectl and helm on PATH; it is not part of `just test` because CI has no
+# The admission policies of openbao-consumers (mTLS enforcement, and the AWS
+# stores' in podIdentity mode), proved on a real API server: creates a
+# throwaway kind cluster (its own temporary kubeconfig, never the ambient
+# one), installs each rendered ValidatingAdmissionPolicy, asserts what is
+# admitted and refused, and deletes the cluster. The AWS policy is proved
+# against External Secrets' real CRDs, fetched from its release
+# (OPENBAO_ESO_CRDS overrides the path or URL). Needs docker, kind, kubectl
+# and helm on PATH; it is not part of `just test` because CI has no
 # container runtime for a cluster.
 admission-conformance:
     #!/usr/bin/env bash

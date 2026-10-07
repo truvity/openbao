@@ -1,3 +1,5 @@
+aws:
+  identity: podIdentity
 awsStores:
   - name: app-config
     role: arn:aws:iam::444455556666:role/app-config

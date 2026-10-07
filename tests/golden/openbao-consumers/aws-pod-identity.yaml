@@ -1,0 +1,115 @@
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-app-config
+  annotations:
+    example.com/owner: platform
+    example.com/sync-wave: "55"
+spec:
+  conditions:
+    - namespaces:
+      - example-app
+  provider:
+    aws:
+      service: ParameterStore
+      region: "eu-example-1"
+      role: "arn:aws:iam::444455556666:role/a-app-config"
+
+---
+# Source: openbao-consumers/templates/stores.yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: example-app-credentials
+  annotations:
+    example.com/owner: platform
+spec:
+  conditions:
+    - namespaceSelector:
+        matchLabels:
+          example.com/app-credentials: "true"
+  provider:
+    aws:
+      service: ParameterStore
+      region: "eu-example-1"
+      role: "arn:aws:iam::444455556666:role/a-app-credentials"
+
+---
+# Source: openbao-consumers/templates/aws-admission.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openbao-consumers-aws-stores
+  annotations:
+    example.com/owner: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["external-secrets.io"]
+        apiVersions: ["*"]
+        resources: ["secretstores", "clustersecretstores"]
+        operations: ["CREATE", "UPDATE"]
+      - apiGroups: ["generators.external-secrets.io"]
+        apiVersions: ["*"]
+        resources: ["ecrauthorizationtokens", "stssessiontokens"]
+        operations: ["CREATE", "UPDATE"]
+  matchConditions:
+    # An object on its way out is never refused: a finalizer removal is an
+    # UPDATE, and refusing it would wedge the deletion.
+    - name: not-terminating
+      expression: '!has(dyn(object).metadata.deletionTimestamp)'
+  variables:
+    - name: obj
+      expression: 'dyn(object)'
+    - name: kind
+      expression: 'request.kind.kind'
+    - name: isStore
+      expression: "variables.kind == 'SecretStore' || variables.kind == 'ClusterSecretStore'"
+    - name: onAWS
+      expression: >-
+        variables.isStore && has(variables.obj.spec.provider) && has(variables.obj.spec.provider.aws)
+    # External Secrets uses its own credentials unless auth names a Secret
+    # or a ServiceAccount: an absent auth and an empty one are the same.
+    - name: auth
+      expression: >-
+        variables.onAWS ?
+        (has(variables.obj.spec.provider.aws.auth) ? variables.obj.spec.provider.aws.auth : {}) :
+        (has(variables.obj.spec.auth) ? variables.obj.spec.auth : {})
+    - name: ownAuth
+      expression: "has(variables.auth.secretRef) || has(variables.auth.jwt)"
+  validations:
+    - expression: "variables.kind != 'SecretStore' || !variables.onAWS || variables.ownAuth"
+      messageExpression: >-
+        'SecretStore ' + variables.obj.metadata.name + ' in namespace ' + request.namespace +
+        ' is on the aws provider with no auth of its own (secretRef or jwt): External Secrets would use its' +
+        ' controller\'s AWS identity, which may assume this cluster\'s parameter reader roles'
+      reason: Forbidden
+    - expression: "variables.isStore || variables.ownAuth"
+      messageExpression: >-
+        variables.kind + ' ' + variables.obj.metadata.name + ' in namespace ' + request.namespace +
+        ' names no auth of its own (secretRef or jwt): External Secrets would use its controller\'s AWS identity'
+      reason: Forbidden
+    - expression: >-
+        variables.kind != 'ClusterSecretStore' || !variables.onAWS ||
+        variables.obj.metadata.name in ["example-app-config","example-app-credentials"]
+      messageExpression: >-
+        'ClusterSecretStore ' + variables.obj.metadata.name +
+        ' is on the aws provider but is not one of the stores release openbao-consumers renders (awsStores):' +
+        ' every namespace its conditions admit would read with the controller\'s AWS identity'
+      reason: Forbidden
+
+---
+# Source: openbao-consumers/templates/aws-admission.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: openbao-consumers-aws-stores
+  annotations:
+    example.com/owner: platform
+spec:
+  policyName: openbao-consumers-aws-stores
+  validationActions:
+    - Deny

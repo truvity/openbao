@@ -70,11 +70,22 @@ vault:
 {{/*
 Refuse a ClusterSecretStore with no conditions: without them it is readable
 from every namespace on the cluster. `by` names the entry, as in
-"stores.<name>".
+"stores.<name>". The schema refuses a condition that selects nothing
+specific (an empty one, an empty list of names, an empty selector); what it
+cannot see is a namespace regex that matches everything. External Secrets
+matches a regex unanchored, as regexMatch does, so a regex that matches
+every probe below, names that share nothing, matches every namespace.
 */}}
 {{- define "consumers.requireConditions" -}}
 {{- if not .conditions -}}
 {{- fail (printf "%s has no conditions — a ClusterSecretStore without them is readable from every namespace on the cluster" .by) -}}
+{{- end -}}
+{{- range $c := .conditions -}}
+{{- range $re := $c.namespaceRegexes | default list -}}
+{{- if and (regexMatch $re "default") (regexMatch $re "kube-system") (regexMatch $re "x") (regexMatch $re "0") -}}
+{{- fail (printf "%s has the namespace regex %q, which matches every namespace — name the namespaces, or anchor the regex" $.by $re) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

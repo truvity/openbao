@@ -74,12 +74,40 @@ writers: []
 #    environments: [devel, prod] # one store per environment
 #    annotations: {}
 
-# Stores on AWS Systems Manager Parameter Store, in an account that need not
-# be the cluster's: one per (cluster, grant), named as given, no suffix.
-# External Secrets assumes `role` (the grant's reader role, in the
-# parameters' account) with its controller's own credentials, from EKS Pod
-# Identity, so a store carries no auth. Nothing here needs `server` or
-# `caBundle`. pkg/esoaws makes both roles; docs/esoaws.md walks the chain.
+# External Secrets on AWS Systems Manager Parameter Store, in an account
+# that need not be the cluster's. pkg/esoaws makes the roles on both sides;
+# docs/esoaws.md walks the chain. Nothing here needs `server` or `caBundle`.
+aws:
+  # How External Secrets on this cluster proves who it is to AWS. Required
+  # with awsStores; no default. One mode per cluster: they are mutually
+  # exclusive, because a controller identity beside per-store identities is
+  # one any store without auth borrows.
+  #   podIdentity  the controller holds its own credentials (EKS Pod
+  #                Identity) and assumes each store's `role`; stores name
+  #                no auth.
+  #   webIdentity  nothing holds credentials; each store names its own
+  #                ServiceAccount (auth.jwt.serviceAccountRef), whose token
+  #                assumes the role through the cluster's OIDC issuer.
+  identity: ""
+  webIdentity:
+    # The audience the reader roles require (esoaws WebIdentity.Audience),
+    # set on each ServiceAccount this chart renders.
+    audience: sts.amazonaws.com
+  # A ValidatingAdmissionPolicy (Kubernetes 1.30+) that refuses what would
+  # borrow the controller's AWS identity: a namespaced SecretStore, or an ECR
+  # or STS generator, on AWS with no auth of its own, and a ClusterSecretStore
+  # on AWS that is not one of this release's awsStores. Empty (null): on in
+  # podIdentity mode, off otherwise.
+  admissionPolicy:
+    enabled: null
+    name: ""                  # default: <release>-aws-stores
+    labels: {}
+    annotations: {}
+    validationActions: [Deny] # [Warn, Audit] is the dry run
+    failurePolicy: Fail
+
+# Stores on Parameter Store: one per (cluster, grant), named as given, no
+# suffix. `role` is the grant's reader role (esoaws Readers.RoleARNs).
 awsStores: []
 #  - name: example-app-config
 #    region: eu-example-1
@@ -87,6 +115,17 @@ awsStores: []
 #    annotations: {}
 #    conditions:                 # required: without it every namespace can read
 #      - namespaces: [example-app]
+#    # webIdentity only, and required there; refused in podIdentity:
+#    auth:
+#      jwt:
+#        serviceAccountRef:
+#          name: example-app-config      # the grant's esoaws ServiceAccount
+#          namespace: external-secrets   # required: only administrators
+#                                        # create objects here
+#    serviceAccount:             # webIdentity only: render that ServiceAccount
+#      create: true              # false: you provide it, annotated
+#                                # eks.amazonaws.com/role-arn: <role>
+#      annotations: {}
 
 pki:
   enabled: false

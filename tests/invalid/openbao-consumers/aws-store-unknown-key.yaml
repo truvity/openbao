@@ -1,7 +1,11 @@
-# Auth is the controller's own Pod Identity; a store names none.
+# The chart renders no other provider fields: session tags would ride along
+# on the reader's session (and the reader trusts admit none but Pod
+# Identity's).
+aws:
+  identity: podIdentity
 awsStores:
   - name: app-config
     region: eu-example-1
     role: arn:aws:iam::444455556666:role/app-config
-    auth: {}
+    sessionTags: [{key: team, value: a}]
     conditions: [{namespaces: [a]}]

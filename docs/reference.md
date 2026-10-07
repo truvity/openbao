@@ -280,7 +280,8 @@ Stores and PKI are independent: an install may render either or both.
 |---|---|
 | `stores` | one ClusterSecretStore per kind, `<name>-<storeSuffix>` |
 | `writers` | one ClusterSecretStore per (writer, environment), `<name>-<environment>` |
-| `awsStores` | one ClusterSecretStore on AWS Parameter Store per entry, `<name>` ([esoaws.md](esoaws.md)) |
+| `awsStores` | one ClusterSecretStore on AWS Parameter Store per entry, `<name>`, and in `webIdentity` mode its ServiceAccount ([esoaws.md](esoaws.md)) |
+| `aws.admissionPolicy` | a ValidatingAdmissionPolicy and binding, `<release>-aws-stores`; on by default in `podIdentity` mode |
 | `pki.trustAnchors` | one ConfigMap per root, in `pki.certManager.namespace` |
 | `pki.issuers` | the login's ServiceAccount, Role and RoleBinding (`<issuerServiceAccount>-token`), and one issuer per entry |
 | `pki.bundle` | a trust-manager Bundle |
@@ -302,17 +303,27 @@ Stores and PKI are independent: an install may render either or both.
 | `stores[].name` | *required* | The kind. The store is `<name>-<storeSuffix>`. |
 | `stores[].role` | the name | The OpenBAO role, so the policy that bounds a store is findable from the store. |
 | `stores[].vaultNamespace` | `vaultNamespace` | |
-| `stores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. |
+| `stores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. Each condition must select something: a non-empty `namespaces`, a `namespaceSelector` with non-empty `matchLabels` or `matchExpressions`, or `namespaceRegexes`, none of which matches every namespace. |
 | `stores[].annotations` | `{}` | |
 | `writers[].name` | *required* | The writer; also its OpenBAO role. |
 | `writers[].namespace` | *required* | Where its ServiceAccount lives — the one namespace the store admits. |
 | `writers[].serviceAccount` | *required* | The identity the store presents. |
 | `writers[].environments` | *required* | One store `<name>-<environment>` per entry, addressing that OpenBAO namespace. |
 | `writers[].annotations` | `{}` | |
+| `aws.identity` | `""` | Required with `awsStores`, no default: `podIdentity` (the External Secrets controller holds its own EKS Pod Identity credentials and assumes each store's `role`) or `webIdentity` (nothing holds credentials; each store names its own ServiceAccount). One mode per cluster: a store that does not match the mode is refused. |
+| `aws.webIdentity.audience` | `sts.amazonaws.com` | The audience the reader roles require (`esoaws.WebIdentity.Audience`), set as `eks.amazonaws.com/audience` on each ServiceAccount the chart renders. |
+| `aws.admissionPolicy.enabled` | `null` | The AWS stores' admission policy (Kubernetes 1.30+); `null` is on in `podIdentity` mode and off otherwise. See [esoaws.md](esoaws.md#the-admission-policy). |
+| `aws.admissionPolicy.name` | `<release>-aws-stores` | Name of the ValidatingAdmissionPolicy and its binding. |
+| `aws.admissionPolicy.labels`, `.annotations` | `{}` | On both objects (annotations merge over `commonAnnotations`). |
+| `aws.admissionPolicy.validationActions` | `[Deny]` | Any of `Deny`, `Warn`, `Audit`; `[Warn, Audit]` is the dry run. |
+| `aws.admissionPolicy.failurePolicy` | `Fail` | `Fail` or `Ignore`. |
 | `awsStores[].name` | *required* | The store's name, as given: one store per (cluster, grant). Needs no `server` or `caBundle`. |
 | `awsStores[].region` | *required* | The region of the parameters it reads. |
-| `awsStores[].role` | *required* | The grant's reader role in the parameters' account (`esoaws.Readers.RoleARNs`): one IAM role ARN, no wildcard. External Secrets assumes it with its controller's own Pod Identity credentials; the store names no auth. |
-| `awsStores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. |
+| `awsStores[].role` | *required* | The grant's reader role in the parameters' account (`esoaws.Readers.RoleARNs`): one IAM role ARN, no wildcard. `podIdentity`: the store's `role`, assumed with the controller's credentials. `webIdentity`: the `eks.amazonaws.com/role-arn` of the store's ServiceAccount; the store itself carries no role, which would be assumed on top. |
+| `awsStores[].conditions` | *required* | The namespaces that may use the store: `namespaces` (a non-empty list) or a `namespaceSelector` with non-empty `matchLabels` or `matchExpressions`. No `namespaceRegexes`. Without conditions, or with one that selects everything, it is refused. |
+| `awsStores[].auth.jwt.serviceAccountRef.name`, `.namespace` | *required* in `webIdentity`, refused in `podIdentity` | The store's own ServiceAccount, the grant's `esoaws.Grant.ServiceAccount`. The namespace is required: without it, a ClusterSecretStore's reference resolves in the namespace of each ExternalSecret that uses it. The only auth shape the chart renders. |
+| `awsStores[].serviceAccount.create` | `true` | `webIdentity` only: render that ServiceAccount, annotated with the role and audience and mounting no token. `false`: you provide it, with the same annotations. |
+| `awsStores[].serviceAccount.annotations` | `{}` | On a rendered ServiceAccount; the role and audience annotations are the chart's. |
 | `awsStores[].annotations` | `{}` | |
 | `pki.enabled` | `false` | Render the anchors, the issuers and the bundle. |
 | `pki.annotations` | `{}` | On the anchors and on the login's ServiceAccount, Role and RoleBinding. |

@@ -1,4 +1,6 @@
 # An AWS store without conditions is readable from every namespace.
+aws:
+  identity: podIdentity
 awsStores:
   - name: app-config
     region: eu-example-1

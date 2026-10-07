@@ -1,11 +1,11 @@
+# Mixing: a per-store identity on a cluster whose controller holds its own.
 aws:
   identity: podIdentity
 awsStores:
   - name: app-config
     region: eu-example-1
     role: arn:aws:iam::444455556666:role/app-config
+    auth:
+      jwt:
+        serviceAccountRef: {name: app-config, namespace: external-secrets}
     conditions: [{namespaces: [a]}]
-  - name: app-config
-    region: eu-example-1
-    role: arn:aws:iam::444455556666:role/app-config-b
-    conditions: [{namespaces: [b]}]

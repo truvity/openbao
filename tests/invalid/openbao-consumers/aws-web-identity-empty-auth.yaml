@@ -1,0 +1,9 @@
+# An empty auth is no auth: External Secrets would use ambient credentials.
+aws:
+  identity: webIdentity
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    auth: {}
+    conditions: [{namespaces: [a]}]
