@@ -697,7 +697,7 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
-                  printf '[default]\ns3 =\n  addressing_style = path\n' > /tmp/aws-config
+                  printf '[default]\ns3 =\n  addressing_style = path\n  multipart_threshold = 1GB\n' > /tmp/aws-config
                   key="raft/$(cat /work/taken-at).snap"
                   aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:
@@ -844,7 +844,7 @@ spec:
                 - /bin/sh
                 - -ec
                 - |
-                  printf '[default]\ns3 =\n  addressing_style = path\n' > /tmp/aws-config
+                  printf '[default]\ns3 =\n  addressing_style = path\n  multipart_threshold = 1GB\n' > /tmp/aws-config
                   key="weekly/$(cat /work/taken-at).snap"
                   aws s3 cp /work/openbao.snap "s3://example-openbao-backups/${key}" --checksum-algorithm SHA256 --no-progress
               env:

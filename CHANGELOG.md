@@ -5,6 +5,12 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+### Changed
+
+- **`openbao-ops`: the snapshot upload is one PUT up to 1GB** (`snapshot.upload.s3.multipartThreshold`, default `1GB`; the AWS CLI's own is 8MB). A snapshot that grew past 8MB became a multipart upload, which into an SSE-KMS bucket also needs `kms:Decrypt` on the key, and a write-only backup role got `AccessDenied` on `UploadPart`. Empty keeps the CLI's default.
+
 ## v0.36.0
 
 ### Added
