@@ -307,6 +307,8 @@ happens, and its tests run every refusal against a KMS double.
 | a projected token path that is not absolute, or a token lifetime outside 600–86400 s (schema) | a mount the kubelet refuses, or a login token that outlives its purpose |
 | a store with no `server` or no `caBundle`; issuers with no `server` or no `caBundle` | a store or issuer that cannot reach OpenBAO, or cannot verify it before sending a token |
 | a reader store with no `conditions` | a ClusterSecretStore readable from every namespace |
+| an AWS store (`awsStores`) with no `conditions` | a ClusterSecretStore on Parameter Store readable from every namespace |
+| an AWS store with no `region`, or a `role` that is not one IAM role ARN (schema) | a store that reads as the External Secrets controller itself, or assumes any role a pattern matches |
 | a writer with no ServiceAccount, namespace or environments | a writer that would borrow the shared identity, or write nowhere |
 | PKI with no trust anchors, an anchor with no certificate, an issuer with no sign path (schema) or an unknown kind (schema) | an issuer whose chain nothing trusts |
 | a certificate with no issuer or no host | a certificate that identifies nothing |

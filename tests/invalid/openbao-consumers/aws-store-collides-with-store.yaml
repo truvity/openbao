@@ -1,0 +1,11 @@
+# An AWS store cannot take the name of an OpenBAO reader store.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+stores:
+  - name: app
+    conditions: [{namespaces: [a]}]
+awsStores:
+  - name: app-openbao
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    conditions: [{namespaces: [a]}]

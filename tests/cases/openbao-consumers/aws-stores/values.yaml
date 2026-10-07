@@ -1,0 +1,21 @@
+# Stores on AWS Parameter Store only: no OpenBAO server, no caBundle. One
+# store per (cluster, grant), each assuming its grant's reader role in the
+# parameters' account, each usable only from the namespaces it names.
+commonAnnotations:
+  example.com/owner: platform
+
+awsStores:
+  - name: example-app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/a-app-config
+    annotations:
+      example.com/sync-wave: "55"
+    conditions:
+      - namespaces: [example-app]
+  - name: example-app-credentials
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/a-app-credentials
+    conditions:
+      - namespaceSelector:
+          matchLabels:
+            example.com/app-credentials: "true"

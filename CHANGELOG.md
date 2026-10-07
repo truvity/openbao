@@ -10,6 +10,7 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 ### Added
 
 - **`pkg/esoaws`: External Secrets reading AWS Parameter Store in another account.** `NewClusterIdentity` makes the External Secrets Operator's identity in the cluster's account: an EKS Pod Identity role (default `external-secrets/external-secrets`) that may only assume the listed reader roles. `NewReaders` makes one reader role per grant in the parameters' account. Each role trusts exactly the cluster identity and reads exact parameters or prefixes (`GetParametersByPath` on prefixes only), with `kms:Decrypt` through SSM only when the parameters use a customer-managed key. The default `aws/ssm` key needs no grant, because the read happens inside the parameters' account. Outputs: `ClusterIdentity.RoleARN` and `Readers.RoleARNs` by grant. See [docs/esoaws.md](docs/esoaws.md).
+- **`openbao-consumers`: `awsStores`**, one `ClusterSecretStore` per (cluster, grant) on the AWS provider: `service: ParameterStore`, a `region`, and the grant's reader `role`, authenticated by the controller's own Pod Identity. Like a reader store, it is refused without `conditions`. It needs no `server` or `caBundle`. Store names share one namespace with `stores` and `writers`, and a collision fails the render.
 
 ### Changed
 

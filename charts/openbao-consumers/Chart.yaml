@@ -3,7 +3,8 @@ name: openbao-consumers
 description: >-
   The cluster side of an OpenBAO install: External Secrets
   ClusterSecretStores on the Vault provider (readers, and writers that
-  present their own ServiceAccount token), cert-manager issuers backed by
+  present their own ServiceAccount token) and on AWS Parameter Store in
+  another account, cert-manager issuers backed by
   OpenBAO's PKI, the trust anchors and bundle that make what they issue
   verifiable, and certificates. The server itself is elsewhere.
 type: application

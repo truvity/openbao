@@ -126,6 +126,42 @@
         }
       }
     },
+    "awsStores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "region",
+          "role"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "region": {
+            "type": "string",
+            "pattern": "^[a-z]{2,}(-[a-z0-9]+)+$"
+          },
+          "role": {
+            "description": "The reader role to assume, in the parameters' account: one IAM role ARN, no wildcard.",
+            "type": "string",
+            "pattern": "^arn:aws(-[a-z]+)*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$"
+          },
+          "annotations": {
+            "$ref": "#/definitions/stringMap"
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
     "pki": {
       "type": "object",
       "additionalProperties": false,

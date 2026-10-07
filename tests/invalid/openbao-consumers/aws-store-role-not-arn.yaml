@@ -1,0 +1,5 @@
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: app-config
+    conditions: [{namespaces: [a]}]
