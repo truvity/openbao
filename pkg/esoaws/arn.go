@@ -145,11 +145,13 @@ func parseIssuer(raw string) (string, error) {
 		return "", fmt.Errorf("%q: an issuer has no query or fragment", raw)
 	case strings.HasSuffix(raw, "/"):
 		return "", fmt.Errorf("%q: no trailing slash; the issuer must equal the tokens' iss claim", raw)
+	case u.Host != strings.ToLower(u.Host):
+		return "", fmt.Errorf("%q: write the host in lower case; IAM names the provider and its condition keys by the URL as given", raw)
 	case !issuerHostPathRe.MatchString(u.Host + u.Path):
 		return "", fmt.Errorf("%q: the host or path has characters an IAM OIDC provider does not take", raw)
 	}
 
-	return strings.ToLower(u.Host) + u.Path, nil
+	return u.Host + u.Path, nil
 }
 
 // parsePermissionsBoundary accepts an empty string or an IAM managed
