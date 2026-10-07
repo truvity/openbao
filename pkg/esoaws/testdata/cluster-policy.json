@@ -1,0 +1,17 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:iam::444455556666:role/a-app-config",
+        "arn:aws:iam::444455556666:role/eso-reader-a-*"
+      ],
+      "Sid": "AssumeParameterReaders"
+    }
+  ],
+  "Version": "2012-10-17"
+}
