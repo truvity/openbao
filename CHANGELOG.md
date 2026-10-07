@@ -10,6 +10,7 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 ### Changed
 
 - **`openbao-ops`: the snapshot upload is one PUT up to 1GB** (`snapshot.upload.s3.multipartThreshold`, default `1GB`; the AWS CLI's own is 8MB). A snapshot that grew past 8MB became a multipart upload, which into an SSE-KMS bucket also needs `kms:Decrypt` on the key, and a write-only backup role got `AccessDenied` on `UploadPart`. Empty keeps the CLI's default.
+- **`awsserver.SnapshotPolicy` grants `kms:Decrypt` on the backup key**, which S3 needs for a multipart upload into an SSE-KMS bucket, so a snapshot above the threshold no longer fails on `UploadPart`. The role still reads no object (no `s3:GetObject`). The backup key's policy already admits the writer role for `kms:Decrypt`.
 
 ## v0.36.0
 

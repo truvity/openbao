@@ -51,6 +51,12 @@ func UnsealPolicy(keyARN, replicaARN string) (string, error) {
 // writer cannot see or remove what it wrote. Each prefix is joined to the
 // bucket ARN as "<bucketARN>/<prefix>*", so a prefix is written "raft/",
 // without a wildcard.
+//
+// kms:Decrypt is on the key because S3 needs it for a multipart upload into
+// an SSE-KMS bucket (it decrypts the data key to encrypt each part); a
+// single PUT needs only GenerateDataKey. The chart keeps uploads below 1GB a
+// single PUT, and this keeps a larger one from failing on UploadPart. It
+// opens no object: the role still has no s3:GetObject.
 func SnapshotPolicy(bucketARN, keyARN string, writePrefixes ...string) (string, error) {
 	resources := make([]string, 0, len(writePrefixes))
 	for _, p := range writePrefixes {
@@ -69,7 +75,7 @@ func SnapshotPolicy(bucketARN, keyARN string, writePrefixes ...string) (string, 
 			{
 				polSid:      "EncryptSnapshots",
 				polEffect:   polAllow,
-				polAction:   []string{"kms:GenerateDataKey", kmsEncrypt, kmsDescribeKey},
+				polAction:   []string{"kms:GenerateDataKey", kmsEncrypt, kmsDecrypt, kmsDescribeKey},
 				polResource: keyARN,
 			},
 		},

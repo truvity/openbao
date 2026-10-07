@@ -445,9 +445,11 @@ func TestPolicies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, snapshot, `"arn:aws:s3:::b/raft/*","arn:aws:s3:::b/weekly/*"`)
 
-	for _, forbidden := range []string{"s3:GetObject", "s3:ListBucket", "s3:DeleteObject", "kms:Decrypt"} {
+	for _, forbidden := range []string{"s3:GetObject", "s3:ListBucket", "s3:DeleteObject"} {
 		assert.NotContains(t, snapshot, `"`+forbidden+`"`)
 	}
+	// A multipart upload into an SSE-KMS bucket needs kms:Decrypt.
+	assert.Contains(t, snapshot, `"kms:Decrypt"`)
 
 	restore, err := RestoreCheckPolicy("arn:aws:s3:::b", "backup-key", "replica-key", "raft/")
 	require.NoError(t, err)
