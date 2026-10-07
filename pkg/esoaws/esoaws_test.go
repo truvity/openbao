@@ -584,6 +584,7 @@ func TestTrustRefusals(t *testing.T) {
 		"http issuer":       {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = "http://oidc.b.example.com" }, "an issuer is an https URL"},
 		"slash issuer":      {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = issuerB + "/" }, "no trailing slash"},
 		"port issuer":       {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = "https://oidc.b.example.com:8443" }, "no port"},
+		"upper-case issuer": {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = "https://OIDC.b.example.com" }, "write the host in lower case"},
 		"query issuer":      {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = issuerB + "?x=1" }, "no query"},
 		"wildcard audience": {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.Audience = "*" }, "empty or a pattern"},
 		"provider of another issuer": {func(a *ReadersArgs) {
@@ -766,7 +767,7 @@ func TestInvalidArgsRegisterNothing(t *testing.T) {
 		}, `duplicate name "a"`},
 		"readers with one issuer twice": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
 			a := readersArgs(p)
-			a.Clusters = append(a.Clusters, Cluster{Name: "d", Mode: WebIdentityMode, WebIdentity: &WebIdentity{IssuerURL: "https://OIDC.b.example.com"}})
+			a.Clusters = append(a.Clusters, Cluster{Name: "d", Mode: WebIdentityMode, WebIdentity: &WebIdentity{IssuerURL: issuerB}})
 			a.Grants = append(a.Grants, Grant{Name: "d", Cluster: "d", ServiceAccount: &ServiceAccount{Name: "d"}, Parameters: []string{"/d"}})
 			_, err := NewReaders(ctx, a)
 
