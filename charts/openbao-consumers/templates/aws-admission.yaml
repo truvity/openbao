@@ -51,7 +51,11 @@ metadata:
   labels:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- $an := include "consumers.annotations" (dict "root" $ "extra" $p.annotations) }}
+  {{- /* An earlier sync wave by default: the policy holds what each of the
+         release's stores may say, so it must change before they do. The
+         policy's own annotations override it. */}}
+  {{- $extra := mergeOverwrite (dict "argocd.argoproj.io/sync-wave" "-1") ($p.annotations | default dict) }}
+  {{- $an := include "consumers.annotations" (dict "root" $ "extra" $extra) }}
   {{- if ne $an "{}" }}
   annotations:
     {{- $an | nindent 4 }}

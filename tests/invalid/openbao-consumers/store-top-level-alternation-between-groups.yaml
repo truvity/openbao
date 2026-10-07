@@ -1,0 +1,6 @@
+# Starting with "^(" and ending with ")$" is not one group around it all.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+stores:
+  - name: app
+    conditions: [{namespaceRegexes: ["^(app-a)|(app-b)$"]}]

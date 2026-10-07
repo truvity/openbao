@@ -303,7 +303,7 @@ Stores and PKI are independent: an install may render either or both.
 | `stores[].name` | *required* | The kind. The store is `<name>-<storeSuffix>`. |
 | `stores[].role` | the name | The OpenBAO role, so the policy that bounds a store is findable from the store. |
 | `stores[].vaultNamespace` | `vaultNamespace` | |
-| `stores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. Each condition must select something: a non-empty `namespaces`, a `namespaceSelector` with non-empty `matchLabels` or `matchExpressions`, or `namespaceRegexes`, each anchored (`^...$`) and none matching every namespace. |
+| `stores[].conditions` | *required* | The namespaces that may use the store. Without them it is readable from every namespace on the cluster. Each condition must select something: a non-empty `namespaces`, a `namespaceSelector` with non-empty `matchLabels` or `matchExpressions`, or `namespaceRegexes`, each anchored (`^...$`) with no `|` outside a group, and none matching every namespace. |
 | `stores[].annotations` | `{}` | |
 | `writers[].name` | *required* | The writer; also its OpenBAO role. |
 | `writers[].namespace` | *required* | Where its ServiceAccount lives — the one namespace the store admits. |
@@ -314,7 +314,7 @@ Stores and PKI are independent: an install may render either or both.
 | `aws.webIdentity.audience` | `sts.amazonaws.com` | The audience the reader roles require (`esoaws.WebIdentity.Audience`), set as `eks.amazonaws.com/audience` on each ServiceAccount the chart renders. |
 | `aws.admissionPolicy.enabled` | `null` | The AWS stores' admission policy (Kubernetes 1.30+); `null` is on in `podIdentity` mode and off otherwise. See [esoaws.md](esoaws.md#the-admission-policy). |
 | `aws.admissionPolicy.name` | `<release>-aws-stores` | Name of the ValidatingAdmissionPolicy and its binding. |
-| `aws.admissionPolicy.labels`, `.annotations` | `{}` | On both objects (annotations merge over `commonAnnotations`). |
+| `aws.admissionPolicy.labels`, `.annotations` | `{}` | On both objects. Annotations merge over `commonAnnotations` and over the default `argocd.argoproj.io/sync-wave: "-1"`, which applies the policy before the stores it describes ([upgrades](esoaws.md#upgrades-the-policy-goes-first)). |
 | `aws.admissionPolicy.validationActions` | `[Deny]` | Any of `Deny`, `Warn`, `Audit`; `[Warn, Audit]` is the dry run. |
 | `aws.admissionPolicy.failurePolicy` | `Fail` | `Fail` or `Ignore`. |
 | `aws.admissionPolicy.acknowledgeTenantsCanBorrowControllerIdentity` | `false` | In `podIdentity` mode, turning the policy off, dropping `Deny` or setting `failurePolicy: Ignore` fails the render unless this is `true`. |
