@@ -5,10 +5,22 @@
         "sts:AssumeRole",
         "sts:TagSession"
       ],
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "eks-cluster-arn",
+            "eks-cluster-name",
+            "kubernetes-namespace",
+            "kubernetes-service-account",
+            "kubernetes-pod-name",
+            "kubernetes-pod-uid"
+          ]
+        }
+      },
       "Effect": "Allow",
       "Resource": [
         "arn:aws:iam::444455556666:role/a-app-config",
-        "arn:aws:iam::444455556666:role/eso-reader-a-*"
+        "arn:aws:iam::444455556666:role/a-app-credentials"
       ],
       "Sid": "AssumeParameterReaders"
     }

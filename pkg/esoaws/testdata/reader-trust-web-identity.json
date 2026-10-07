@@ -1,0 +1,21 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "sts:AssumeRoleWithWebIdentity"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "oidc.b.example.com:aud": "sts.amazonaws.com",
+          "oidc.b.example.com:sub": "system:serviceaccount:external-secrets:eso-b-app-config"
+        }
+      },
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::444455556666:oidc-provider/oidc.b.example.com"
+      },
+      "Sid": "ExternalSecretsOperator"
+    }
+  ],
+  "Version": "2012-10-17"
+}

@@ -18,6 +18,7 @@ const (
 	KindIAMRole                = "aws:iam/role:Role"
 	KindIAMRolePolicy          = "aws:iam/rolePolicy:RolePolicy"
 	KindPodIdentityAssociation = "aws:eks/podIdentityAssociation:PodIdentityAssociation"
+	KindOIDCProvider           = "aws:iam/openIdConnectProvider:OpenIdConnectProvider"
 
 	// ClusterPolicyName is the name of the cluster identity's inline policy.
 	ClusterPolicyName = "assume-parameter-readers"
@@ -25,8 +26,14 @@ const (
 
 type (
 	// ClusterIdentityArgs configures NewClusterIdentity, which runs in the
-	// cluster's own AWS account.
+	// cluster's own AWS account. It is the PodIdentity mode's cluster side;
+	// the WebIdentity mode has none (see Cluster).
 	ClusterIdentityArgs struct {
+		// Mode must be PodIdentityMode. It has no default, so a caller
+		// states the cluster's mode; a WebIdentity cluster is refused here,
+		// because its whole point is that nothing on it holds AWS
+		// credentials of its own.
+		Mode IdentityMode
 		// Name is the IAM role's name, the component's logical name and the
 		// stem of the children's: the role "<Name>", its inline policy
 		// "<Name>-policy" and the association "<Name>-pia".
@@ -49,10 +56,10 @@ type (
 		Namespace      string
 		ServiceAccount string
 		// SourceRoles are the reader roles, in the parameters' accounts, the
-		// controller may assume: role ARNs, or patterns with '*' in the
-		// role's path or name ("arn:aws:iam::111122223333:role/eso-reader-*").
-		// A pattern must name some literal part of the role: "role/*" is
-		// refused. This is the role's whole permission.
+		// controller may assume: exact role ARNs, no wildcards. A reader
+		// role's ARN is arn:<partition>:iam::<account>:role/<grant name>, so
+		// the list can be written before the roles exist. This is the role's
+		// whole permission.
 		SourceRoles []string
 		// PermissionsBoundary is the boundary policy's ARN; empty sets none.
 		PermissionsBoundary string
@@ -86,6 +93,17 @@ func (a ClusterIdentityArgs) withDefaults() ClusterIdentityArgs {
 }
 
 func (a ClusterIdentityArgs) validate() error {
+	switch a.Mode {
+	case PodIdentityMode:
+	case WebIdentityMode:
+		return errors.New("args.Mode is WebIdentity: such a cluster has no identity of its own in AWS, so there is nothing to create here; " +
+			"declare it in ReadersArgs.Clusters with its issuer, and let each store name its own ServiceAccount")
+	case "":
+		return errors.New("args.Mode is empty: state the cluster's mode (PodIdentity, the only one with a cluster-side role)")
+	default:
+		return fmt.Errorf("args.Mode %q is not an identity mode", a.Mode)
+	}
+
 	var errs []error
 
 	if a.Provider == nil {
@@ -123,9 +141,16 @@ func (a ClusterIdentityArgs) validate() error {
 
 	seen := map[string]bool{}
 
+	partition := ""
+	if cluster, err := parseARN(a.ClusterARN); err == nil {
+		partition = cluster.Partition
+	}
+
 	for i, r := range a.SourceRoles {
-		if _, err := parseRoleARN(r, true); err != nil {
+		if role, err := parseRoleARN(r); err != nil {
 			errs = append(errs, fmt.Errorf("SourceRoles[%d]: %w", i, err))
+		} else if partition != "" && role.Partition != partition {
+			errs = append(errs, fmt.Errorf("SourceRoles[%d]: %q is not in the cluster's partition %s", i, r, partition))
 		}
 
 		if seen[r] {
@@ -137,6 +162,12 @@ func (a ClusterIdentityArgs) validate() error {
 
 	if err := parsePermissionsBoundary(a.PermissionsBoundary); err != nil {
 		errs = append(errs, err)
+	}
+
+	if len(errs) == 0 {
+		if _, err := ClusterPolicy(a.SourceRoles); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	return errors.Join(errs...)
@@ -154,7 +185,8 @@ func jsonDoc(v any) (string, error) {
 // ClusterTrustPolicy is the cluster identity's trust document: the EKS Pod
 // Identity service may assume the role for this cluster (its account and
 // ARN), and only for the one namespace and ServiceAccount. sts:TagSession is
-// there because Pod Identity tags every session it opens.
+// there because Pod Identity tags every session it opens, and only its own
+// tag keys are admitted.
 func ClusterTrustPolicy(accountID, clusterARN, namespace, serviceAccount string) (string, error) {
 	return jsonDoc(map[string]any{
 		"Version": "2012-10-17",
@@ -169,7 +201,8 @@ func ClusterTrustPolicy(accountID, clusterARN, namespace, serviceAccount string)
 					"aws:RequestTag/kubernetes-namespace":       namespace,
 					"aws:RequestTag/kubernetes-service-account": serviceAccount,
 				},
-				"ArnEquals": map[string]any{"aws:SourceArn": clusterARN},
+				"ArnEquals":                 map[string]any{"aws:SourceArn": clusterARN},
+				"ForAllValues:StringEquals": tagKeysCondition(),
 			},
 		}},
 	})
@@ -178,17 +211,41 @@ func ClusterTrustPolicy(accountID, clusterARN, namespace, serviceAccount string)
 // ClusterPolicy is the cluster identity's whole permission: assume the
 // given reader roles, in the order given. sts:TagSession goes with it
 // because the tags EKS Pod Identity puts on the session are transitive: they
-// ride along on the role assumed next, and STS checks the tagging.
+// ride along on the role assumed next, and STS checks the tagging. Only Pod
+// Identity's tag keys are allowed, so a store's own session tags are
+// refused. A document over MaxInlinePolicySize is an error.
 func ClusterPolicy(sourceRoles []string) (string, error) {
-	return jsonDoc(map[string]any{
+	doc, err := jsonDoc(map[string]any{
 		"Version": "2012-10-17",
 		"Statement": []map[string]any{{
-			"Sid":      "AssumeParameterReaders",
-			"Effect":   "Allow",
-			"Action":   []string{"sts:AssumeRole", "sts:TagSession"},
-			"Resource": sourceRoles,
+			"Sid":       "AssumeParameterReaders",
+			"Effect":    "Allow",
+			"Action":    []string{"sts:AssumeRole", "sts:TagSession"},
+			"Resource":  sourceRoles,
+			"Condition": map[string]any{"ForAllValues:StringEquals": tagKeysCondition()},
 		}},
 	})
+	if err != nil {
+		return "", err
+	}
+
+	return doc, checkSize("the cluster identity's policy", doc)
+}
+
+func tagKeysCondition() map[string]any {
+	return map[string]any{"aws:TagKeys": podIdentityTagKeys}
+}
+
+// checkSize refuses an inline policy IAM would refuse, before anything is
+// registered. The documents here are compact JSON, so their length is what
+// IAM counts.
+func checkSize(what, doc string) error {
+	if len(doc) > MaxInlinePolicySize {
+		return fmt.Errorf("%s is %d characters, over IAM's %d for inline policies: split the grant or use a prefix",
+			what, len(doc), MaxInlinePolicySize)
+	}
+
+	return nil
 }
 
 // NewClusterIdentity registers the component and its children. It registers

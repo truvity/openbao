@@ -24,25 +24,76 @@ type (
 		AccountID string
 		Region    string
 		Partition string
+		// Clusters are the clusters whose External Secrets read here, each
+		// with the one way it proves who it is. Every cluster is used by a
+		// grant, and no two share an issuer.
+		Clusters []Cluster
 		// Grants are the reader roles, one per grant. At least one.
 		Grants []Grant
 		// PermissionsBoundary is the boundary policy's ARN put on every
 		// reader role; empty sets none.
 		PermissionsBoundary string
-		// Tags are put on every reader role.
+		// Tags are put on every reader role and on a created OIDC provider.
 		Tags map[string]string
 	}
 
-	// Grant is one reader role: who may assume it, and what it reads.
+	// Cluster is one cluster's identity, as the reader roles trust it.
+	// Mode is required, and exactly the block it names is set.
+	Cluster struct {
+		// Name is how grants name the cluster (Grant.Cluster), and part of a
+		// created OIDC provider's logical name: lower-case letters, digits
+		// and '-'.
+		Name string
+		// Mode is the cluster's one identity mode. No default.
+		Mode IdentityMode
+		// PodIdentity is the PodIdentityMode trust: required in that mode,
+		// refused in the other.
+		PodIdentity *PodIdentity
+		// WebIdentity is the WebIdentityMode trust: required in that mode,
+		// refused in the other.
+		WebIdentity *WebIdentity
+	}
+
+	// PodIdentity is the PodIdentity mode's trust: one role principal.
+	PodIdentity struct {
+		// RoleARN is the cluster's ClusterIdentity.RoleARN: one role ARN, no
+		// wildcard. IAM refuses a trust in a role that does not exist yet.
+		RoleARN string
+	}
+
+	// WebIdentity is the WebIdentity mode's trust: the cluster's
+	// ServiceAccount issuer, registered here as an IAM OIDC provider.
+	WebIdentity struct {
+		// IssuerURL is the cluster's ServiceAccount issuer, exactly as its
+		// tokens' iss claim says it: https://<host>[/<path>], no trailing
+		// slash. STS fetches its discovery document and keys, so it must be
+		// reachable from AWS.
+		IssuerURL string
+		// Audience is the audience the tokens carry and the reader roles
+		// require. Empty: DefaultAudience.
+		Audience string
+		// ProviderARN is an IAM OIDC provider for IssuerURL that already
+		// exists in this account (IAM takes one per URL), registered with
+		// Audience among its client ids. Empty: the component creates one.
+		ProviderARN string
+		// Thumbprints are the issuer certificate's SHA-1 thumbprints for a
+		// created provider; empty lets IAM fetch them. Not with ProviderARN.
+		Thumbprints []string
+	}
+
+	// Grant is one reader role: which cluster may assume it, and what it
+	// reads.
 	Grant struct {
 		// Name is the IAM role's name, its logical name, and its key in
 		// Readers.RoleARNs. The inline policy is "<Name>-policy".
 		Name string
-		// Principal is the role allowed to assume this one: a cluster's
-		// ClusterIdentity.RoleARN. Exactly one role ARN, no wildcard. The
-		// role must exist when the grant is created; IAM refuses a trust in
-		// a principal it cannot resolve.
-		Principal string
+		// Cluster is the Name of the Cluster whose External Secrets assume
+		// the role.
+		Cluster string
+		// ServiceAccount is the one ServiceAccount whose tokens may assume
+		// the role, in a WebIdentity cluster: required there, refused in a
+		// PodIdentity cluster (whose controller identity is the principal).
+		ServiceAccount *ServiceAccount
 		// Parameters are what the role reads. An entry ending in "/" is a
 		// prefix ("/app/config/": every parameter under that path, at any
 		// depth, and GetParametersByPath on it); any other entry is one
@@ -61,13 +112,26 @@ type (
 		KMSKeyARN string
 	}
 
-	// Readers is the source side: one reader role per grant.
+	// ServiceAccount names one Kubernetes ServiceAccount.
+	ServiceAccount struct {
+		// Namespace is the ServiceAccount's; empty: DefaultNamespace, where
+		// the External Secrets controller runs and only platform
+		// administrators create objects.
+		Namespace string
+		Name      string
+	}
+
+	// Readers is the source side: one reader role per grant, and an IAM
+	// OIDC provider per WebIdentity cluster that names no existing one.
 	Readers struct {
 		pulumi.ResourceState
 
 		// RoleARNs is each grant's role ARN by grant name: the `role` of the
 		// cluster's store for that grant.
 		RoleARNs map[string]pulumi.StringOutput
+		// OIDCProviderARNs is each WebIdentity cluster's provider ARN by
+		// cluster name, created or given.
+		OIDCProviderARNs map[string]pulumi.StringOutput
 	}
 
 	// parameter is one validated entry of Grant.Parameters: the part of
@@ -82,6 +146,32 @@ func (a ReadersArgs) withDefaults() ReadersArgs {
 	if a.Partition == "" {
 		a.Partition = DefaultPartition
 	}
+
+	clusters := make([]Cluster, len(a.Clusters))
+	for i, c := range a.Clusters {
+		if c.WebIdentity != nil && c.WebIdentity.Audience == "" {
+			w := *c.WebIdentity
+			w.Audience = DefaultAudience
+			c.WebIdentity = &w
+		}
+
+		clusters[i] = c
+	}
+
+	a.Clusters = clusters
+
+	grants := make([]Grant, len(a.Grants))
+	for i, g := range a.Grants {
+		if g.ServiceAccount != nil && g.ServiceAccount.Namespace == "" {
+			sa := *g.ServiceAccount
+			sa.Namespace = DefaultNamespace
+			g.ServiceAccount = &sa
+		}
+
+		grants[i] = g
+	}
+
+	a.Grants = grants
 
 	return a
 }
@@ -102,21 +192,44 @@ func (a ReadersArgs) validate() error {
 	}
 
 	if err := a.validateSource(); err != nil {
-		// The grants' checks compare against the source's fields.
+		// The checks below compare against the source's fields.
 		return errors.Join(append(errs, err)...)
 	}
 
-	seen := map[string]bool{}
+	errs = append(errs, a.validateClusters()...)
+
+	var (
+		names    = map[string]bool{}
+		accounts = map[string]string{}
+		used     = map[string]bool{}
+	)
 
 	for i, g := range a.Grants {
-		if seen[g.Name] {
+		if names[g.Name] {
 			errs = append(errs, fmt.Errorf("args.Grants[%d]: duplicate name %q", i, g.Name))
 		}
 
-		seen[g.Name] = true
+		names[g.Name] = true
+		used[g.Cluster] = true
 
-		if _, err := a.parameters(g); err != nil {
+		if err := a.validateGrant(g); err != nil {
 			errs = append(errs, fmt.Errorf("args.Grants[%d] (%s): %w", i, g.Name, err))
+		}
+
+		if g.ServiceAccount != nil {
+			key := g.Cluster + "/" + g.ServiceAccount.Namespace + "/" + g.ServiceAccount.Name
+			if other, ok := accounts[key]; ok {
+				errs = append(errs, fmt.Errorf("args.Grants[%d] (%s): ServiceAccount %s/%s on cluster %s is grant %s's already; "+
+					"External Secrets reads one role per ServiceAccount", i, g.Name, g.ServiceAccount.Namespace, g.ServiceAccount.Name, g.Cluster, other))
+			}
+
+			accounts[key] = g.Name
+		}
+	}
+
+	for i, c := range a.Clusters {
+		if c.Name != "" && !used[c.Name] {
+			errs = append(errs, fmt.Errorf("args.Clusters[%d]: no grant names cluster %q; drop it", i, c.Name))
 		}
 	}
 
@@ -128,7 +241,7 @@ func (a ReadersArgs) validateSource() error {
 	var errs []error
 
 	if !accountIDRe.MatchString(a.AccountID) {
-		errs = append(errs, fmt.Errorf("AccountID %q is not a 12-digit account id", a.AccountID))
+		errs = append(errs, fmt.Errorf("args.AccountID %q is not a 12-digit account id", a.AccountID))
 	}
 
 	if !regionRe.MatchString(a.Region) {
@@ -146,19 +259,165 @@ func (a ReadersArgs) validateSource() error {
 	return errors.Join(errs...)
 }
 
-// parameters validates a grant against the source and returns its
-// parameters, in the order given.
-func (a ReadersArgs) parameters(g Grant) ([]parameter, error) {
+func (a ReadersArgs) validateClusters() []error {
+	var (
+		errs    []error
+		names   = map[string]bool{}
+		issuers = map[string]string{}
+	)
+
+	for i, c := range a.Clusters {
+		if names[c.Name] {
+			errs = append(errs, fmt.Errorf("args.Clusters[%d]: duplicate name %q", i, c.Name))
+		}
+
+		names[c.Name] = true
+
+		if err := a.validateCluster(c); err != nil {
+			errs = append(errs, fmt.Errorf("args.Clusters[%d] (%s): %w", i, c.Name, err))
+
+			continue
+		}
+
+		if c.WebIdentity != nil {
+			issuer, _ := parseIssuer(c.WebIdentity.IssuerURL)
+			if other, ok := issuers[issuer]; ok {
+				errs = append(errs, fmt.Errorf("args.Clusters[%d] (%s): issuer %s is cluster %s's already; IAM registers one provider per issuer",
+					i, c.Name, c.WebIdentity.IssuerURL, other))
+			}
+
+			issuers[issuer] = c.Name
+		}
+	}
+
+	return errs
+}
+
+// validateCluster checks one cluster: its name, its one mode, and that
+// mode's settings and no other's.
+func (a ReadersArgs) validateCluster(c Cluster) error {
+	if !namespaceRe.MatchString(c.Name) {
+		return fmt.Errorf("cluster.Name %q is not lower-case letters, digits and '-'", c.Name)
+	}
+
+	switch {
+	case c.Mode == "":
+		return errors.New("cluster.Mode is empty: state the cluster's mode, PodIdentity or WebIdentity; there is no default")
+	case c.Mode != PodIdentityMode && c.Mode != WebIdentityMode:
+		return fmt.Errorf("cluster.Mode %q is not an identity mode", c.Mode)
+	case c.PodIdentity != nil && c.WebIdentity != nil:
+		return errors.New("both PodIdentity and WebIdentity are set: the modes are mutually exclusive, " +
+			"because a controller identity beside per-store identities is one any store without auth borrows")
+	case c.Mode == PodIdentityMode && c.PodIdentity == nil:
+		return errors.New("cluster.Mode is PodIdentity but PodIdentity is not set")
+	case c.Mode == WebIdentityMode && c.WebIdentity == nil:
+		return errors.New("cluster.Mode is WebIdentity but WebIdentity is not set")
+	case c.Mode == PodIdentityMode && c.WebIdentity != nil, c.Mode == WebIdentityMode && c.PodIdentity != nil:
+		return fmt.Errorf("cluster.Mode is %s, but the other mode's settings are set", c.Mode)
+	case c.Mode == PodIdentityMode:
+		role, err := parseRoleARN(c.PodIdentity.RoleARN)
+		if err != nil {
+			return fmt.Errorf("PodIdentity.RoleARN: %w", err)
+		}
+
+		if role.Partition != a.Partition {
+			return fmt.Errorf("PodIdentity.RoleARN %q is not in partition %s", c.PodIdentity.RoleARN, a.Partition)
+		}
+
+		return nil
+	}
+
+	w := c.WebIdentity
+
+	issuer, err := parseIssuer(w.IssuerURL)
+	if err != nil {
+		return fmt.Errorf("WebIdentity.IssuerURL: %w", err)
+	}
+
+	var errs []error
+
+	if w.Audience == "" || strings.ContainsAny(w.Audience, "*?") {
+		errs = append(errs, fmt.Errorf("WebIdentity.Audience %q is empty or a pattern", w.Audience))
+	}
+
+	if w.ProviderARN != "" {
+		if want := a.oidcProviderARN(issuer); w.ProviderARN != want {
+			errs = append(errs, fmt.Errorf("WebIdentity.ProviderARN %q is not this account's provider for %s (%s)", w.ProviderARN, w.IssuerURL, want))
+		}
+
+		if len(w.Thumbprints) > 0 {
+			errs = append(errs, errors.New("WebIdentity.Thumbprints are for a created provider; an existing one keeps its own"))
+		}
+	}
+
+	if len(w.Thumbprints) > 5 {
+		errs = append(errs, errors.New("WebIdentity.Thumbprints: IAM takes at most 5"))
+	}
+
+	for i, t := range w.Thumbprints {
+		if !thumbprintRe.MatchString(t) {
+			errs = append(errs, fmt.Errorf("WebIdentity.Thumbprints[%d] %q is not a SHA-1 thumbprint (40 hex digits)", i, t))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (a ReadersArgs) cluster(name string) (Cluster, bool) {
+	for _, c := range a.Clusters {
+		if c.Name == name {
+			return c, true
+		}
+	}
+
+	return Cluster{}, false
+}
+
+func (a ReadersArgs) oidcProviderARN(issuer string) string {
+	return fmt.Sprintf("arn:%s:iam::%s:oidc-provider/%s", a.Partition, a.AccountID, issuer)
+}
+
+// validateGrant checks a grant against the source and its cluster: the
+// parameters, the key, the policy's size, and the ServiceAccount the
+// cluster's mode requires or refuses.
+func (a ReadersArgs) validateGrant(g Grant) error {
+	var errs []error
+
+	if _, err := ReaderPolicy(a, g); err != nil {
+		errs = append(errs, err)
+	}
+
+	c, ok := a.cluster(g.Cluster)
+
+	switch {
+	case !ok:
+		errs = append(errs, fmt.Errorf("grant.Cluster %q is not in args.Clusters", g.Cluster))
+	case c.Mode == PodIdentityMode && g.ServiceAccount != nil:
+		errs = append(errs, fmt.Errorf("grant.ServiceAccount is set, but cluster %s is PodIdentity: a WebIdentity grant on a PodIdentity cluster; "+
+			"its controller's role is the principal, so a ServiceAccount here would read as a restriction it is not", g.Cluster))
+	case c.Mode == WebIdentityMode && g.ServiceAccount == nil:
+		errs = append(errs, fmt.Errorf("grant.ServiceAccount is required: cluster %s is WebIdentity, and the role trusts one ServiceAccount's tokens", g.Cluster))
+	case c.Mode == WebIdentityMode:
+		sa := g.ServiceAccount
+		if !namespaceRe.MatchString(sa.Namespace) {
+			errs = append(errs, fmt.Errorf("grant.ServiceAccount.Namespace %q is not a Kubernetes namespace name", sa.Namespace))
+		}
+
+		if !serviceAccountRe.MatchString(sa.Name) {
+			errs = append(errs, fmt.Errorf("grant.ServiceAccount.Name %q is not a Kubernetes ServiceAccount name", sa.Name))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// grantParameters validates a grant's name, key and parameters against the
+// source and returns its parameters, in the order given.
+func (a ReadersArgs) grantParameters(g Grant) ([]parameter, error) {
 	var errs []error
 
 	if !roleNameRe.MatchString(g.Name) {
 		errs = append(errs, fmt.Errorf("grant.Name %q is not an IAM role name (1 to 64 of A-Z a-z 0-9 +=,.@_-)", g.Name))
-	}
-
-	if p, err := parseRoleARN(g.Principal, false); err != nil {
-		errs = append(errs, fmt.Errorf("grant.Principal: %w", err))
-	} else if p.Partition != a.Partition {
-		errs = append(errs, fmt.Errorf("grant.Principal %q is not in partition %s", g.Principal, a.Partition))
 	}
 
 	if g.KMSKeyARN != "" {
@@ -275,19 +534,61 @@ func (a ReadersArgs) parameterARN(resource string) string {
 	return fmt.Sprintf("arn:%s:ssm:%s:%s:parameter/%s", a.Partition, a.Region, a.AccountID, resource)
 }
 
-// ReaderTrustPolicy is a reader role's trust document: exactly the one
-// principal, for AssumeRole and for the transitive session tags EKS Pod
-// Identity sets on the session that assumes it.
-func ReaderTrustPolicy(principal string) (string, error) {
-	return jsonDoc(map[string]any{
-		"Version": "2012-10-17",
-		"Statement": []map[string]any{{
-			"Sid":       "ExternalSecretsOperator",
-			"Effect":    "Allow",
-			"Principal": map[string]any{"AWS": principal},
-			"Action":    []string{"sts:AssumeRole", "sts:TagSession"},
-		}},
-	})
+// ReaderTrustPolicy is a grant's trust document, a function of its
+// cluster's mode:
+//
+//   - PodIdentity: exactly the cluster identity's role, for sts:AssumeRole
+//     and for the transitive session tags EKS Pod Identity sets, and no
+//     other tag keys;
+//   - WebIdentity: sts:AssumeRoleWithWebIdentity from the cluster's OIDC
+//     provider, for a token whose subject is the grant's one ServiceAccount
+//     and whose audience is the cluster's.
+//
+// It validates the source, the grant and its cluster first.
+func ReaderTrustPolicy(args ReadersArgs, grant Grant) (string, error) {
+	args = args.withDefaults()
+	grant = args.withGrantDefaults(grant)
+
+	if err := args.validateSource(); err != nil {
+		return "", err
+	}
+
+	c, ok := args.cluster(grant.Cluster)
+	if !ok {
+		return "", fmt.Errorf("grant.Cluster %q is not in args.Clusters", grant.Cluster)
+	}
+
+	if err := args.validateCluster(c); err != nil {
+		return "", fmt.Errorf("cluster %s: %w", c.Name, err)
+	}
+
+	if err := args.validateGrant(grant); err != nil {
+		return "", err
+	}
+
+	statement := map[string]any{"Sid": "ExternalSecretsOperator", "Effect": "Allow"}
+
+	if c.Mode == PodIdentityMode {
+		statement["Principal"] = map[string]any{"AWS": c.PodIdentity.RoleARN}
+		statement["Action"] = []string{"sts:AssumeRole", "sts:TagSession"}
+		statement["Condition"] = map[string]any{"ForAllValues:StringEquals": tagKeysCondition()}
+	} else {
+		issuer, _ := parseIssuer(c.WebIdentity.IssuerURL)
+		statement["Principal"] = map[string]any{"Federated": args.oidcProviderARN(issuer)}
+		statement["Action"] = []string{"sts:AssumeRoleWithWebIdentity"}
+		statement["Condition"] = map[string]any{"StringEquals": map[string]any{
+			issuer + ":sub": "system:serviceaccount:" + grant.ServiceAccount.Namespace + ":" + grant.ServiceAccount.Name,
+			issuer + ":aud": c.WebIdentity.Audience,
+		}}
+	}
+
+	return jsonDoc(map[string]any{"Version": "2012-10-17", "Statement": []map[string]any{statement}})
+}
+
+// withGrantDefaults applies the defaults withDefaults applies to args.Grants
+// to a grant given on its own.
+func (a ReadersArgs) withGrantDefaults(g Grant) Grant {
+	return ReadersArgs{Grants: []Grant{g}}.withDefaults().Grants[0]
 }
 
 // ReaderPolicy is a grant's permission document, built in the source's
@@ -295,8 +596,10 @@ func ReaderTrustPolicy(principal string) (string, error) {
 // parameter and under each prefix; GetParametersByPath on the prefixes
 // only (the path, and the paths below it); and, with a KMS key, Decrypt on
 // that key through SSM in this region for these parameters only. It
-// validates the source's account, region and partition and the grant
-// first; Name, Provider and the other grants of args are not consulted.
+// validates the source's account, region and partition and the grant's
+// name, parameters and key first; the grant's cluster is not consulted (it
+// decides the trust, not the permission). A document over
+// MaxInlinePolicySize is an error.
 func ReaderPolicy(args ReadersArgs, grant Grant) (string, error) {
 	args = args.withDefaults()
 
@@ -304,7 +607,7 @@ func ReaderPolicy(args ReadersArgs, grant Grant) (string, error) {
 		return "", err
 	}
 
-	params, err := args.parameters(grant)
+	params, err := args.grantParameters(grant)
 	if err != nil {
 		return "", err
 	}
@@ -357,11 +660,17 @@ func ReaderPolicy(args ReadersArgs, grant Grant) (string, error) {
 		})
 	}
 
-	return jsonDoc(map[string]any{"Version": "2012-10-17", "Statement": statements})
+	doc, err := jsonDoc(map[string]any{"Version": "2012-10-17", "Statement": statements})
+	if err != nil {
+		return "", err
+	}
+
+	return doc, checkSize(fmt.Sprintf("grant %s's policy", grant.Name), doc)
 }
 
-// NewReaders registers the component and one reader role per grant. It
-// registers nothing and returns an error when args are invalid.
+// NewReaders registers the component, an IAM OIDC provider for each
+// WebIdentity cluster that names no existing one, and one reader role per
+// grant. It registers nothing and returns an error when args are invalid.
 func NewReaders(ctx *pulumi.Context, args ReadersArgs, opts ...pulumi.ResourceOption) (*Readers, error) {
 	args = args.withDefaults()
 
@@ -377,7 +686,7 @@ func NewReaders(ctx *pulumi.Context, args ReadersArgs, opts ...pulumi.ResourceOp
 	plan := make([]planned, 0, len(args.Grants))
 
 	for _, g := range args.Grants {
-		trust, err := ReaderTrustPolicy(g.Principal)
+		trust, err := ReaderTrustPolicy(args, g)
 		if err != nil {
 			return nil, fmt.Errorf("esoaws: readers %q: grant %s: %w", args.Name, g.Name, err)
 		}
@@ -390,12 +699,51 @@ func NewReaders(ctx *pulumi.Context, args ReadersArgs, opts ...pulumi.ResourceOp
 		plan = append(plan, planned{grant: g, trust: trust, policy: policy})
 	}
 
-	comp := &Readers{RoleARNs: map[string]pulumi.StringOutput{}}
+	comp := &Readers{RoleARNs: map[string]pulumi.StringOutput{}, OIDCProviderARNs: map[string]pulumi.StringOutput{}}
 	if err := ctx.RegisterComponentResource(KindReaders, args.Name, comp, opts...); err != nil {
 		return nil, err
 	}
 
 	child := []pulumi.ResourceOption{pulumi.Parent(comp), pulumi.Provider(args.Provider)}
+
+	// A role's trust names its provider by ARN, which is predictable; the
+	// role still waits for a provider created here, or IAM would refuse a
+	// principal it cannot resolve.
+	waitFor := map[string]pulumi.Resource{}
+
+	for _, c := range args.Clusters {
+		if c.Mode != WebIdentityMode {
+			continue
+		}
+
+		if c.WebIdentity.ProviderARN != "" {
+			comp.OIDCProviderARNs[c.Name] = pulumi.String(c.WebIdentity.ProviderARN).ToStringOutput()
+
+			continue
+		}
+
+		pa := &iam.OpenIdConnectProviderArgs{
+			Url:           pulumi.String(c.WebIdentity.IssuerURL),
+			ClientIdLists: pulumi.ToStringArray([]string{c.WebIdentity.Audience}),
+		}
+		if len(c.WebIdentity.Thumbprints) > 0 {
+			pa.ThumbprintLists = pulumi.ToStringArray(c.WebIdentity.Thumbprints)
+		}
+
+		if len(args.Tags) > 0 {
+			pa.Tags = pulumi.ToStringMap(args.Tags)
+		}
+
+		name := args.Name + "-" + c.Name + "-oidc"
+
+		provider, err := iam.NewOpenIdConnectProvider(ctx, name, pa, child...)
+		if err != nil {
+			return nil, fmt.Errorf("esoaws: create OIDC provider %s: %w", name, err)
+		}
+
+		comp.OIDCProviderARNs[c.Name] = provider.Arn
+		waitFor[c.Name] = provider
+	}
 
 	for _, p := range plan {
 		roleArgs := &iam.RoleArgs{
@@ -410,7 +758,12 @@ func NewReaders(ctx *pulumi.Context, args ReadersArgs, opts ...pulumi.ResourceOp
 			roleArgs.Tags = pulumi.ToStringMap(args.Tags)
 		}
 
-		role, err := iam.NewRole(ctx, p.grant.Name, roleArgs, child...)
+		roleOpts := child
+		if dep, ok := waitFor[p.grant.Cluster]; ok {
+			roleOpts = append(append([]pulumi.ResourceOption{}, child...), pulumi.DependsOn([]pulumi.Resource{dep}))
+		}
+
+		role, err := iam.NewRole(ctx, p.grant.Name, roleArgs, roleOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("esoaws: create role %s: %w", p.grant.Name, err)
 		}
@@ -426,12 +779,16 @@ func NewReaders(ctx *pulumi.Context, args ReadersArgs, opts ...pulumi.ResourceOp
 		comp.RoleARNs[p.grant.Name] = role.Arn
 	}
 
-	outputs := pulumi.StringMap{}
+	roles, providers := pulumi.StringMap{}, pulumi.StringMap{}
 	for name, arn := range comp.RoleARNs {
-		outputs[name] = arn
+		roles[name] = arn
 	}
 
-	if err := ctx.RegisterResourceOutputs(comp, pulumi.Map{"roleArns": outputs}); err != nil {
+	for name, arn := range comp.OIDCProviderARNs {
+		providers[name] = arn
+	}
+
+	if err := ctx.RegisterResourceOutputs(comp, pulumi.Map{"roleArns": roles, "oidcProviderArns": providers}); err != nil {
 		return nil, err
 	}
 
