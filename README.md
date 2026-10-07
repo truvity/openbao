@@ -37,7 +37,7 @@ What the rename changed, and what it did not:
 | `pkg/ceremony` (Go) | The CA ceremony with the root key in AWS KMS: the root's self-signature, domain intermediates from OpenBAO-held keys (review a template hash, then sign it once), the break-glass server leaf, and the committed artifact format |
 | `pkg/custody` (Go, Pulumi) | The root key's custody: a multi-region P-384 key per generation, a key policy that separates administration from signing, the two roles, and a Sign alarm in each region |
 | `pkg/awsserver` (Go, Pulumi) | The server's AWS side from caller inputs: the multi-region auto-unseal key and replica, Pod Identity roles with least-privilege policies, alert topics, the Object Lock snapshot bucket with replication, the endpoint record, or all of them as one server (`NewServer`); a per-resource options hook for adopting existing state |
-| `pkg/esoaws` (Go, Pulumi) | External Secrets reading AWS Parameter Store across accounts: the cluster's ESO identity (an EKS Pod Identity role that may only assume the listed reader roles) and, in the parameters' account, one least-privilege reader role per grant of exact parameters or prefixes ([docs/esoaws.md](docs/esoaws.md)) |
+| `pkg/esoaws` (Go, Pulumi) | External Secrets reading AWS Parameter Store across accounts, each cluster in one identity mode: Pod Identity (the controller's role, which may only assume the listed reader roles) or web identity (nothing ambient; the cluster's issuer registered as an IAM OIDC provider, each reader role trusting one ServiceAccount), and in the parameters' account one least-privilege reader role per grant of exact parameters or prefixes ([docs/esoaws.md](docs/esoaws.md)) |
 | `pkg/estate` (Go) | One server serving several Kubernetes clusters, from typed inputs: which clusters, stores, runners, writers, host fleets, project groups and PKI contract make which login, policy, group, SSH engine and PKI mount, as a reviewed view and as the `pkg/model` state `pkg/apply` converges on, with the names existing state is adopted under, and the Pulumi stack that applies it and exports what consumers read ([docs/estate.md](docs/estate.md)) |
 | `pkg/pki` (Go) | The authored private-PKI contract above `pkg/ceremony`: root generations, trust domains, per-environment roles, and per-environment identity CAs |
 | `pkg/kmssigner` (Go) | A `crypto.Signer` over a KMS P-384 key |
@@ -342,9 +342,10 @@ touches a key (see Status); it does not serve an estate on another cloud.
   `pkg/builder` and `pkg/pki`: an estate's typed inputs to its whole
   desired state, and the names existing state is adopted under
 - [docs/esoaws.md](docs/esoaws.md) — `pkg/esoaws` and `awsStores`:
-  External Secrets reading Parameter Store in another account, the one
-  cross-account hop, why the default key is enough, least privilege and the
-  one-store-per-grant tenancy
+  External Secrets reading Parameter Store in another account, the two
+  mutually exclusive identity modes (Pod Identity and web identity), why
+  the default key is enough, least privilege, the one-store-per-grant
+  tenancy and the admission policy
 - [docs/model.md](docs/model.md) — OpenBAO's desired state per engine,
   its apply, and the resource names an existing configuration adopts
 - [docs/integrations/access-roster.md](docs/integrations/access-roster.md)
