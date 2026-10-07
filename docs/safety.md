@@ -107,11 +107,15 @@ grants exactly that to every namespace editor by default.
 Two controls close it, and a cluster in `podIdentity` mode needs both:
 
 - **The admission policy** (`aws.admissionPolicy`, on by default in
-  `podIdentity` mode) refuses an AWS `SecretStore` or generator with no
-  `secretRef` or `jwt` auth (an empty `auth: {}` counts as none), and an AWS
-  `ClusterSecretStore` that is not one of the release's `awsStores`.
-  `just admission-conformance` proves it on a real API server against
-  External Secrets' own CRDs.
+  `podIdentity` mode) refuses an AWS `SecretStore`, generator or
+  `ClusterGenerator` with no `secretRef` or `jwt` auth (an empty `auth: {}`
+  counts as none). It also refuses an AWS `ClusterSecretStore` that is not
+  one of the release's `awsStores`, and one of the release's that differs
+  from what it renders (another role, `auth`, `additionalRoles`, session
+  tags, an external id). It judges an update even while the object waits on
+  a finalizer to be deleted. Weakening it in this mode fails the render
+  without an explicit acknowledgement. `just admission-conformance` proves
+  it on a real API server against External Secrets' own CRDs.
 - **The aggregated roles are off.** Set `rbac.aggregateToEdit: false` and
   `rbac.aggregateToAdmin: false` in the upstream chart's values. They add
   create on `secretstores` (and on `externalsecrets` and the generators) to
@@ -127,7 +131,9 @@ web-identity tokens from the cluster's issuer, for one ServiceAccount in
 the External Secrets namespace. A namespaced `SecretStore` can reference
 only a ServiceAccount in its own namespace, so a tenant gets a token whose
 subject no role trusts. This holds as long as nobody but administrators
-may create objects, or tokens, in the External Secrets namespace. The
+may create objects, or tokens, in the External Secrets namespace, and as
+long as nothing outside this chart and `pkg/esoaws` gives the controller's
+ServiceAccount AWS rights of its own. The
 policy can still be turned on there as a second line.
 
 ## A forced command that a caller can still replace
@@ -344,7 +350,9 @@ happens, and its tests run every refusal against a KMS double.
 | a projected token path that is not absolute, or a token lifetime outside 600–86400 s (schema) | a mount the kubelet refuses, or a login token that outlives its purpose |
 | a store with no `server` or no `caBundle`; issuers with no `server` or no `caBundle` | a store or issuer that cannot reach OpenBAO, or cannot verify it before sending a token |
 | a reader store with no `conditions` | a ClusterSecretStore readable from every namespace |
-| a condition that selects nothing in particular (an empty one, an empty `namespaces`, an empty `namespaceSelector` (schema), a namespace regex that matches every namespace) | a ClusterSecretStore readable from every namespace, behind conditions that look like a restriction |
+| a condition that selects nothing in particular (an empty one, an empty `namespaces`, an empty `namespaceSelector` (schema), a namespace regex that is not anchored `^...$` or that matches every namespace) | a ClusterSecretStore readable from every namespace, or from more than its author meant, behind conditions that look like a restriction |
+| an AWS store's selector expression other than `In` with values (schema) | `NotIn`, `Exists` and `DoesNotExist` select namespaces nobody listed |
+| in `podIdentity` mode, the AWS admission policy turned off, without `Deny`, or with `failurePolicy: Ignore`, unless `acknowledgeTenantsCanBorrowControllerIdentity` | the guard against borrowing the controller's identity, quietly gone |
 | an AWS store (`awsStores`) with no `conditions`, or with `namespaceRegexes` (schema) | a ClusterSecretStore on Parameter Store readable from every namespace |
 | an AWS store with no `region`, or a `role` that is not one IAM role ARN (schema) | a store that reads as the External Secrets controller itself, or assumes any role a pattern matches |
 | `awsStores` with no `aws.identity` | a cluster whose identity mode is whatever the stores happen to say |

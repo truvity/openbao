@@ -1,0 +1,18 @@
+# podIdentity with the admission policy as a dry run: allowed only with the
+# acknowledgement that, until it denies, tenants can borrow the controller's
+# identity. A store selects its namespaces by an In expression, the only
+# operator an AWS store takes.
+aws:
+  identity: podIdentity
+  admissionPolicy:
+    validationActions: [Warn, Audit]
+    acknowledgeTenantsCanBorrowControllerIdentity: true
+
+awsStores:
+  - name: example-app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/a-app-config
+    conditions:
+      - namespaceSelector:
+          matchExpressions:
+            - {key: example.com/app, operator: In, values: [config-readers]}

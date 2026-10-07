@@ -1,0 +1,10 @@
+# A dry run (no Deny) in podIdentity mode needs the acknowledgement.
+aws:
+  identity: podIdentity
+  admissionPolicy:
+    validationActions: [Warn, Audit]
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    conditions: [{namespaces: [a]}]

@@ -94,10 +94,11 @@ aws:
     # set on each ServiceAccount this chart renders.
     audience: sts.amazonaws.com
   # A ValidatingAdmissionPolicy (Kubernetes 1.30+) that refuses what would
-  # borrow the controller's AWS identity: a namespaced SecretStore, or an ECR
-  # or STS generator, on AWS with no auth of its own, and a ClusterSecretStore
-  # on AWS that is not one of this release's awsStores. Empty (null): on in
-  # podIdentity mode, off otherwise.
+  # borrow the controller's AWS identity: a namespaced SecretStore, an ECR or
+  # STS generator, or a ClusterGenerator wrapping one, on AWS with no auth of
+  # its own; a ClusterSecretStore on AWS that is not one of this release's
+  # awsStores; and one of the release's that has drifted from what it
+  # renders. Empty (null): on in podIdentity mode, off otherwise.
   admissionPolicy:
     enabled: null
     name: ""                  # default: <release>-aws-stores
@@ -105,6 +106,10 @@ aws:
     annotations: {}
     validationActions: [Deny] # [Warn, Audit] is the dry run
     failurePolicy: Fail
+    # In podIdentity mode the policy is what stops tenants borrowing the
+    # controller's identity, so turning it off, dropping Deny or ignoring
+    # its failures there fails the render unless this is true.
+    acknowledgeTenantsCanBorrowControllerIdentity: false
 
 # Stores on Parameter Store: one per (cluster, grant), named as given, no
 # suffix. `role` is the grant's reader role (esoaws Readers.RoleARNs).

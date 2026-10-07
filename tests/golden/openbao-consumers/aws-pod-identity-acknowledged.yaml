@@ -4,13 +4,14 @@ apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: example-app-config
-  annotations:
-    example.com/owner: platform
-    example.com/sync-wave: "55"
 spec:
   conditions:
-    - namespaces:
-      - example-app
+    - namespaceSelector:
+        matchExpressions:
+        - key: example.com/app
+          operator: In
+          values:
+          - config-readers
   provider:
     aws:
       service: ParameterStore
@@ -18,32 +19,11 @@ spec:
       role: "arn:aws:iam::444455556666:role/a-app-config"
 
 ---
-# Source: openbao-consumers/templates/stores.yaml
-apiVersion: external-secrets.io/v1
-kind: ClusterSecretStore
-metadata:
-  name: example-app-credentials
-  annotations:
-    example.com/owner: platform
-spec:
-  conditions:
-    - namespaceSelector:
-        matchLabels:
-          example.com/app-credentials: "true"
-  provider:
-    aws:
-      service: ParameterStore
-      region: "eu-example-1"
-      role: "arn:aws:iam::444455556666:role/a-app-credentials"
-
----
 # Source: openbao-consumers/templates/aws-admission.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: openbao-consumers-aws-stores
-  annotations:
-    example.com/owner: platform
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -96,7 +76,7 @@ spec:
         (has(variables.obj.spec.generator.ecrAuthorizationTokenSpec) && !(has(variables.obj.spec.generator.ecrAuthorizationTokenSpec.auth) && (has(variables.obj.spec.generator.ecrAuthorizationTokenSpec.auth.secretRef) || has(variables.obj.spec.generator.ecrAuthorizationTokenSpec.auth.jwt)))) ||
         (has(variables.obj.spec.generator.stsSessionTokenSpec) && !(has(variables.obj.spec.generator.stsSessionTokenSpec.auth) && (has(variables.obj.spec.generator.stsSessionTokenSpec.auth.secretRef) || has(variables.obj.spec.generator.stsSessionTokenSpec.auth.jwt)))))
     - name: expected
-      expression: '{"example-app-config":{"role":"arn:aws:iam::444455556666:role/a-app-config"},"example-app-credentials":{"role":"arn:aws:iam::444455556666:role/a-app-credentials"}}'
+      expression: '{"example-app-config":{"role":"arn:aws:iam::444455556666:role/a-app-config"}}'
     - name: releaseStore
       expression: >-
         variables.kind == 'ClusterSecretStore' && variables.onAWS && variables.obj.metadata.name in variables.expected
@@ -139,9 +119,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
   name: openbao-consumers-aws-stores
-  annotations:
-    example.com/owner: platform
 spec:
   policyName: openbao-consumers-aws-stores
   validationActions:
-    - Deny
+    - Warn
+    - Audit
