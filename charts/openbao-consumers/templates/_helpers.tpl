@@ -74,9 +74,10 @@ from every namespace on the cluster. `by` names the entry, as in
 specific (an empty one, an empty list of names, an empty selector); what it
 cannot see is a namespace regex that matches more than its author meant.
 External Secrets matches a regex unanchored, so "app" also matches
-"not-an-app": a regex must be anchored at both ends (^...$). And one that
-matches every probe below, names that share nothing, matches every
-namespace.
+"not-an-app": a regex must be anchored at both ends (^...$), with no
+top-level alternation ("^a|b$" anchors only "a" at the start and "b" at the
+end; write "^(?:a|b)$"). And one that matches every probe below, names that
+share nothing, matches every namespace.
 */}}
 {{- define "consumers.requireConditions" -}}
 {{- if not .conditions -}}
@@ -87,11 +88,45 @@ namespace.
 {{- if not (and (hasPrefix "^" $re) (regexMatch `(^|[^\\])(\\\\)*\$$` $re)) -}}
 {{- fail (printf "%s has the namespace regex %q, which is not anchored at both ends — External Secrets matches it anywhere in a namespace's name; write ^...$" $.by $re) -}}
 {{- end -}}
+{{- if eq (include "consumers.topLevelAlternation" $re) "true" -}}
+{{- fail (printf "%s has the namespace regex %q, whose | is outside any group — the anchors bind only the first and the last alternative; write ^(?:a|b)$" $.by $re) -}}
+{{- end -}}
 {{- if and (regexMatch $re "default") (regexMatch $re "kube-system") (regexMatch $re "x") (regexMatch $re "0") -}}
 {{- fail (printf "%s has the namespace regex %q, which matches every namespace — name the namespaces, or narrow the regex" $.by $re) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+"true" when a regular expression has a | outside every group: it walks the
+pattern once, skipping escaped characters and character classes, counting
+parentheses. A class that opens with "]" or "^]" is read as closing early,
+which can only refuse a pattern, never admit one.
+*/}}
+{{- define "consumers.topLevelAlternation" -}}
+{{- $escaped := false -}}
+{{- $inClass := false -}}
+{{- $depth := 0 -}}
+{{- $found := false -}}
+{{- range $c := splitList "" . -}}
+{{- if $escaped -}}
+{{- $escaped = false -}}
+{{- else if eq $c "\\" -}}
+{{- $escaped = true -}}
+{{- else if $inClass -}}
+{{- if eq $c "]" }}{{ $inClass = false }}{{ end -}}
+{{- else if eq $c "[" -}}
+{{- $inClass = true -}}
+{{- else if eq $c "(" -}}
+{{- $depth = add1 $depth -}}
+{{- else if eq $c ")" -}}
+{{- $depth = sub $depth 1 -}}
+{{- else if and (eq $c "|") (le $depth 0) -}}
+{{- $found = true -}}
+{{- end -}}
+{{- end -}}
+{{- $found -}}
 {{- end -}}
 
 {{/*

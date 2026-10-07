@@ -1,0 +1,6 @@
+# "^a|b$" is "^a" or "b$": the second alternative matches anywhere it ends.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+stores:
+  - name: app
+    conditions: [{namespaceRegexes: ["^app-a|app-b$"]}]

@@ -24,6 +24,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: openbao-consumers-aws-stores
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -119,6 +121,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
   name: openbao-consumers-aws-stores
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   policyName: openbao-consumers-aws-stores
   validationActions:

@@ -103,6 +103,10 @@ aws:
     enabled: null
     name: ""                  # default: <release>-aws-stores
     labels: {}
+    # On the policy and its binding, merged over commonAnnotations and over
+    # the default argocd.argoproj.io/sync-wave: "-1". The policy holds what
+    # each store may say, so it must be applied before the stores: keep its
+    # wave below theirs.
     annotations: {}
     validationActions: [Deny] # [Warn, Audit] is the dry run
     failurePolicy: Fail

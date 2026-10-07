@@ -43,6 +43,7 @@ kind: ValidatingAdmissionPolicy
 metadata:
   name: openbao-consumers-aws-stores
   annotations:
+    argocd.argoproj.io/sync-wave: "-1"
     example.com/owner: platform
 spec:
   failurePolicy: Fail
@@ -140,6 +141,7 @@ kind: ValidatingAdmissionPolicyBinding
 metadata:
   name: openbao-consumers-aws-stores
   annotations:
+    argocd.argoproj.io/sync-wave: "-1"
     example.com/owner: platform
 spec:
   policyName: openbao-consumers-aws-stores

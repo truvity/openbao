@@ -173,7 +173,8 @@ expressions. An empty selector selects every namespace, so it is refused.
 An `awsStores` expression must use the `In` operator with at least one
 value: `NotIn`, `Exists` and `DoesNotExist` select namespaces nobody listed.
 `awsStores` take no namespace regexes. An OpenBAO store's regexes must be
-anchored (`^...$`), and none may match every namespace.
+anchored (`^...$`), with no `|` outside a group (write `^(?:a|b)$`), and
+none may match every namespace.
 
 What each mode guarantees beyond that:
 
@@ -225,11 +226,47 @@ grant from their own namespace. Two controls close that:
    render unless `acknowledgeTenantsCanBorrowControllerIdentity: true` says
    so. `just admission-conformance` proves all of it on a real API server,
    against ESO's CRDs.
+   The policy judges writes only. An object that already existed when the
+   policy was first installed stays as it is until its next update. After
+   the first install, list every AWS `SecretStore` and generator that names
+   no auth of its own (it needs `jq`). Each line it prints is one to fix or
+   delete:
+
+   ```sh
+   kubectl get secretstores,ecrauthorizationtokens,stssessiontokens,clustergenerators -A -o json | jq -r '.items[] | (if .kind == "SecretStore" then .spec.provider.aws elif .kind == "ClusterGenerator" then (.spec.generator.ecrAuthorizationTokenSpec // .spec.generator.stsSessionTokenSpec) else .spec end) as $a | select($a != null and $a.auth.secretRef == null and $a.auth.jwt == null) | "\(.kind) \(.metadata.namespace // "-")/\(.metadata.name)"'
+   ```
+
 2. In the upstream ESO chart, `rbac.aggregateToEdit: false` and
    `rbac.aggregateToAdmin: false`. Those settings add create on
    `secretstores`, `externalsecrets` and the generators to every
    namespace's `edit` and `admin` roles. Tenants still need to create
    `ExternalSecret`s, so grant that alone, with your own role.
+
+### Upgrades: the policy goes first
+
+The policy holds what each of the release's stores may say. So when a
+release changes a store's role or ServiceAccount, or adds a store, the
+policy that is still live knows only the old shape and refuses the new
+store. The chart cannot order objects within one apply, and the API server
+picks up a changed policy asynchronously, usually within a second or two.
+What keeps an upgrade moving:
+
+- The policy and its binding carry `argocd.argoproj.io/sync-wave: "-1"` by
+  default, so Argo CD applies them before the stores (wave 0 unless you set
+  one). The policy's own `annotations` override it. If your stores carry an
+  earlier wave, for example through `commonAnnotations`, keep the policy's
+  wave below theirs.
+- Within the pickup delay, a store can still be refused once. Give the
+  Argo CD application a sync retry (`syncPolicy.retry`, a few attempts with
+  backoff), and the next attempt is admitted.
+- `helm upgrade --atomic` rolls the whole release back on that first
+  refusal. Either apply in two steps (render and apply the policy alone with
+  `--show-only templates/aws-admission.yaml`, then upgrade), or upgrade
+  without `--atomic` and run it again if it is refused.
+
+`just admission-conformance` proves the sequence: under the old policy the
+changed and the added store are refused, and once the new policy is applied
+and picked up they are admitted, and the old role is refused.
 
 In WebIdentity mode neither control is needed for these stores. A store with
 no auth has no credentials to borrow: the node's role, if the controller can

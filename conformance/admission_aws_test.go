@@ -30,6 +30,32 @@ awsStores:
       - namespaces: [tenant]
 `
 
+	// podValuesNext is the pod release one change later: the store's role
+	// moved, and a store added.
+	podValuesNext = `aws:
+  identity: podIdentity
+awsStores:
+  - name: example-app-config
+    region: eu-example-1
+    role: ` + nextRole + `
+    conditions:
+      - namespaces: [tenant]
+  - name: example-app-added
+    region: eu-example-1
+    role: ` + readerRole + `
+    conditions:
+      - namespaces: [tenant]
+`
+	nextRole = "arn:aws:iam::444455556666:role/a-app-config-next"
+
+	// auditFilter is docs/esoaws.md's audit, verbatim: every AWS SecretStore
+	// and generator that names no auth of its own, which a policy installed
+	// after them never judged.
+	auditFilter = `.items[] | (if .kind == "SecretStore" then .spec.provider.aws ` +
+		`elif .kind == "ClusterGenerator" then (.spec.generator.ecrAuthorizationTokenSpec // .spec.generator.stsSessionTokenSpec) ` +
+		`else .spec end) as $a | select($a != null and $a.auth.secretRef == null and $a.auth.jwt == null) | ` +
+		`"\(.kind) \(.metadata.namespace // "-")/\(.metadata.name)"`
+
 	webValues = `aws:
   identity: webIdentity
   admissionPolicy:
@@ -188,7 +214,50 @@ func TestAdmissionPolicyAWS(t *testing.T) {
 	out, err = kubectl(t, kubeconfig, "", "create", "namespace", "tenant")
 	require.NoError(t, err, out)
 
+	// What exists before the policy is never judged by it: the audit is
+	// what finds it.
+	for _, manifest := range []struct{ namespace, body string }{
+		{"tenant", awsStore("SecretStore", "pre-existing", withRole(""))},
+		{"tenant", awsStore("SecretStore", "pre-existing-jwt", withRole(jwtAuth))},
+		{"", clusterGenerator("ECRAuthorizationToken", "pre-existing-ecr", "")},
+	} {
+		args := []string{"create", "-f", "-"}
+		if manifest.namespace != "" {
+			args = append([]string{"-n", manifest.namespace}, args...)
+		}
+
+		out, err = kubectl(t, kubeconfig, manifest.body, args...)
+		require.NoError(t, err, out)
+	}
+
 	installAWSPolicy(t, kubeconfig, "pod", podValues)
+
+	t.Run("the audit lists what predates the policy", func(t *testing.T) {
+		jq, err := exec.LookPath("jq")
+		if err != nil {
+			t.Skip("no `jq` on PATH; the audit in docs/esoaws.md needs it")
+		}
+
+		list, err := kubectl(t, kubeconfig, "", "get", "secretstores,ecrauthorizationtokens,stssessiontokens,clustergenerators", "-A", "-o", "json")
+		require.NoError(t, err, list)
+
+		command := exec.Command(jq, "-r", auditFilter)
+		command.Stdin = strings.NewReader(list)
+		found, err := command.CombinedOutput()
+		require.NoError(t, err, string(found))
+
+		assert.Contains(t, string(found), "SecretStore tenant/pre-existing\n")
+		assert.Contains(t, string(found), "ClusterGenerator -/pre-existing-ecr\n")
+		assert.NotContains(t, string(found), "pre-existing-jwt", "a store with its own auth is not listed")
+
+		for _, del := range [][]string{
+			{"-n", "tenant", "delete", "secretstore", "pre-existing", "pre-existing-jwt"},
+			{"delete", "clustergenerator", "pre-existing-ecr"},
+		} {
+			out, err := kubectl(t, kubeconfig, "", del...)
+			require.NoError(t, err, out)
+		}
+	})
 
 	runAWSCases(t, kubeconfig, []awsCase{
 		{"a SecretStore on aws with no auth", "tenant", awsStore("SecretStore", "borrow", withRole("")),
@@ -237,6 +306,36 @@ func TestAdmissionPolicyAWS(t *testing.T) {
 		{"a ClusterGenerator wrapping STS with no auth", "", clusterGenerator("STSSessionToken", "cluster-sts", ""),
 			[]string{"ClusterGenerator cluster-sts", "names no auth of its own"}},
 		{"a ClusterGenerator of nothing AWS", "", clusterGenerator("UUID", "cluster-uuid", ""), nil},
+	})
+
+	// A release that changes a store's role or adds a store: the policy that
+	// knows only the old shape refuses the new one, which is why the chart
+	// puts the policy a sync wave before the stores; once the new policy is
+	// applied and picked up, the new shape is admitted and the old one is not.
+	t.Run("a changed release is admitted once its policy is", func(t *testing.T) {
+		moved := awsStore("ClusterSecretStore", "example-app-config", "      role: "+nextRole+"\n")
+		added := awsStore("ClusterSecretStore", "example-app-added", withRole(""))
+
+		for _, manifest := range []string{moved, added} {
+			out, ok := admit(t, kubeconfig, "", manifest)
+			require.False(t, ok, "the old policy admitted a store it does not know:\n%s", manifest)
+			assert.Contains(t, out, "release pod")
+		}
+
+		installAWSPolicy(t, kubeconfig, "pod", podValuesNext)
+
+		waitFor(t, "the updated policy to be picked up", func() bool {
+			_, ok := admit(t, kubeconfig, "", moved)
+
+			return ok
+		})
+
+		out, ok := admit(t, kubeconfig, "", added)
+		assert.True(t, ok, out)
+
+		out, ok = admit(t, kubeconfig, "", awsStore("ClusterSecretStore", "example-app-config", withRole("")))
+		assert.False(t, ok, "the old role is refused once the policy moved on")
+		assert.Contains(t, out, "assumes exactly "+nextRole)
 	})
 
 	// A store held in deletion by its own finalizer is still read, so a

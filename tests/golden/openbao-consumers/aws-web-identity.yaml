@@ -63,6 +63,8 @@ metadata:
   name: openbao-consumers-aws-stores
   labels:
     example.com/owner: platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -164,6 +166,8 @@ metadata:
   name: openbao-consumers-aws-stores
   labels:
     example.com/owner: platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   policyName: openbao-consumers-aws-stores
   validationActions:

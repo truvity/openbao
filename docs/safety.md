@@ -114,7 +114,9 @@ Two controls close it, and a cluster in `podIdentity` mode needs both:
   from what it renders (another role, `auth`, `additionalRoles`, session
   tags, an external id). It judges an update even while the object waits on
   a finalizer to be deleted. Weakening it in this mode fails the render
-  without an explicit acknowledgement. `just admission-conformance` proves
+  without an explicit acknowledgement. It judges writes only, so after its
+  first install, the audit in
+  [esoaws.md](esoaws.md#the-admission-policy) lists what predates it. `just admission-conformance` proves
   it on a real API server against External Secrets' own CRDs.
 - **The aggregated roles are off.** Set `rbac.aggregateToEdit: false` and
   `rbac.aggregateToAdmin: false` in the upstream chart's values. They add
@@ -350,7 +352,7 @@ happens, and its tests run every refusal against a KMS double.
 | a projected token path that is not absolute, or a token lifetime outside 600–86400 s (schema) | a mount the kubelet refuses, or a login token that outlives its purpose |
 | a store with no `server` or no `caBundle`; issuers with no `server` or no `caBundle` | a store or issuer that cannot reach OpenBAO, or cannot verify it before sending a token |
 | a reader store with no `conditions` | a ClusterSecretStore readable from every namespace |
-| a condition that selects nothing in particular (an empty one, an empty `namespaces`, an empty `namespaceSelector` (schema), a namespace regex that is not anchored `^...$` or that matches every namespace) | a ClusterSecretStore readable from every namespace, or from more than its author meant, behind conditions that look like a restriction |
+| a condition that selects nothing in particular (an empty one, an empty `namespaces`, an empty `namespaceSelector` (schema), a namespace regex that is not anchored `^...$`, that has a `|` outside a group, or that matches every namespace) | a ClusterSecretStore readable from every namespace, or from more than its author meant, behind conditions that look like a restriction |
 | an AWS store's selector expression other than `In` with values (schema) | `NotIn`, `Exists` and `DoesNotExist` select namespaces nobody listed |
 | in `podIdentity` mode, the AWS admission policy turned off, without `Deny`, or with `failurePolicy: Ignore`, unless `acknowledgeTenantsCanBorrowControllerIdentity` | the guard against borrowing the controller's identity, quietly gone |
 | an AWS store (`awsStores`) with no `conditions`, or with `namespaceRegexes` (schema) | a ClusterSecretStore on Parameter Store readable from every namespace |
