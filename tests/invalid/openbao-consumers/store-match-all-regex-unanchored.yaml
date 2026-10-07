@@ -1,0 +1,6 @@
+# Unanchored, "." matches any non-empty name: every namespace.
+server: https://openbao.example.internal:8200
+caBundle: Zm9v
+stores:
+  - name: app
+    conditions: [{namespaces: [a]}, {namespaceRegexes: ["^app-", "."]}]

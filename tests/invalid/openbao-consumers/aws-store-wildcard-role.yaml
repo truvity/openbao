@@ -1,4 +1,6 @@
 # The role is one role, never a pattern.
+aws:
+  identity: podIdentity
 awsStores:
   - name: app-config
     region: eu-example-1

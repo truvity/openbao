@@ -1,0 +1,104 @@
+{{- /* The admission policy that keeps External Secrets' own AWS identity
+       to the stores this release renders. In podIdentity mode the
+       controller holds credentials that may assume every reader role on
+       the cluster, and External Secrets uses them for any AWS object that
+       names no auth of its own: a namespaced SecretStore, or an ECR or STS
+       generator. With `role` set to a reader's ARN, such an object reads
+       that grant's parameters from any namespace. This policy refuses
+       those objects, and any ClusterSecretStore on the aws provider this
+       release does not render. On by default in podIdentity mode;
+       docs/esoaws.md#the-admission-policy. */}}
+{{- $p := .Values.aws.admissionPolicy }}
+{{- $on := eq .Values.aws.identity "podIdentity" }}
+{{- if kindIs "bool" $p.enabled }}{{- $on = $p.enabled }}{{- end }}
+{{- if $on }}
+{{- $name := $p.name | default (printf "%s-aws-stores" .Release.Name) }}
+{{- $stores := list }}
+{{- range .Values.awsStores }}{{- $stores = append $stores .name }}{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  {{- with $p.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- $an := include "consumers.annotations" (dict "root" $ "extra" $p.annotations) }}
+  {{- if ne $an "{}" }}
+  annotations:
+    {{- $an | nindent 4 }}
+  {{- end }}
+spec:
+  failurePolicy: {{ $p.failurePolicy }}
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["external-secrets.io"]
+        apiVersions: ["*"]
+        resources: ["secretstores", "clustersecretstores"]
+        operations: ["CREATE", "UPDATE"]
+      - apiGroups: ["generators.external-secrets.io"]
+        apiVersions: ["*"]
+        resources: ["ecrauthorizationtokens", "stssessiontokens"]
+        operations: ["CREATE", "UPDATE"]
+  matchConditions:
+    # An object on its way out is never refused: a finalizer removal is an
+    # UPDATE, and refusing it would wedge the deletion.
+    - name: not-terminating
+      expression: '!has(dyn(object).metadata.deletionTimestamp)'
+  variables:
+    - name: obj
+      expression: 'dyn(object)'
+    - name: kind
+      expression: 'request.kind.kind'
+    - name: isStore
+      expression: "variables.kind == 'SecretStore' || variables.kind == 'ClusterSecretStore'"
+    - name: onAWS
+      expression: >-
+        variables.isStore && has(variables.obj.spec.provider) && has(variables.obj.spec.provider.aws)
+    # External Secrets uses its own credentials unless auth names a Secret
+    # or a ServiceAccount: an absent auth and an empty one are the same.
+    - name: auth
+      expression: >-
+        variables.onAWS ?
+        (has(variables.obj.spec.provider.aws.auth) ? variables.obj.spec.provider.aws.auth : {}) :
+        (has(variables.obj.spec.auth) ? variables.obj.spec.auth : {})
+    - name: ownAuth
+      expression: "has(variables.auth.secretRef) || has(variables.auth.jwt)"
+  validations:
+    - expression: "variables.kind != 'SecretStore' || !variables.onAWS || variables.ownAuth"
+      messageExpression: >-
+        'SecretStore ' + variables.obj.metadata.name + ' in namespace ' + request.namespace +
+        ' is on the aws provider with no auth of its own (secretRef or jwt): External Secrets would use its' +
+        ' controller\'s AWS identity, which may assume this cluster\'s parameter reader roles'
+      reason: Forbidden
+    - expression: "variables.isStore || variables.ownAuth"
+      messageExpression: >-
+        variables.kind + ' ' + variables.obj.metadata.name + ' in namespace ' + request.namespace +
+        ' names no auth of its own (secretRef or jwt): External Secrets would use its controller\'s AWS identity'
+      reason: Forbidden
+    - expression: >-
+        variables.kind != 'ClusterSecretStore' || !variables.onAWS ||
+        variables.obj.metadata.name in {{ $stores | toJson }}
+      messageExpression: >-
+        'ClusterSecretStore ' + variables.obj.metadata.name +
+        ' is on the aws provider but is not one of the stores release {{ .Release.Name }} renders (awsStores):' +
+        ' every namespace its conditions admit would read with the controller\'s AWS identity'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  {{- with $p.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if ne $an "{}" }}
+  annotations:
+    {{- $an | nindent 4 }}
+  {{- end }}
+spec:
+  policyName: {{ $name }}
+  validationActions:
+    {{- toYaml $p.validationActions | nindent 4 }}
+{{- end }}

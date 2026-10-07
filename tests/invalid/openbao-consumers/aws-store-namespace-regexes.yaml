@@ -1,8 +1,8 @@
-# An empty list of conditions is no conditions.
+# An AWS store names its namespaces or selects them by label; no regexes.
 aws:
   identity: podIdentity
 awsStores:
   - name: app-config
     region: eu-example-1
     role: arn:aws:iam::444455556666:role/app-config
-    conditions: []
+    conditions: [{namespaceRegexes: ["^app-a$"]}]

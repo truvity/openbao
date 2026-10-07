@@ -1,0 +1,8 @@
+# Empty matchLabels and matchExpressions select every namespace too.
+aws:
+  identity: podIdentity
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    conditions: [{namespaceSelector: {matchLabels: {}, matchExpressions: []}}]

@@ -93,6 +93,43 @@ back nothing for a mount it has just created. The server shape in
   the old and the new at once is what lets leaves be reissued in any
   order. A single-source bundle makes it a flag day.
 
+## An AWS identity any namespace can borrow
+
+External Secrets uses its controller's own AWS credentials for any AWS
+object that names no auth of its own: a namespaced `SecretStore`, an
+`ECRAuthorizationToken` or `STSSessionToken` generator, or a
+`ClusterSecretStore`. In `podIdentity` mode (`aws.identity`) those
+credentials may assume every reader role of the cluster, so anyone who may
+create a `SecretStore` in their namespace could set `role` to a reader's ARN
+and read that grant's parameters. The upstream External Secrets chart
+grants exactly that to every namespace editor by default.
+
+Two controls close it, and a cluster in `podIdentity` mode needs both:
+
+- **The admission policy** (`aws.admissionPolicy`, on by default in
+  `podIdentity` mode) refuses an AWS `SecretStore` or generator with no
+  `secretRef` or `jwt` auth (an empty `auth: {}` counts as none), and an AWS
+  `ClusterSecretStore` that is not one of the release's `awsStores`.
+  `just admission-conformance` proves it on a real API server against
+  External Secrets' own CRDs.
+- **The aggregated roles are off.** Set `rbac.aggregateToEdit: false` and
+  `rbac.aggregateToAdmin: false` in the upstream chart's values. They add
+  create on `secretstores` (and on `externalsecrets` and the generators) to
+  every namespace's `edit` and `admin` roles. Tenants still need to create
+  `ExternalSecret`s, so grant that alone, with your own role.
+  `rbac.aggregateToView` only adds reads, and can stay.
+
+In `webIdentity` mode the policy is not needed, and is off by default. The
+controller holds no AWS credentials, so a store with no auth has nothing to
+use. Even where it can reach a node's instance metadata, the node's role
+is not a principal any reader role trusts: each reader role trusts only
+web-identity tokens from the cluster's issuer, for one ServiceAccount in
+the External Secrets namespace. A namespaced `SecretStore` can reference
+only a ServiceAccount in its own namespace, so a tenant gets a token whose
+subject no role trusts. This holds as long as nobody but administrators
+may create objects, or tokens, in the External Secrets namespace. The
+policy can still be turned on there as a second line.
+
 ## A forced command that a caller can still replace
 
 `SSHRole.ForceCommand` exists so a machine identity that should only ever
@@ -307,8 +344,12 @@ happens, and its tests run every refusal against a KMS double.
 | a projected token path that is not absolute, or a token lifetime outside 600–86400 s (schema) | a mount the kubelet refuses, or a login token that outlives its purpose |
 | a store with no `server` or no `caBundle`; issuers with no `server` or no `caBundle` | a store or issuer that cannot reach OpenBAO, or cannot verify it before sending a token |
 | a reader store with no `conditions` | a ClusterSecretStore readable from every namespace |
-| an AWS store (`awsStores`) with no `conditions` | a ClusterSecretStore on Parameter Store readable from every namespace |
+| a condition that selects nothing in particular (an empty one, an empty `namespaces`, an empty `namespaceSelector` (schema), a namespace regex that matches every namespace) | a ClusterSecretStore readable from every namespace, behind conditions that look like a restriction |
+| an AWS store (`awsStores`) with no `conditions`, or with `namespaceRegexes` (schema) | a ClusterSecretStore on Parameter Store readable from every namespace |
 | an AWS store with no `region`, or a `role` that is not one IAM role ARN (schema) | a store that reads as the External Secrets controller itself, or assumes any role a pattern matches |
+| `awsStores` with no `aws.identity` | a cluster whose identity mode is whatever the stores happen to say |
+| a `podIdentity` store with `auth` or `serviceAccount`; a `webIdentity` store without `auth.jwt.serviceAccountRef`, or a reference without a namespace (schema), or any other auth (schema) | the two modes mixed on one cluster: a store with no auth beside per-store identities borrows the controller's |
+| two `webIdentity` stores on one ServiceAccount | one ServiceAccount carrying two roles, of which External Secrets reads one |
 | a writer with no ServiceAccount, namespace or environments | a writer that would borrow the shared identity, or write nowhere |
 | PKI with no trust anchors, an anchor with no certificate, an issuer with no sign path (schema) or an unknown kind (schema) | an issuer whose chain nothing trusts |
 | a certificate with no issuer or no host | a certificate that identifies nothing |

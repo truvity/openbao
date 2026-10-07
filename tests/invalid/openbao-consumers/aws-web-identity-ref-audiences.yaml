@@ -1,0 +1,11 @@
+# Extra token audiences are not part of the shape.
+aws:
+  identity: webIdentity
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    auth:
+      jwt:
+        serviceAccountRef: {name: app-config, namespace: external-secrets, audiences: [x]}
+    conditions: [{namespaces: [a]}]

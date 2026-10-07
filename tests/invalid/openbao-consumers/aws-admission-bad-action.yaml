@@ -1,7 +1,9 @@
 aws:
   identity: podIdentity
+  admissionPolicy:
+    validationActions: [Refuse]
 awsStores:
   - name: app-config
     region: eu-example-1
-    role: app-config
+    role: arn:aws:iam::444455556666:role/app-config
     conditions: [{namespaces: [a]}]

@@ -1,4 +1,6 @@
 # Without a role the store would read as the controller itself.
+aws:
+  identity: podIdentity
 awsStores:
   - name: app-config
     region: eu-example-1

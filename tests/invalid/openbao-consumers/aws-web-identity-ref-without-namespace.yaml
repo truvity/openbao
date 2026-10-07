@@ -1,0 +1,12 @@
+# A ClusterSecretStore's ref without a namespace resolves in each
+# ExternalSecret's own namespace: a tenant's ServiceAccount.
+aws:
+  identity: webIdentity
+awsStores:
+  - name: app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/app-config
+    auth:
+      jwt:
+        serviceAccountRef: {name: app-config}
+    conditions: [{namespaces: [a]}]

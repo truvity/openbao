@@ -1,0 +1,42 @@
+# Stores on AWS Parameter Store, on a cluster where nothing holds AWS
+# credentials: each store names its own ServiceAccount, whose token assumes
+# the grant's reader role through the cluster's OIDC issuer. The chart
+# renders one ServiceAccount and the platform provides the other. The
+# admission policy is off by default in this mode; this case turns it on as
+# a dry run.
+aws:
+  identity: webIdentity
+  admissionPolicy:
+    enabled: true
+    validationActions: [Warn, Audit]
+    labels:
+      example.com/owner: platform
+
+awsStores:
+  - name: b-app-config
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/b-app-config
+    auth:
+      jwt:
+        serviceAccountRef:
+          name: eso-b-app-config
+          namespace: external-secrets
+    serviceAccount:
+      annotations:
+        example.com/grant: b-app-config
+    conditions:
+      - namespaces: [example-app]
+  - name: b-app-credentials
+    region: eu-example-1
+    role: arn:aws:iam::444455556666:role/b-app-credentials
+    auth:
+      jwt:
+        serviceAccountRef:
+          name: eso-b-app-credentials
+          namespace: external-secrets
+    serviceAccount:
+      create: false
+    conditions:
+      - namespaceSelector:
+          matchExpressions:
+            - {key: example.com/app-credentials, operator: In, values: ["true"]}

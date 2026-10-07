@@ -79,23 +79,59 @@ spec:
           "saNamespace" $writer.namespace) | nindent 4 }}
 {{- end }}
 {{- end }}
+{{- $mode := .Values.aws.identity }}
+{{- if and .Values.awsStores (not $mode) }}
+{{- fail "aws.identity is required with awsStores: podIdentity or webIdentity. There is no default: the modes are mutually exclusive on a cluster, because a controller identity beside per-store identities is one any store without auth borrows" }}
+{{- end }}
 {{- range $store := .Values.awsStores }}
 {{- if not $store.name }}{{- fail "every entry of awsStores needs a name" }}{{- end }}
 {{- if not $store.region }}
 {{- fail (printf "awsStores.%s needs region — the region of the parameters it reads" $store.name) }}
 {{- end }}
 {{- if not $store.role }}
-{{- fail (printf "awsStores.%s needs role — the reader role in the parameters' account; without one the store would read as the controller itself" $store.name) }}
+{{- fail (printf "awsStores.%s needs role — the grant's reader role in the parameters' account" $store.name) }}
 {{- end }}
 {{- include "consumers.claim" (dict "registry" $registry "kind" "ClusterSecretStore" "name" $store.name "by" (printf "awsStores.%s" $store.name)) }}
 {{- include "consumers.requireConditions" (dict "conditions" $store.conditions "by" (printf "awsStores.%s" $store.name)) }}
+{{- $ref := dict }}
+{{- if eq $mode "podIdentity" }}
+{{- if $store.auth }}
+{{- fail (printf "awsStores.%s has auth, but aws.identity is podIdentity — in this mode every store reads as the controller's own Pod Identity, and per-store auth beside it is the mix the two modes exclude; switch the cluster to webIdentity or drop auth" $store.name) }}
+{{- end }}
+{{- if $store.serviceAccount }}
+{{- fail (printf "awsStores.%s has serviceAccount, but aws.identity is podIdentity — a store in this mode has no ServiceAccount of its own" $store.name) }}
+{{- end }}
+{{- else }}
+{{- $ref = dig "jwt" "serviceAccountRef" dict ($store.auth | default dict) }}
+{{- if not $ref }}
+{{- fail (printf "awsStores.%s has no auth.jwt.serviceAccountRef, but aws.identity is webIdentity — every store names its own ServiceAccount; without one External Secrets falls back to whatever ambient credentials it finds" $store.name) }}
+{{- end }}
+{{- include "consumers.claim" (dict "registry" $registry "kind" "ServiceAccount" "namespace" $ref.namespace "name" $ref.name "by" (printf "awsStores.%s" $store.name)) }}
+{{- $sa := $store.serviceAccount | default dict }}
+{{- if (hasKey $sa "create" | ternary $sa.create true) }}
+---
+{{- /* The store's own identity: its token, minted by External Secrets,
+       is what the reader role trusts (sub = this ServiceAccount). No pod
+       runs as it, so it mounts no token. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $ref.name }}
+  namespace: {{ $ref.namespace }}
+  annotations:
+    {{- $fixed := dict "eks.amazonaws.com/role-arn" $store.role "eks.amazonaws.com/audience" $.Values.aws.webIdentity.audience }}
+    {{- mergeOverwrite (deepCopy ($.Values.commonAnnotations | default dict)) ($sa.annotations | default dict) $fixed | toYaml | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}
+{{- end }}
 ---
 {{- /* One store per (cluster, grant): AWS Parameter Store in the account
        that holds the parameters, read through the one reader role the
-       grant made there. External Secrets assumes `role` with its
-       controller's own credentials (EKS Pod Identity), so the store names
-       no auth: the cluster's identity may assume only the roles it was
-       granted, and each role reads only its grant. docs/esoaws.md. */}}
+       grant made there. podIdentity: External Secrets assumes `role` with
+       its controller's own credentials, and the store names no auth.
+       webIdentity: the store names its own ServiceAccount, whose
+       annotation carries the role; a store-level role would be assumed on
+       top of it, so there is none. docs/esoaws.md. */}}
 apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
@@ -111,5 +147,13 @@ spec:
     aws:
       service: ParameterStore
       region: {{ $store.region | quote }}
+      {{- if eq $mode "podIdentity" }}
       role: {{ $store.role | quote }}
+      {{- else }}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: {{ $ref.name | quote }}
+            namespace: {{ $ref.namespace | quote }}
+      {{- end }}
 {{- end }}

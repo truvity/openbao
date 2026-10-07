@@ -4,6 +4,8 @@ caBundle: Zm9v
 stores:
   - name: app
     conditions: [{namespaces: [a]}]
+aws:
+  identity: podIdentity
 awsStores:
   - name: app-openbao
     region: eu-example-1
