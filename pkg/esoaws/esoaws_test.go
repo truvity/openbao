@@ -3,6 +3,7 @@ package esoaws
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +26,9 @@ const (
 	clusterARN     = "arn:aws:eks:" + region + ":" + clusterAccount + ":cluster/a"
 	esoRole        = "arn:aws:iam::" + clusterAccount + ":role/a-external-secrets"
 	keyARN         = "arn:aws:kms:" + region + ":" + sourceAccount + ":key/1234abcd-12ab-34cd-56ef-1234567890ab"
+	issuerB        = "https://oidc.b.example.com"
+	issuerC        = "https://issuer.example.com/clusters/c"
+	providerC      = "arn:aws:iam::" + sourceAccount + ":oidc-provider/issuer.example.com/clusters/c"
 )
 
 type (
@@ -50,8 +54,11 @@ func (r *recorder) NewResource(args pulumi.MockResourceArgs) (string, resource.P
 	r.mu.Unlock()
 
 	state := args.Inputs.Copy()
-	if args.TypeToken == KindIAMRole {
+	switch args.TypeToken {
+	case KindIAMRole:
 		state["arn"] = resource.NewProperty("arn:aws:iam::mock:role/" + args.Name)
+	case KindOIDCProvider:
+		state["arn"] = resource.NewProperty("arn:aws:iam::mock:oidc-provider/" + args.Name)
 	}
 
 	return args.Name + "-id", state, nil
@@ -63,15 +70,26 @@ func (r *recorder) Call(args pulumi.MockCallArgs) (resource.PropertyMap, error) 
 
 func clusterArgs(p pulumi.ProviderResource) ClusterIdentityArgs {
 	return ClusterIdentityArgs{
+		Mode:                PodIdentityMode,
 		Name:                "a-external-secrets",
 		Provider:            p,
 		ClusterName:         pulumi.String("a"),
 		ClusterARN:          clusterARN,
 		AccountID:           clusterAccount,
 		Region:              region,
-		SourceRoles:         []string{"arn:aws:iam::" + sourceAccount + ":role/a-app-config", "arn:aws:iam::" + sourceAccount + ":role/eso-reader-a-*"},
+		SourceRoles:         []string{"arn:aws:iam::" + sourceAccount + ":role/a-app-config", "arn:aws:iam::" + sourceAccount + ":role/a-app-credentials"},
 		PermissionsBoundary: "arn:aws:iam::" + clusterAccount + ":policy/example-boundary",
 		Tags:                map[string]string{"owner": "platform"},
+	}
+}
+
+// Three clusters: a on Pod Identity, b on web identity with a provider the
+// component creates, c on web identity with a provider that exists.
+func clusters() []Cluster {
+	return []Cluster{
+		{Name: "a", Mode: PodIdentityMode, PodIdentity: &PodIdentity{RoleARN: esoRole}},
+		{Name: "b", Mode: WebIdentityMode, WebIdentity: &WebIdentity{IssuerURL: issuerB}},
+		{Name: "c", Mode: WebIdentityMode, WebIdentity: &WebIdentity{IssuerURL: issuerC, ProviderARN: providerC, Audience: "example-audience"}},
 	}
 }
 
@@ -79,17 +97,29 @@ func grants() []Grant {
 	return []Grant{
 		{
 			Name:       "a-app-config",
-			Principal:  esoRole,
+			Cluster:    "a",
 			Parameters: []string{"/app/config/", "/shared/endpoint", "standalone"},
 		},
 		{
-			Name:      "a-app-credentials",
-			Principal: esoRole,
+			Name:    "a-app-credentials",
+			Cluster: "a",
 			Parameters: []string{
 				"arn:aws:ssm:" + region + ":" + sourceAccount + ":parameter/app/credentials/",
 				"/app/token",
 			},
 			KMSKeyARN: keyARN,
+		},
+		{
+			Name:           "b-app-config",
+			Cluster:        "b",
+			ServiceAccount: &ServiceAccount{Name: "eso-b-app-config"},
+			Parameters:     []string{"/app/config/"},
+		},
+		{
+			Name:           "c-app-config",
+			Cluster:        "c",
+			ServiceAccount: &ServiceAccount{Namespace: "eso", Name: "c-app-config"},
+			Parameters:     []string{"/app/config/"},
 		},
 	}
 }
@@ -100,6 +130,7 @@ func readersArgs(p pulumi.ProviderResource) ReadersArgs {
 		Provider:            p,
 		AccountID:           sourceAccount,
 		Region:              region,
+		Clusters:            clusters(),
 		Grants:              grants(),
 		PermissionsBoundary: "arn:aws:iam::" + sourceAccount + ":policy/example-boundary",
 		Tags:                map[string]string{"owner": "platform"},
@@ -109,6 +140,7 @@ func readersArgs(p pulumi.ProviderResource) ReadersArgs {
 type outputs struct {
 	clusterRoleARN string
 	readerARNs     map[string]string
+	providerARNs   map[string]string
 }
 
 func run(t *testing.T) ([]recorded, outputs) {
@@ -116,7 +148,7 @@ func run(t *testing.T) ([]recorded, outputs) {
 
 	var (
 		rec = &recorder{}
-		out = outputs{readerARNs: map[string]string{}}
+		out = outputs{readerARNs: map[string]string{}, providerARNs: map[string]string{}}
 		mu  sync.Mutex
 		wg  sync.WaitGroup
 	)
@@ -142,7 +174,7 @@ func run(t *testing.T) ([]recorded, outputs) {
 			return err
 		}
 
-		wg.Add(1 + len(readers.RoleARNs))
+		wg.Add(1 + len(readers.RoleARNs) + len(readers.OIDCProviderARNs))
 		id.RoleARN.ApplyT(func(s string) string {
 			out.clusterRoleARN = s
 			wg.Done()
@@ -154,6 +186,17 @@ func run(t *testing.T) ([]recorded, outputs) {
 			arn.ApplyT(func(s string) string {
 				mu.Lock()
 				out.readerARNs[name] = s
+				mu.Unlock()
+				wg.Done()
+
+				return s
+			})
+		}
+
+		for name, arn := range readers.OIDCProviderARNs {
+			arn.ApplyT(func(s string) string {
+				mu.Lock()
+				out.providerARNs[name] = s
 				mu.Unlock()
 				wg.Done()
 
@@ -200,6 +243,12 @@ func TestResourceSetAndLogicalNames(t *testing.T) {
 		KindIAMRolePolicy + " a-app-config-policy":             "Readers::a-parameter-readers",
 		KindIAMRole + " a-app-credentials":                     "Readers::a-parameter-readers",
 		KindIAMRolePolicy + " a-app-credentials-policy":        "Readers::a-parameter-readers",
+		KindIAMRole + " b-app-config":                          "Readers::a-parameter-readers",
+		KindIAMRolePolicy + " b-app-config-policy":             "Readers::a-parameter-readers",
+		KindIAMRole + " c-app-config":                          "Readers::a-parameter-readers",
+		KindIAMRolePolicy + " c-app-config-policy":             "Readers::a-parameter-readers",
+		// Only b's provider is created: c names an existing one.
+		KindOIDCProvider + " a-parameter-readers-b-oidc": "Readers::a-parameter-readers",
 	}
 
 	var names []string
@@ -263,35 +312,93 @@ func TestTheReaders(t *testing.T) {
 	got, out := run(t)
 	in := func(key string) resource.PropertyMap { return byKey(got)[key].Inputs }
 
-	for _, name := range []string{"a-app-config", "a-app-credentials"} {
+	for name, trust := range map[string]string{
+		"a-app-config":      "reader-trust-pod-identity.json",
+		"a-app-credentials": "reader-trust-pod-identity.json",
+		"b-app-config":      "reader-trust-web-identity.json",
+		"c-app-config":      "reader-trust-web-identity-existing.json",
+	} {
 		role := in(KindIAMRole + " " + name)
 		assert.Equal(t, name, role["name"].StringValue())
 		assert.Equal(t, "arn:aws:iam::"+sourceAccount+":policy/example-boundary", role["permissionsBoundary"].StringValue())
-		golden(t, "reader-trust.json", role["assumeRolePolicy"].StringValue())
+		golden(t, trust, role["assumeRolePolicy"].StringValue())
 
 		policy := in(KindIAMRolePolicy + " " + name + "-policy")
 		assert.Equal(t, name, policy["name"].StringValue())
-		golden(t, name+".json", policy["policy"].StringValue())
+
+		if strings.HasPrefix(name, "a-") {
+			golden(t, name+".json", policy["policy"].StringValue())
+		}
 	}
+
+	provider := in(KindOIDCProvider + " a-parameter-readers-b-oidc")
+	assert.Equal(t, issuerB, provider["url"].StringValue())
+	assert.Equal(t, []resource.PropertyValue{resource.NewProperty(DefaultAudience)}, provider["clientIdLists"].ArrayValue())
+	assert.NotContains(t, provider, resource.PropertyKey("thumbprintLists"), "no thumbprints: IAM fetches them")
+	assert.Equal(t, "platform", provider["tags"].ObjectValue()["owner"].StringValue())
 
 	assert.Equal(t, map[string]string{
 		"a-app-config":      "arn:aws:iam::mock:role/a-app-config",
 		"a-app-credentials": "arn:aws:iam::mock:role/a-app-credentials",
+		"b-app-config":      "arn:aws:iam::mock:role/b-app-config",
+		"c-app-config":      "arn:aws:iam::mock:role/c-app-config",
 	}, out.readerARNs)
+	assert.Equal(t, map[string]string{
+		"b": "arn:aws:iam::mock:oidc-provider/a-parameter-readers-b-oidc",
+		"c": providerC,
+	}, out.providerARNs, "a PodIdentity cluster has no provider")
+}
+
+// A role trusting a provider the component creates waits for it; IAM
+// refuses a trust in a principal that does not exist yet.
+func TestWebIdentityRolesWaitForTheirProvider(t *testing.T) {
+	rec := &recorder{}
+	deps := map[string][]string{}
+
+	require.NoError(t, pulumi.RunErr(func(ctx *pulumi.Context) error {
+		p, err := awspulumi.NewProvider(ctx, "source", &awspulumi.ProviderArgs{})
+		if err != nil {
+			return err
+		}
+
+		_, err = NewReaders(ctx, readersArgs(p))
+
+		return err
+	}, pulumi.WithMocks("example", "stack", &depRecorder{recorder: rec, deps: deps})))
+
+	assert.Contains(t, strings.Join(deps["b-app-config"], " "), "a-parameter-readers-b-oidc")
+	assert.Empty(t, deps["a-app-config"])
+	assert.Empty(t, deps["c-app-config"], "an existing provider is not a resource of this program")
+}
+
+type depRecorder struct {
+	*recorder
+	mu   sync.Mutex
+	deps map[string][]string
+}
+
+func (r *depRecorder) NewResource(args pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
+	if rpc := args.RegisterRPC; rpc != nil && args.TypeToken == KindIAMRole {
+		r.mu.Lock()
+		r.deps[args.Name] = rpc.GetDependencies()
+		r.mu.Unlock()
+	}
+
+	return r.recorder.NewResource(args)
 }
 
 // What each policy grants, said in words rather than read off a golden.
 func TestReaderPolicyIsLeastPrivilege(t *testing.T) {
 	args := readersArgs(nil)
 
-	exact, err := ReaderPolicy(args, Grant{Name: "r", Principal: esoRole, Parameters: []string{"/app/token"}})
+	exact, err := ReaderPolicy(args, Grant{Name: "r", Cluster: "a", Parameters: []string{"/app/token"}})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"Version":"2012-10-17","Statement":[{"Sid":"ReadParameters","Effect":"Allow",
 		"Action":["ssm:GetParameter","ssm:GetParameters"],
 		"Resource":["arn:aws:ssm:`+region+`:`+sourceAccount+`:parameter/app/token"]}]}`, exact,
 		"an exact grant: no GetParametersByPath, no wildcard, no KMS")
 
-	prefix, err := ReaderPolicy(args, Grant{Name: "r", Principal: esoRole, Parameters: []string{"/app/config/"}})
+	prefix, err := ReaderPolicy(args, Grant{Name: "r", Cluster: "a", Parameters: []string{"/app/config/"}})
 	require.NoError(t, err)
 	assert.Contains(t, prefix, `"ssm:GetParametersByPath"`)
 	assert.Contains(t, prefix, `"arn:aws:ssm:`+region+`:`+sourceAccount+`:parameter/app/config","arn:aws:ssm:`+region+`:`+sourceAccount+`:parameter/app/config/*"`)
@@ -301,7 +408,7 @@ func TestReaderPolicyIsLeastPrivilege(t *testing.T) {
 		assert.NotContains(t, prefix, forbidden)
 	}
 
-	withKey, err := ReaderPolicy(args, Grant{Name: "r", Principal: esoRole, Parameters: []string{"/app/token"}, KMSKeyARN: keyARN})
+	withKey, err := ReaderPolicy(args, Grant{Name: "r", Cluster: "a", Parameters: []string{"/app/token"}, KMSKeyARN: keyARN})
 	require.NoError(t, err)
 	assert.Contains(t, withKey, `"kms:ViaService":"ssm.`+region+`.amazonaws.com"`)
 	assert.Contains(t, withKey, `"kms:EncryptionContext:PARAMETER_ARN":["arn:aws:ssm:`+region+`:`+sourceAccount+`:parameter/app/token"]`)
@@ -309,7 +416,7 @@ func TestReaderPolicyIsLeastPrivilege(t *testing.T) {
 	china := args
 	china.Partition, china.Region, china.AccountID = "aws-cn", "cn-example-1", sourceAccount
 	cn, err := ReaderPolicy(china, Grant{
-		Name: "r", Principal: "arn:aws-cn:iam::" + clusterAccount + ":role/eso", Parameters: []string{"/app/token"},
+		Name: "r", Cluster: "a", Parameters: []string{"/app/token"},
 		KMSKeyARN: "arn:aws-cn:kms:cn-example-1:" + sourceAccount + ":key/k",
 	})
 	require.NoError(t, err)
@@ -317,11 +424,32 @@ func TestReaderPolicyIsLeastPrivilege(t *testing.T) {
 	assert.Contains(t, cn, `"arn:aws-cn:ssm:cn-example-1:`+sourceAccount+`:parameter/app/token"`)
 }
 
-func TestReaderTrustIsExactlyThePrincipal(t *testing.T) {
-	trust, err := ReaderTrustPolicy(esoRole)
+func TestReaderTrustFollowsTheClustersMode(t *testing.T) {
+	args := readersArgs(nil)
+
+	pod, err := ReaderTrustPolicy(args, args.Grants[0])
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"Version":"2012-10-17","Statement":[{"Sid":"ExternalSecretsOperator","Effect":"Allow",
-		"Principal":{"AWS":"`+esoRole+`"},"Action":["sts:AssumeRole","sts:TagSession"]}]}`, trust)
+		"Principal":{"AWS":"`+esoRole+`"},"Action":["sts:AssumeRole","sts:TagSession"],
+		"Condition":{"ForAllValues:StringEquals":{"aws:TagKeys":["eks-cluster-arn","eks-cluster-name",
+		"kubernetes-namespace","kubernetes-service-account","kubernetes-pod-name","kubernetes-pod-uid"]}}}]}`, pod,
+		"exactly the cluster's role, and no tag keys but Pod Identity's")
+
+	web, err := ReaderTrustPolicy(args, args.Grants[2])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"Version":"2012-10-17","Statement":[{"Sid":"ExternalSecretsOperator","Effect":"Allow",
+		"Principal":{"Federated":"arn:aws:iam::`+sourceAccount+`:oidc-provider/oidc.b.example.com"},
+		"Action":["sts:AssumeRoleWithWebIdentity"],
+		"Condition":{"StringEquals":{
+			"oidc.b.example.com:sub":"system:serviceaccount:external-secrets:eso-b-app-config",
+			"oidc.b.example.com:aud":"sts.amazonaws.com"}}}]}`, web,
+		"one ServiceAccount's tokens, from the cluster's issuer, for the cluster's audience; no TagSession")
+
+	existing, err := ReaderTrustPolicy(args, args.Grants[3])
+	require.NoError(t, err)
+	assert.Contains(t, existing, `"Federated":"`+providerC+`"`)
+	assert.Contains(t, existing, `"issuer.example.com/clusters/c:sub":"system:serviceaccount:eso:c-app-config"`)
+	assert.Contains(t, existing, `"issuer.example.com/clusters/c:aud":"example-audience"`)
 }
 
 func TestParameterEntries(t *testing.T) {
@@ -369,7 +497,7 @@ func TestParameterEntries(t *testing.T) {
 }
 
 func TestGrantRefusals(t *testing.T) {
-	valid := Grant{Name: "r", Principal: esoRole, Parameters: []string{"/app/token"}}
+	valid := Grant{Name: "r", Cluster: "a", Parameters: []string{"/app/token"}}
 
 	for name, tc := range map[string]struct {
 		edit func(*Grant)
@@ -385,16 +513,16 @@ func TestGrantRefusals(t *testing.T) {
 		"nested prefixes":     {func(g *Grant) { g.Parameters = []string{"/a/", "/a/b/"} }, "covered by the prefix"},
 		"bad role name":       {func(g *Grant) { g.Name = "has space" }, "not an IAM role name"},
 		"long role name":      {func(g *Grant) { g.Name = strings.Repeat("r", 65) }, "not an IAM role name"},
-		"no principal":        {func(g *Grant) { g.Principal = "" }, "Principal"},
-		"wildcard principal":  {func(g *Grant) { g.Principal = "arn:aws:iam::" + clusterAccount + ":role/eso-*" }, "wildcard is not allowed"},
-		"user principal":      {func(g *Grant) { g.Principal = "arn:aws:iam::" + clusterAccount + ":user/someone" }, "not a role ARN"},
-		"account principal":   {func(g *Grant) { g.Principal = "arn:aws:iam::" + clusterAccount + ":root" }, "not a role ARN"},
-		"other partition":     {func(g *Grant) { g.Principal = "arn:aws-cn:iam::" + clusterAccount + ":role/eso" }, "not in partition aws"},
-		"short account":       {func(g *Grant) { g.Principal = "arn:aws:iam::1234:role/eso" }, "12-digit"},
 		"key alias":           {func(g *Grant) { g.KMSKeyARN = "arn:aws:kms:" + region + ":" + sourceAccount + ":alias/aws/ssm" }, "not a KMS key ARN"},
 		"key wildcard":        {func(g *Grant) { g.KMSKeyARN = "arn:aws:kms:" + region + ":" + sourceAccount + ":key/*" }, "not a KMS key ARN"},
 		"key in other region": {func(g *Grant) { g.KMSKeyARN = "arn:aws:kms:eu-example-2:" + sourceAccount + ":key/k" }, "region"},
 		"key not an arn":      {func(g *Grant) { g.KMSKeyARN = "1234abcd" }, "not an ARN"},
+		"too large": {func(g *Grant) {
+			g.Parameters = nil
+			for i := range 200 {
+				g.Parameters = append(g.Parameters, fmt.Sprintf("/app/a-rather-long-parameter-name-%03d", i))
+			}
+		}, "over IAM's 10240"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := valid
@@ -414,31 +542,109 @@ func TestGrantRefusals(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The trust's half of a grant: its cluster, and the ServiceAccount the
+// cluster's mode requires or refuses.
+func TestTrustRefusals(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(*ReadersArgs)
+		why  string
+	}{
+		"unknown cluster": {func(a *ReadersArgs) { a.Grants[0].Cluster = "z" }, `grant.Cluster "z" is not in args.Clusters`},
+		"no cluster":      {func(a *ReadersArgs) { a.Grants[0].Cluster = "" }, `grant.Cluster "" is not in args.Clusters`},
+		"ServiceAccount on a PodIdentity cluster": {func(a *ReadersArgs) {
+			a.Grants[0].ServiceAccount = &ServiceAccount{Name: "x"}
+		}, "a WebIdentity grant on a PodIdentity cluster"},
+		"no ServiceAccount on a WebIdentity cluster": {func(a *ReadersArgs) { a.Grants[2].ServiceAccount = nil }, "grant.ServiceAccount is required"},
+		"bad ServiceAccount name": {func(a *ReadersArgs) {
+			a.Grants[2].ServiceAccount = &ServiceAccount{Name: "Not_A_Name"}
+		}, "not a Kubernetes ServiceAccount name"},
+		"bad namespace": {func(a *ReadersArgs) {
+			a.Grants[2].ServiceAccount = &ServiceAccount{Namespace: "a.b", Name: "x"}
+		}, "not a Kubernetes namespace name"},
+		"both modes' settings": {func(a *ReadersArgs) {
+			a.Clusters[0].WebIdentity = &WebIdentity{IssuerURL: "https://other.example.com"}
+		}, "mutually exclusive"},
+		"no mode":                {func(a *ReadersArgs) { a.Clusters[0].Mode = "" }, "there is no default"},
+		"unknown mode":           {func(a *ReadersArgs) { a.Clusters[0].Mode = "IRSA" }, `"IRSA" is not an identity mode`},
+		"mode without settings":  {func(a *ReadersArgs) { a.Clusters[0].PodIdentity = nil }, "Mode is PodIdentity but PodIdentity is not set"},
+		"web settings, pod mode": {func(a *ReadersArgs) { a.Clusters[1].Mode = PodIdentityMode }, "Mode is PodIdentity but PodIdentity is not set"},
+		"pod settings, web mode": {func(a *ReadersArgs) {
+			a.Clusters[0] = Cluster{Name: "a", Mode: WebIdentityMode, PodIdentity: &PodIdentity{RoleARN: esoRole}}
+		}, "Mode is WebIdentity but WebIdentity is not set"},
+		"wildcard principal": {func(a *ReadersArgs) {
+			a.Clusters[0].PodIdentity.RoleARN = "arn:aws:iam::" + clusterAccount + ":role/eso-*"
+		}, "no wildcards"},
+		"user principal": {func(a *ReadersArgs) {
+			a.Clusters[0].PodIdentity.RoleARN = "arn:aws:iam::" + clusterAccount + ":user/someone"
+		}, "not a role ARN"},
+		"account principal": {func(a *ReadersArgs) { a.Clusters[0].PodIdentity.RoleARN = "arn:aws:iam::" + clusterAccount + ":root" }, "not a role ARN"},
+		"other partition": {func(a *ReadersArgs) {
+			a.Clusters[0].PodIdentity.RoleARN = "arn:aws-cn:iam::" + clusterAccount + ":role/eso"
+		}, "not in partition aws"},
+		"http issuer":       {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = "http://oidc.b.example.com" }, "an issuer is an https URL"},
+		"slash issuer":      {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = issuerB + "/" }, "no trailing slash"},
+		"port issuer":       {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = "https://oidc.b.example.com:8443" }, "no port"},
+		"query issuer":      {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.IssuerURL = issuerB + "?x=1" }, "no query"},
+		"wildcard audience": {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.Audience = "*" }, "empty or a pattern"},
+		"provider of another issuer": {func(a *ReadersArgs) {
+			a.Clusters[2].WebIdentity.ProviderARN = "arn:aws:iam::" + sourceAccount + ":oidc-provider/oidc.b.example.com"
+		}, "is not this account's provider for"},
+		"provider in another account": {func(a *ReadersArgs) {
+			a.Clusters[2].WebIdentity.ProviderARN = "arn:aws:iam::" + clusterAccount + ":oidc-provider/issuer.example.com/clusters/c"
+		}, "is not this account's provider for"},
+		"thumbprints with an existing provider": {func(a *ReadersArgs) {
+			a.Clusters[2].WebIdentity.Thumbprints = []string{strings.Repeat("a", 40)}
+		}, "an existing one keeps its own"},
+		"bad thumbprint": {func(a *ReadersArgs) { a.Clusters[1].WebIdentity.Thumbprints = []string{"abc"} }, "not a SHA-1 thumbprint"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := readersArgs(nil)
+			args.Clusters = clusters()
+			args.Grants = grants()
+			tc.edit(&args)
+
+			var errs []string
+
+			for _, g := range args.Grants {
+				if _, err := ReaderTrustPolicy(args, g); err != nil {
+					errs = append(errs, err.Error())
+				}
+			}
+
+			require.NotEmpty(t, errs)
+			assert.Contains(t, strings.Join(errs, "\n"), tc.why)
+		})
+	}
+}
+
 func TestSourceRoleRefusals(t *testing.T) {
 	for role, why := range map[string]string{
-		"arn:aws:iam::" + sourceAccount + ":role/*":                 "every role in account",
-		"arn:aws:iam::" + sourceAccount + ":role/path/*":            "",
-		"arn:aws:iam::" + sourceAccount + ":role//*":                "empty path segment",
-		"arn:aws:iam::*:role/eso":                                   "12-digit",
-		"arn:*:iam::" + sourceAccount + ":role/eso":                 "partition",
-		"arn:aws:iam::" + sourceAccount + ":*":                      "not a role ARN",
-		"arn:aws:iam::" + sourceAccount + ":user/eso":               "not a role ARN",
-		"arn:aws:sts::" + sourceAccount + ":role/eso":               "not an IAM ARN",
-		"arn:aws:iam:" + region + ":" + sourceAccount + ":role/eso": "has no region",
-		"arn:aws:iam::" + sourceAccount + ":role/a?":                "not a role ARN",
-		"arn:aws:iam::" + sourceAccount + ":role/":                  "not a role ARN",
-		"arn:aws:iam::" + sourceAccount + ":role/path/":             "role name",
+		"arn:aws:iam::" + sourceAccount + ":role/*":                          "no wildcards",
+		"arn:aws:iam::" + sourceAccount + ":role/eso-reader-*":               "no wildcards",
+		"arn:aws:iam::" + sourceAccount + ":role/path/*":                     "no wildcards",
+		"arn:aws:iam::" + sourceAccount + ":role/a?":                         "no wildcards",
+		"arn:aws:iam::" + sourceAccount + ":role//a":                         "empty path segment",
+		"arn:aws:iam::*:role/eso":                                            "12-digit",
+		"arn:*:iam::" + sourceAccount + ":role/eso":                          "partition",
+		"arn:aws:iam::" + sourceAccount + ":user/eso":                        "not a role ARN",
+		"arn:aws:sts::" + sourceAccount + ":role/eso":                        "not an IAM ARN",
+		"arn:aws:iam:" + region + ":" + sourceAccount + ":role/eso":          "has no region",
+		"arn:aws:iam::" + sourceAccount + ":role/":                           "not a role ARN",
+		"arn:aws:iam::" + sourceAccount + ":role/path/":                      "role name",
+		"arn:aws:iam::" + sourceAccount + ":role/" + strings.Repeat("r", 65): "role name",
 	} {
-		_, err := parseRoleARN(role, true)
-		if why == "" {
-			// A path pattern names the path: allowed.
-			require.NoError(t, err, role)
-
-			continue
-		}
-
+		_, err := parseRoleARN(role)
 		require.Error(t, err, "%q must be refused", role)
 		assert.Contains(t, err.Error(), why, role)
+	}
+
+	for _, role := range []string{
+		"arn:aws:iam::" + sourceAccount + ":role/eso",
+		"arn:aws:iam::" + sourceAccount + ":role/path/to/eso",
+		"arn:aws-cn:iam::" + sourceAccount + ":role/eso",
+	} {
+		_, err := parseRoleARN(role)
+		require.NoError(t, err, role)
 	}
 }
 
@@ -483,6 +689,20 @@ func TestInvalidArgsRegisterNothing(t *testing.T) {
 
 			return err
 		}, "not an EKS cluster ARN"},
+		"cluster without a mode": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := clusterArgs(p)
+			a.Mode = ""
+			_, err := NewClusterIdentity(ctx, a)
+
+			return err
+		}, "args.Mode is empty"},
+		"cluster in WebIdentity mode": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := clusterArgs(p)
+			a.Mode = WebIdentityMode
+			_, err := NewClusterIdentity(ctx, a)
+
+			return err
+		}, "no identity of its own in AWS"},
 		"cluster without a provider": {func(ctx *pulumi.Context, _ pulumi.ProviderResource) error {
 			_, err := NewClusterIdentity(ctx, clusterArgs(nil))
 
@@ -530,6 +750,61 @@ func TestInvalidArgsRegisterNothing(t *testing.T) {
 
 			return err
 		}, "Grants[1] (a-app-credentials)"},
+		"readers with an unused cluster": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := readersArgs(p)
+			a.Clusters = append(a.Clusters, Cluster{Name: "d", Mode: PodIdentityMode, PodIdentity: &PodIdentity{RoleARN: esoRole}})
+			_, err := NewReaders(ctx, a)
+
+			return err
+		}, `no grant names cluster "d"`},
+		"readers with a duplicate cluster": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := readersArgs(p)
+			a.Clusters = append(a.Clusters, a.Clusters[0])
+			_, err := NewReaders(ctx, a)
+
+			return err
+		}, `duplicate name "a"`},
+		"readers with one issuer twice": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := readersArgs(p)
+			a.Clusters = append(a.Clusters, Cluster{Name: "d", Mode: WebIdentityMode, WebIdentity: &WebIdentity{IssuerURL: "https://OIDC.b.example.com"}})
+			a.Grants = append(a.Grants, Grant{Name: "d", Cluster: "d", ServiceAccount: &ServiceAccount{Name: "d"}, Parameters: []string{"/d"}})
+			_, err := NewReaders(ctx, a)
+
+			return err
+		}, "IAM registers one provider per issuer"},
+		"readers with one ServiceAccount for two grants": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := readersArgs(p)
+			a.Grants = append(a.Grants, Grant{
+				Name: "b-other", Cluster: "b", ServiceAccount: &ServiceAccount{Namespace: DefaultNamespace, Name: "eso-b-app-config"}, Parameters: []string{"/other"},
+			})
+			_, err := NewReaders(ctx, a)
+
+			return err
+		}, "is grant b-app-config's already"},
+		"cluster with a pattern source role": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := clusterArgs(p)
+			a.SourceRoles = []string{"arn:aws:iam::" + sourceAccount + ":role/eso-reader-*"}
+			_, err := NewClusterIdentity(ctx, a)
+
+			return err
+		}, "no wildcards"},
+		"cluster with a source role in another partition": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := clusterArgs(p)
+			a.SourceRoles = []string{"arn:aws-cn:iam::" + sourceAccount + ":role/eso"}
+			_, err := NewClusterIdentity(ctx, a)
+
+			return err
+		}, "not in the cluster's partition"},
+		"cluster with too many source roles": {func(ctx *pulumi.Context, p pulumi.ProviderResource) error {
+			a := clusterArgs(p)
+			a.SourceRoles = nil
+			for i := range 300 {
+				a.SourceRoles = append(a.SourceRoles, fmt.Sprintf("arn:aws:iam::%s:role/reader-%03d", sourceAccount, i))
+			}
+			_, err := NewClusterIdentity(ctx, a)
+
+			return err
+		}, "over IAM's 10240"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := &recorder{}

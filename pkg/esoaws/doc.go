@@ -4,7 +4,11 @@
 // names a cluster, an account, a region or a parameter, and nothing knows
 // which system writes the parameters.
 //
-// The chain has three links and one cross-account hop:
+// Each cluster has exactly one IdentityMode, with no default; the two are
+// mutually exclusive, because an ambient controller identity beside
+// per-store identities is one that any store without auth borrows.
+//
+// PodIdentityMode, for EKS: one cross-account hop from an ambient identity.
 //
 //	ESO's identity on the cluster   (NewClusterIdentity, in the cluster's account)
 //	  -- sts:AssumeRole, the only cross-account call -->
@@ -12,16 +16,26 @@
 //	  -- ssm:GetParameter*, same account -->
 //	the granted parameters
 //
-// ESO calls SSM with the reader role's credentials, so the read and the
-// decryption of a SecureString happen inside the parameters' own account:
-// parameters encrypted with the account's default aws/ssm key are readable,
-// and a customer-managed key is needed only when the parameters already use
-// one (Grant.KMSKeyARN).
+// WebIdentityMode, for any cluster whose ServiceAccount issuer AWS can
+// reach: nothing ambient. Each store names its own ServiceAccount, and
+// that ServiceAccount's token assumes the store's reader role directly.
+//
+//	a store's ServiceAccount token  (signed by the cluster's issuer)
+//	  -- sts:AssumeRoleWithWebIdentity, verified by the IAM OIDC provider
+//	     NewReaders registers for the cluster -->
+//	one reader role per grant, trusting that one ServiceAccount
+//	  -- ssm:GetParameter*, same account -->
+//	the granted parameters
+//
+// Either way ESO calls SSM with the reader role's credentials, so the read
+// and the decryption of a SecureString happen inside the parameters' own
+// account: parameters encrypted with the account's default aws/ssm key are
+// readable, and a customer-managed key is needed only when the parameters
+// already use one (Grant.KMSKeyARN).
 //
 // On the cluster, charts/openbao-consumers renders one ClusterSecretStore per
-// (cluster, grant) from its awsStores values: provider aws, service
-// ParameterStore, the reader role's ARN as the role to assume, and the
-// namespaces allowed to use it. docs/esoaws.md walks the whole chain.
+// (cluster, grant) from its awsStores values, in the mode its aws.identity
+// names. docs/esoaws.md walks both chains.
 //
 // # Resources
 //
@@ -34,8 +48,12 @@
 //	  aws:iam/rolePolicy:RolePolicy                              <Name>-policy
 //	  aws:eks/podIdentityAssociation:PodIdentityAssociation      <Name>-pia
 //	NewReaders          truvity:secrets/esoaws:Readers          <Name>
+//	  aws:iam/openIdConnectProvider:OpenIdConnectProvider        <Name>-<cluster>-oidc
 //	  aws:iam/role:Role                                          <grant>
 //	  aws:iam/rolePolicy:RolePolicy                              <grant>-policy
+//
+// The OIDC provider is registered only for a WebIdentity cluster that names
+// no existing one (WebIdentity.ProviderARN).
 //
 // The options a constructor takes go to the component; its children inherit
 // them through the parent, and use the Provider the arguments name.

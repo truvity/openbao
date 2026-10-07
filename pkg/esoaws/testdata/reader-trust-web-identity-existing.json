@@ -1,0 +1,21 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "sts:AssumeRoleWithWebIdentity"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "issuer.example.com/clusters/c:aud": "example-audience",
+          "issuer.example.com/clusters/c:sub": "system:serviceaccount:eso:c-app-config"
+        }
+      },
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::444455556666:oidc-provider/issuer.example.com/clusters/c"
+      },
+      "Sid": "ExternalSecretsOperator"
+    }
+  ],
+  "Version": "2012-10-17"
+}

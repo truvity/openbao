@@ -2,6 +2,7 @@ package esoaws
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -15,7 +16,39 @@ const (
 	DefaultNamespace = "external-secrets"
 	// DefaultServiceAccount is the controller's ServiceAccount there.
 	DefaultServiceAccount = "external-secrets"
+	// DefaultAudience is the audience a web-identity token carries for STS,
+	// and the one External Secrets requests when a ServiceAccount names none.
+	DefaultAudience = "sts.amazonaws.com"
+	// MaxInlinePolicySize is IAM's limit on one role's inline policies, in
+	// characters. A document above it is refused before anything registers.
+	MaxInlinePolicySize = 10240
 )
+
+// IdentityMode is how one cluster's External Secrets proves who it is to
+// AWS. The modes are mutually exclusive per cluster, and there is no
+// default: the zero value is refused wherever a mode is asked for.
+type IdentityMode string
+
+const (
+	// PodIdentityMode is the mode where the External Secrets controller holds AWS credentials
+	// of its own, through EKS Pod Identity (NewClusterIdentity), and assumes
+	// each grant's reader role with them. Its stores name no auth.
+	PodIdentityMode IdentityMode = "PodIdentity"
+	// WebIdentityMode is the mode where nothing on the cluster holds AWS
+	// credentials. Each
+	// store names its own ServiceAccount, whose token assumes the store's
+	// reader role through the cluster's OIDC issuer, registered in the
+	// parameters' account.
+	WebIdentityMode IdentityMode = "WebIdentity"
+)
+
+// podIdentityTagKeys are the session tags EKS Pod Identity sets: the only
+// tags a session that assumes a role of this package may carry, so a store
+// cannot add its own (External Secrets' sessionTags) to a reader's session.
+var podIdentityTagKeys = []string{
+	"eks-cluster-arn", "eks-cluster-name", "kubernetes-namespace",
+	"kubernetes-service-account", "kubernetes-pod-name", "kubernetes-pod-uid",
+}
 
 var (
 	accountIDRe = regexp.MustCompile(`^[0-9]{12}$`)
@@ -24,8 +57,16 @@ var (
 	// An IAM role name: at most 64 of these characters.
 	roleNameRe = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
 	// The resource part of a role ARN: "role/", an optional path and the
-	// name. A pattern may carry '*'.
-	rolePatternRe = regexp.MustCompile(`^role/[A-Za-z0-9+=,.@_/*-]+$`)
+	// name.
+	roleResourceRe = regexp.MustCompile(`^role/[A-Za-z0-9+=,.@_/-]+$`)
+	// An issuer's host and path, as an IAM OIDC provider's URL takes them.
+	issuerHostPathRe = regexp.MustCompile(`^[A-Za-z0-9.-]+(/[A-Za-z0-9._~%-]+)*$`)
+	// A Kubernetes namespace (DNS-1123 label) and ServiceAccount name
+	// (DNS-1123 subdomain).
+	namespaceRe      = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	serviceAccountRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$`)
+	// A certificate thumbprint as IAM takes it: SHA-1, hex.
+	thumbprintRe = regexp.MustCompile(`^[0-9A-Fa-f]{40}$`)
 	// One parameter name or prefix, without the leading slash of a
 	// hierarchical name: letters, digits, '.', '-', '_' and '/'.
 	parameterRe = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
@@ -55,16 +96,17 @@ func parseARN(s string) (arn, error) {
 	return a, nil
 }
 
-// parseRoleARN accepts an IAM role ARN. With patterns, the role's path and
-// name may carry '*', but not before a literal character other than '/':
-// "role/*" and "role/a/*" would be any role in the account (or under a
-// path), which is the account's whole trust, not a list of readers. The
-// partition and the account are never patterns.
-func parseRoleARN(s string, patterns bool) (arn, error) {
+// parseRoleARN accepts exactly one IAM role ARN: no wildcard anywhere. A
+// reader role's ARN is predictable (arn:<partition>:iam::<account>:role/<name>),
+// so a list of them can be written before the roles exist, and a pattern
+// would trust every role someone later creates under a matching name.
+func parseRoleARN(s string) (arn, error) {
 	a, err := parseARN(s)
 	if err != nil {
 		return arn{}, err
 	}
+
+	name := strings.TrimPrefix(a.Resource, "role/")
 
 	switch {
 	case a.Service != "iam":
@@ -73,32 +115,41 @@ func parseRoleARN(s string, patterns bool) (arn, error) {
 		return arn{}, fmt.Errorf("%q: an IAM ARN has no region", s)
 	case !accountIDRe.MatchString(a.Account):
 		return arn{}, fmt.Errorf("%q: account %q is not a 12-digit account id", s, a.Account)
-	case !rolePatternRe.MatchString(a.Resource):
+	case strings.ContainsAny(s, "*?"):
+		return arn{}, fmt.Errorf("%q: no wildcards; name one role", s)
+	case !roleResourceRe.MatchString(a.Resource):
 		return arn{}, fmt.Errorf("%q is not a role ARN (role/<path><name>)", s)
 	case strings.Contains(a.Resource, "//"):
 		return arn{}, fmt.Errorf("%q: empty path segment", s)
-	}
-
-	name := strings.TrimPrefix(a.Resource, "role/")
-
-	star := strings.IndexByte(name, '*')
-	if star < 0 {
-		if strings.HasSuffix(name, "/") || !roleNameRe.MatchString(name[strings.LastIndexByte(name, '/')+1:]) {
-			return arn{}, fmt.Errorf("%q: the role name is not 1 to 64 of A-Z a-z 0-9 +=,.@_-", s)
-		}
-
-		return a, nil
-	}
-
-	if !patterns {
-		return arn{}, fmt.Errorf("%q: a wildcard is not allowed here; name one role", s)
-	}
-
-	if strings.Trim(name[:star], "/") == "" {
-		return arn{}, fmt.Errorf("%q matches every role in account %s; name the roles, or a prefix of their names", s, a.Account)
+	case strings.HasSuffix(name, "/") || !roleNameRe.MatchString(name[strings.LastIndexByte(name, '/')+1:]):
+		return arn{}, fmt.Errorf("%q: the role name is not 1 to 64 of A-Z a-z 0-9 +=,.@_-", s)
 	}
 
 	return a, nil
+}
+
+// parseIssuer accepts an OIDC issuer URL as IAM registers it: https, a
+// host, an optional path, nothing else. It returns the URL without its
+// scheme, which is how IAM names the provider and its condition keys.
+func parseIssuer(raw string) (string, error) {
+	u, err := url.Parse(raw)
+
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%q is not a URL: %w", raw, err)
+	case u.Scheme != "https":
+		return "", fmt.Errorf("%q: an issuer is an https URL", raw)
+	case u.Host == "" || u.Port() != "" || u.User != nil:
+		return "", fmt.Errorf("%q: an issuer is https://<host>[/<path>], with no port or user", raw)
+	case u.RawQuery != "" || u.Fragment != "" || strings.Contains(raw, "?") || strings.Contains(raw, "#"):
+		return "", fmt.Errorf("%q: an issuer has no query or fragment", raw)
+	case strings.HasSuffix(raw, "/"):
+		return "", fmt.Errorf("%q: no trailing slash; the issuer must equal the tokens' iss claim", raw)
+	case !issuerHostPathRe.MatchString(u.Host + u.Path):
+		return "", fmt.Errorf("%q: the host or path has characters an IAM OIDC provider does not take", raw)
+	}
+
+	return strings.ToLower(u.Host) + u.Path, nil
 }
 
 // parsePermissionsBoundary accepts an empty string or an IAM managed
