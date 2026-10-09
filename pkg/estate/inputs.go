@@ -325,6 +325,10 @@ type (
 		Approver string
 		Viewer   string
 		DBA      string
+		// DBLevels are the roles of a project's database groups
+		// ({env}:{project}:{level}), each signing with its own credential
+		// role (PKI.DBProjectRole). Empty = none.
+		DBLevels []string
 	}
 
 	// PKI is the private PKI's inputs.
@@ -353,7 +357,10 @@ type (
 		// clients sign with; RestoreRole the role the restore check issues
 		// from.
 		DBClientRole string `yaml:"dbClientRole"`
-		RestoreRole  string `yaml:"restoreRole"`
+		// DBProjectRole is the prefix of the per-project, per-level
+		// credential roles: {DBProjectRole}-{project}-{level}. Empty = none.
+		DBProjectRole string `yaml:"dbProjectRole,omitempty"`
+		RestoreRole   string `yaml:"restoreRole"`
 		// Legacy is the self-signed chain still served beside the contract's.
 		Legacy Legacy `yaml:"legacy"`
 		// LegacyRoleIssuers maps an environment to the issuer whose name its

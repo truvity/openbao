@@ -119,7 +119,9 @@ func environmentSpec(in *Inputs, cluster *Cluster, writers []Writer, desired *De
 		return builder.Environment{}, err
 	}
 
-	environment.Grants = groupGrants(in, env, dbClient)
+	environment.Grants = groupGrants(in, env, dbClient, func(role string) (builder.Clause, bool) {
+		return credentialSign(in, desired, env, role)
+	})
 
 	if env == in.Management {
 		environment.Secrets = slices.Clone(in.CISecrets)
@@ -484,6 +486,30 @@ func dbClientRole(in *Inputs, desired *Desired, env string) (builder.Clause, err
 	return builder.Clause{}, fmt.Errorf("estate: %s has no private issuing CA to sign database clients with", env)
 }
 
+// credentialSign is the clause that signs with a credential role of the
+// environment's private issuing CA, and whether the contract declares it.
+func credentialSign(in *Inputs, desired *Desired, env, role string) (builder.Clause, bool) {
+	for i := range desired.Namespaces {
+		namespace := &desired.Namespaces[i]
+		if namespace.Name != env {
+			continue
+		}
+
+		for j := range namespace.IssuingCAs {
+			issuing := &namespace.IssuingCAs[j]
+			if issuing.TrustDomain != in.PKI.Private {
+				continue
+			}
+
+			if slices.ContainsFunc(issuing.CredentialRoles, func(r CredentialRole) bool { return r.Name == role }) {
+				return builder.Sign(issuing.Mount, role), true
+			}
+		}
+	}
+
+	return builder.Clause{}, false
+}
+
 // groupGrants are the groups people hold in one environment.
 //
 // The writer reaches everything, every project's own namespace included.
@@ -496,7 +522,13 @@ func dbClientRole(in *Inputs, desired *Desired, env string) (builder.Clause, err
 // group and every project's DBA group, on the one sign path: the
 // certificate names only its holder, and each database maps its own
 // holders.
-func groupGrants(in *Inputs, env string, dbClient builder.Clause) []builder.Grant {
+//
+// A project's level groups ({env}:{project}:{level}, Groups.DBLevels) each
+// sign with ONE role of their own, {PKI.DBProjectRole}-{project}-{level},
+// whose pinned OU names the database role the certificate opens. Only
+// where the contract declares that role: a project without it has no such
+// group grant.
+func groupGrants(in *Inputs, env string, dbClient builder.Clause, signs func(role string) (builder.Clause, bool)) []builder.Grant {
 	groups := &in.Groups
 	grants := []builder.Grant{{Name: groups.Name(env, groups.OpenBAO, groups.Writer), Access: builder.Access{builder.All()}}}
 
@@ -523,6 +555,17 @@ func groupGrants(in *Inputs, env string, dbClient builder.Clause) []builder.Gran
 		}
 
 		grants = append(grants, builder.Grant{Name: dba, Access: builder.Access{dbClient}})
+
+		for _, level := range groups.DBLevels {
+			group := groups.Name(env, project, level)
+			if !groups.Holds(group) || in.PKI.DBProjectRole == "" {
+				continue
+			}
+
+			if clause, ok := signs(fmt.Sprintf("%s-%s-%s", in.PKI.DBProjectRole, project, level)); ok {
+				grants = append(grants, builder.Grant{Name: group, Access: builder.Access{clause}})
+			}
+		}
 	}
 
 	return grants
