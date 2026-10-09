@@ -173,7 +173,12 @@ type (
 		// Name tells the fleet from the others in its environment.
 		Name string `yaml:"name"`
 		// Domain is the one domain its host role allows.
-		Domain          string `yaml:"domain"`
+		Domain string `yaml:"domain"`
+		// Bare also admits the domain itself, and Subdomains (default true)
+		// the names below it. Unset, the role allows the subdomains only;
+		// `bare: true` with `subdomains: false` allows exactly one name.
+		Bare            bool   `yaml:"bare,omitempty"`
+		Subdomains      *bool  `yaml:"subdomains,omitempty"`
 		InstanceRoleARN string `yaml:"instanceRoleArn"`
 		// AuthRole, SigningRole and Policy are the fleet's own login role,
 		// host role and the policy joining them.

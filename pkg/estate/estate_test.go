@@ -77,10 +77,15 @@ func TestBuildRefuses(t *testing.T) {
 		"a writer declared twice":  func(in *estate.Inputs) { in.Writers = append(in.Writers, in.Writers[0]) },
 		"an exporter with a path":  func(in *estate.Inputs) { in.Exporters[0].Prefixes["ops"] = []string{"a/b"} },
 		"a fleet with no role ARN": func(in *estate.Inputs) { in.HostFleets[0].InstanceRoleARN = "" },
-		"no PKI contract":          func(in *estate.Inputs) { in.PKI.Contract = nil },
-		"a domain with no issuer":  func(in *estate.Inputs) { delete(in.PKI.ClusterIssuers, "origin") },
-		"no database client role":  func(in *estate.Inputs) { in.PKI.DBClientRole = "nobody" },
-		"a CI read of a writer's":  func(in *estate.Inputs) { in.CISecrets[0].Path = "backup/key" },
+		"a fleet allowing nothing": func(in *estate.Inputs) {
+			off := false
+			in.HostFleets[0].Subdomains = &off
+		},
+		"a fleet with a wildcard": func(in *estate.Inputs) { in.HostFleets[0].Domain = "*.edge.example.net" },
+		"no PKI contract":         func(in *estate.Inputs) { in.PKI.Contract = nil },
+		"a domain with no issuer": func(in *estate.Inputs) { delete(in.PKI.ClusterIssuers, "origin") },
+		"no database client role": func(in *estate.Inputs) { in.PKI.DBClientRole = "nobody" },
+		"a CI read of a writer's": func(in *estate.Inputs) { in.CISecrets[0].Path = "backup/key" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := example.Inputs(t, "testdata/contract.yaml")

@@ -130,6 +130,11 @@ type (
 		// under another's.
 		SigningRole string `yaml:"signingRole"`
 		Domain      string `yaml:"domain"`
+		// Bare admits the domain itself and Subdomains (default true, when
+		// unset) the names below it. One of them must hold; `bare` with
+		// `subdomains: false` allows exactly the one name.
+		Bare       bool  `yaml:"bare,omitempty"`
+		Subdomains *bool `yaml:"subdomains,omitempty"`
 		// Policy is the auth role's policy: `update` on the signing role's
 		// sign path.
 		Policy string `yaml:"policy"`
@@ -250,6 +255,15 @@ func hostLogins(namespace string, auth *HostAuth, logins []HostLogin, ssh *SSH, 
 			return nil, nil, fmt.Errorf("builder: namespace %q: host login %q has no domain", namespace, login.Role)
 		}
 
+		if strings.Contains(login.Domain, "*") {
+			return nil, nil, fmt.Errorf("builder: namespace %q: host login %q allows %q, which is a wildcard: host domains are literal names only", namespace, login.Role, login.Domain)
+		}
+
+		subdomains := login.Subdomains == nil || *login.Subdomains
+		if !login.Bare && !subdomains {
+			return nil, nil, fmt.Errorf("builder: namespace %q: host login %q allows neither the bare domain nor subdomains, so it could sign nothing", namespace, login.Role)
+		}
+
 		mount.Roles = append(mount.Roles, model.AWSAuthRole{
 			Name:                  login.Role,
 			BoundIAMPrincipalARNs: []string{login.InstanceRoleARN},
@@ -263,7 +277,8 @@ func hostLogins(namespace string, auth *HostAuth, logins []HostLogin, ssh *SSH, 
 		(*host)[0].Roles = append((*host)[0].Roles, ssh.Shape.hostRole(&SSHHostRole{
 			Name:       login.SigningRole,
 			Domains:    []string{login.Domain},
-			Subdomains: true,
+			Bare:       login.Bare,
+			Subdomains: subdomains,
 		}))
 
 		policies = append(policies, model.Policy{

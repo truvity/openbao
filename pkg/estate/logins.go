@@ -451,6 +451,8 @@ func fleetLogins(in *Inputs, environment *builder.Environment, env string) error
 			InstanceRoleARN: fleet.InstanceRoleARN,
 			SigningRole:     fleet.SigningRole,
 			Domain:          fleet.Domain,
+			Bare:            fleet.Bare,
+			Subdomains:      fleet.Subdomains,
 			Policy:          fleet.Policy,
 		})
 	}

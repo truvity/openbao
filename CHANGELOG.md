@@ -5,6 +5,10 @@ heading here is a patch cut automatically for dependency bumps alone; its
 GitHub Release lists them. Both charts are released at every version, and
 from v0.2.0 on the Go module and `openbaoctl` with them.
 
+## Unreleased
+
+- **`pkg/estate`, `pkg/builder`: a host fleet's ssh-host role can allow exactly one name.** `HostFleet` and `HostLogin` take `bare` and `subdomains` (a pointer; unset means true): `bare: true` with `subdomains: false` renders `allowed_domains: <domain>`, `allow_bare_domains: true`, `allow_subdomains: false`. Unset, a fleet renders exactly as before (subdomains only). A fleet that allows neither, or a wildcard domain, is refused.
+
 ## v0.41.0
 
 - **`pkg/estate`: the database level groups no longer depend on the DBA group, and the client and DBA groups are granted only where they hold a policy.** Until now a project's level groups (`Groups.DBLevels`) were granted inside the loop over projects whose DBA group holds a policy, so an estate that retired the DBA group lost its level grants with it. The levels are now granted on their own, and the environment's database client group and each project's DBA group get their sign grant only when `Groups.Holds` says they hold a policy (every existing estate says yes, so nothing changes for it). The `PKI.DBClientRole` credential role must still be declared.

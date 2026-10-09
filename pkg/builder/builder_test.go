@@ -259,6 +259,31 @@ func TestHostLogins(t *testing.T) {
 	assert.Equal(t, []string{"ssh-host/sign/edge"}, paths(policyOf(t, dev, "edge-host-sign").Rules))
 }
 
+func ptr[T any](v T) *T { return &v }
+
+// A host login's role defaults to the subdomains only; bare with no
+// subdomains allows exactly one name.
+func TestHostLoginNameShape(t *testing.T) {
+	_, built := example(t)
+	edge := namespaceOf(t, built, "dev").SSHHost[0].Roles[1]
+	assert.False(t, edge.AllowBareDomains, "unset: not bare")
+	assert.True(t, edge.AllowSubdomains, "unset: subdomains")
+
+	spec, _ := example(t)
+	login := &spec.Environments[1].HostLogins[0]
+	login.Domain = "host.example.net"
+	login.Bare = true
+	login.Subdomains = ptr(false)
+
+	built2, err := spec.Build()
+	require.NoError(t, err)
+
+	exact := namespaceOf(t, built2, "dev").SSHHost[0].Roles[1]
+	assert.Equal(t, []string{"host.example.net"}, exact.AllowedDomains)
+	assert.True(t, exact.AllowBareDomains)
+	assert.False(t, exact.AllowSubdomains)
+}
+
 // The root namespace holds the jobs' mount, the web UI's door and the
 // operators-only mount; the operators' door is the bootstrap's.
 func TestRoot(t *testing.T) {
@@ -327,6 +352,8 @@ func TestBuildRefuses(t *testing.T) {
 		{"a host login with no host CA", func(s *builder.Spec) { s.Environments[1].SSH.Host = nil }, "no SSH host CA"},
 		{"a host login with no mount", func(s *builder.Spec) { s.Environments[1].HostAuth = nil }, "no AWS auth mount"},
 		{"a host login with no ARN", func(s *builder.Spec) { s.Environments[1].HostLogins[0].InstanceRoleARN = "" }, "no instance role ARN"},
+		{"a host login allowing nothing", func(s *builder.Spec) { s.Environments[1].HostLogins[0].Subdomains = ptr(false) }, "neither the bare domain nor subdomains"},
+		{"a host login with a wildcard domain", func(s *builder.Spec) { s.Environments[1].HostLogins[0].Domain = "*.edge.example.net" }, "wildcard"},
 		{"a secret inside a reserved prefix", func(s *builder.Spec) { s.Environments[0].Secrets[0].Path = "uploads/key" }, "inside uploader's prefix"},
 		{"a secret with no key", func(s *builder.Spec) { s.Environments[0].Secrets[0].Path = "ci" }, "not <prefix>/<key>"},
 		{"a grant with an unknown op", func(s *builder.Spec) { s.Environments[1].Grants[0].Access = builder.Access{{Op: "own"}} }, `op "own" is unknown`},
