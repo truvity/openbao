@@ -167,7 +167,7 @@ type (
 )
 
 // ValidateOrganizationalUnit accepts an empty OU or a lowercase identifier
-// (letters, digits, '_'), at most 63 characters: nothing a distinguished
+// (letters, digits, '_' and '-'), at most 63 characters: nothing a distinguished
 // name would have to escape, so a relying party can match it exactly.
 func ValidateOrganizationalUnit(ou string) error {
 	if ou == "" {
@@ -175,13 +175,13 @@ func ValidateOrganizationalUnit(ou string) error {
 	}
 
 	if len(ou) > 63 || !organizationalUnitPattern.MatchString(ou) {
-		return fmt.Errorf("%q is not a lowercase identifier of at most 63 characters (a-z, 0-9, _)", ou)
+		return fmt.Errorf("%q is not a lowercase identifier of at most 63 characters (a-z, 0-9, _, -)", ou)
 	}
 
 	return nil
 }
 
-var organizationalUnitPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var organizationalUnitPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 // String is `<namespace>/<mount>/<issuer>`, `root` for root.
 func (r IssuerRef) String() string {
