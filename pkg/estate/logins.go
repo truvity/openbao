@@ -519,15 +519,15 @@ func credentialSign(in *Inputs, desired *Desired, env, role string) (builder.Cla
 // drift apart; a project with a namespace of its own is addressed there.
 //
 // The database client role admits the UNION of the environment's client
-// group and every project's DBA group, on the one sign path: the
-// certificate names only its holder, and each database maps its own
-// holders.
+// group and every project's DBA group, on the one sign path, for whichever
+// of those groups hold a policy (Groups.Holds): the certificate names only
+// its holder, and each database maps its own holders.
 //
 // A project's level groups ({env}:{project}:{level}, Groups.DBLevels) each
 // sign with ONE role of their own, {PKI.DBProjectRole}-{project}-{level},
 // whose pinned OU names the database role the certificate opens. Only
 // where the contract declares that role: a project without it has no such
-// group grant.
+// group grant. They do not depend on the DBA group.
 func groupGrants(in *Inputs, env string, dbClient builder.Clause, signs func(role string) (builder.Clause, bool)) []builder.Grant {
 	groups := &in.Groups
 	grants := []builder.Grant{{Name: groups.Name(env, groups.OpenBAO, groups.Writer), Access: builder.Access{builder.All()}}}
@@ -546,15 +546,17 @@ func groupGrants(in *Inputs, env string, dbClient builder.Clause, signs func(rol
 		}
 	}
 
-	grants = append(grants, builder.Grant{Name: groups.Name(env, groups.Database, groups.DatabaseClient), Access: builder.Access{dbClient}})
+	// The environment's client group and each project's DBA group sign the
+	// database client role only where they hold a policy at all; an estate
+	// that retired them has no such grant.
+	if group := groups.Name(env, groups.Database, groups.DatabaseClient); groups.Holds(group) {
+		grants = append(grants, builder.Grant{Name: group, Access: builder.Access{dbClient}})
+	}
 
 	for _, project := range projectsIn(in.Projects, env) {
-		dba := groups.Name(env, project, groups.DBA)
-		if !groups.Holds(dba) {
-			continue
+		if dba := groups.Name(env, project, groups.DBA); groups.Holds(dba) {
+			grants = append(grants, builder.Grant{Name: dba, Access: builder.Access{dbClient}})
 		}
-
-		grants = append(grants, builder.Grant{Name: dba, Access: builder.Access{dbClient}})
 
 		for _, level := range groups.DBLevels {
 			group := groups.Name(env, project, level)
