@@ -13,7 +13,7 @@ import (
 )
 
 // RosterLogin is the operator's Login into root: a roster token for the
-// roster audience from the operator's own `accessctl` sign-in (or the job's
+// roster audience from the operator's own `sluisctl` sign-in (or the job's
 // token in CI), verified against caFile, on the roster door
 // ([model.RosterMount], [model.RosterRole]). Nothing is stored; the token
 // is short-lived and used as is.
@@ -28,22 +28,22 @@ func RosterLogin(caFile, issuer string) Login {
 	}
 }
 
-// RosterToken asks `accessctl token` for a token for the roster audience
+// RosterToken asks `sluisctl token` for a token for the roster audience
 // ([model.RosterAudience]) from the given issuer: the operator's laptop
-// sign-in, or the job's own token in CI. accessctl must be on PATH.
+// sign-in, or the job's own token in CI. sluisctl must be on PATH.
 func RosterToken(ctx context.Context, issuer string) (string, error) {
-	cmd := exec.CommandContext(ctx, "accessctl", "token", "--issuer", issuer, "--audience", model.RosterAudience)
+	cmd := exec.CommandContext(ctx, "sluisctl", "token", "--issuer", issuer, "--audience", model.RosterAudience)
 	cmd.Stderr = os.Stderr
 
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("accessctl token --audience %s (access-roster >= 1.6.0; sign in with `accessctl login` first): %w",
+		return "", fmt.Errorf("sluisctl token --audience %s (access-roster >= 1.6.0; sign in with `sluisctl login` first): %w",
 			model.RosterAudience, err)
 	}
 
 	token := strings.TrimSpace(string(out))
 	if token == "" {
-		return "", fmt.Errorf("accessctl returned no token for %s", model.RosterAudience)
+		return "", fmt.Errorf("sluisctl returned no token for %s", model.RosterAudience)
 	}
 
 	return token, nil

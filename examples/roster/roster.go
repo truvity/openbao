@@ -34,7 +34,7 @@ const (
 	CIRelease = "ci-release"
 
 	// SSHMount and PKIMount are the credential engines, at the paths
-	// accessctl calls by default; KVMount holds the environment's secrets;
+	// sluisctl calls by default; KVMount holds the environment's secrets;
 	// SSHHostMount is the host CA, on a mount of its own so its key is
 	// never the one SSHMount signs users with.
 	SSHMount     = "ssh"
@@ -42,9 +42,9 @@ const (
 	PKIMount     = "pki"
 	KVMount      = "kv"
 	// SSHUserRole and SSHAdminRole are the SSH roles, DBClientRole the
-	// database client credential role: accessctl's defaults for
-	// `accessctl bao ssh -mode=ca`, the same with `-role=admin`, and
-	// `accessctl pg`/`accessctl psql`. SSHBackupRole forces one command --
+	// database client credential role: sluisctl's defaults for
+	// `sluisctl bao ssh -mode=ca`, the same with `-role=admin`, and
+	// `sluisctl pg`/`sluisctl psql`. SSHBackupRole forces one command --
 	// no interactive session, no forwarding. SSHHostRole signs the one
 	// host name a machine may prove it is.
 	SSHUserRole   = "user"
@@ -169,7 +169,7 @@ func Desired(p Params) *model.Desired {
 				SignedBy: &model.IssuerRef{Mount: PKIRootMount, Issuer: RootIssuer},
 			}},
 			// The caller's own subject, as its roster login recorded it, and
-			// nobody else's: accessctl sends a CSR for an ECDSA P-384 key.
+			// nobody else's: sluisctl sends a CSR for an ECDSA P-384 key.
 			CredentialRoles: []model.CredentialRole{{
 				Name: DBClientRole, Issuer: EnvironmentIssuer, SubjectMount: model.RosterMount,
 				CNValidations: []string{model.CNValidationEmail}, Client: true,

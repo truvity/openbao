@@ -576,7 +576,7 @@ func (c *conformance) es384Token(subject, audience string, groups ...string) str
 	return c.issuer.ES384Token(fakeissuer.Claims{Subject: subject, Audience: audience, Email: subject, Groups: groups})
 }
 
-// login is `auth/<mount>/login` as role roster, as accessctl makes it.
+// login is `auth/<mount>/login` as role roster, as sluisctl makes it.
 func (c *conformance) login(t *testing.T, namespace, mount, token string) map[string]any {
 	t.Helper()
 
@@ -693,7 +693,7 @@ func sshCertificate(t *testing.T, answer map[string]any) *ssh.Certificate {
 	return certificate
 }
 
-// csr is what accessctl sends: a request for a key made on the caller's
+// csr is what sluisctl sends: a request for a key made on the caller's
 // machine, with the common name asked for.
 func csr(t *testing.T, curve elliptic.Curve, commonName string) string {
 	t.Helper()

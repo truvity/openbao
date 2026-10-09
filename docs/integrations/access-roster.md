@@ -3,8 +3,8 @@
 How an OpenBAO server trusts an [access-roster](https://github.com/truvity/access-roster)
 issuer, end to end: people, CI jobs and operators sign in with the
 issuer's tokens, the token's `groups` claim decides which policies they
-hold, and `accessctl bao` (SSH and every other OpenBAO call, unchanged)
-and `accessctl psql`/`accessctl pg` (a Postgres client certificate, then
+hold, and `sluisctl bao` (SSH and every other OpenBAO call, unchanged)
+and `sluisctl psql`/`sluisctl pg` (a Postgres client certificate, then
 a command) turn that into short-lived certificates -- opkssh, straight
 against the issuer with no broker in between, is the target for people's
 own SSH instead, once an installation has moved its hosts to it. Nothing
@@ -13,7 +13,7 @@ key.
 
 This page is the contract. Both sides implement it: this repository's
 `pkg/model` preset ([`model.Roster`](#the-preset)) and its apply on the
-OpenBAO side; access-issuer, `accessctl` and the GitHub Action on the
+OpenBAO side; access-issuer, `sluisctl` and the GitHub Action on the
 issuer side, whose own page is
 [access-roster's docs/integrations/openbao.md](https://github.com/truvity/access-roster/blob/master/docs/integrations/openbao.md).
 Any OIDC issuer that meets [the issuer side](#1-the-issuer-side) works the
@@ -26,7 +26,7 @@ starts a real `bao server -dev`, configures it with exactly what
 [`desired.yaml`](../../examples/roster/desired.yaml)), points it at a fake
 issuer shaped like access-issuer, and walks every clause below: the
 operators' login, the groups-to-policies mapping, an SSH and a database
-certificate signed the way `accessctl bao`/`accessctl pg` ask, the web
+certificate signed the way `sluisctl bao`/`sluisctl pg` ask, the web
 UI's code flow across namespaces, a CI job's read, and the refusals
 marked tested in [failure modes](#7-failure-modes).
 
@@ -73,7 +73,7 @@ What an issuer must provide. access-issuer provides all of it.
 
   | Client | Kind | Who uses it | Token life |
   |---|---|---|---|
-  | `openbao` | exchange | `accessctl` (people, on a laptop) and CI jobs: an RFC 8693 token exchange for audience `openbao`, presented at `auth/jwt-roster/login` | short: it is only ever presented at the login, and OpenBAO's own TTL governs the session after it (15 minutes is the reference) |
+  | `openbao` | exchange | `sluisctl` (people, on a laptop) and CI jobs: an RFC 8693 token exchange for audience `openbao`, presented at `auth/jwt-roster/login` | short: it is only ever presented at the login, and OpenBAO's own TTL governs the session after it (15 minutes is the reference) |
   | `openbao-ui` | confidential, authorization code | OpenBAO's web UI, through the `oidc` mount: OpenBAO holds the secret server-side and redeems the code itself | the sign-in only |
 
   `openbao-ui` registers one redirect URI, `<OpenBAO address>/ui/vault/auth/oidc/oidc/callback`
@@ -241,7 +241,7 @@ every namespace below it. It replaces the root token.
   admitted through it, carrying the bootstrap's policy by name.
 - Root's token TTL is the operator session's whole life: keep it short.
 
-## 5. OpenBAO through `accessctl bao`, `accessctl pg`/`psql`, and opkssh for people
+## 5. OpenBAO through `sluisctl bao`, `sluisctl pg`/`psql`, and opkssh for people
 
 One exchange, one login — cached, `0600`, and reused for every call after
 it until it nears its own expiry, never revoked automatically. Every kind
@@ -250,20 +250,20 @@ signs a key made on the caller's machine, so no role needs to offer
 `max_ttl` are the whole answer
 ([access-roster's ADR 0013](https://github.com/truvity/access-roster/blob/master/docs/decisions/0013-openbao-access-through-the-bao-cli.md)).
 
-`accessctl bao <args…>` authenticates, then runs the real `bao` binary
-unchanged: everything after `accessctl bao` is `bao`'s own syntax --
+`sluisctl bao <args…>` authenticates, then runs the real `bao` binary
+unchanged: everything after `sluisctl bao` is `bao`'s own syntax --
 subcommands, flags, bugs and fixes -- so a release of this repository's
 apply, or of access-roster, never has to catch up with a release of
-`bao`. `accessctl pg`/`accessctl psql` share the same login and
+`bao`. `sluisctl pg`/`sluisctl psql` share the same login and
 additionally mint a Postgres client certificate before running a command.
 
 | Command | Call | What is sent | What the role must be |
 |---|---|---|---|
-| `accessctl bao ssh -mode=ca -role=user …` | `ssh/sign/user` | the interactive session's own public key; `ssh`'s own agent handling and host key checking apply unchanged | user certificates only; `allowed_users` spelled out, never root; `key_id_format` `{{token_display_name}}`; no user-chosen key ids; extensions no wider than needed |
-| `accessctl bao write -field=signed_key ssh/sign/user public_key=@key.pub` | `ssh/sign/user` | the named public key, for scp, git, CI and Ansible instead of a live session | the same role as above |
+| `sluisctl bao ssh -mode=ca -role=user …` | `ssh/sign/user` | the interactive session's own public key; `ssh`'s own agent handling and host key checking apply unchanged | user certificates only; `allowed_users` spelled out, never root; `key_id_format` `{{token_display_name}}`; no user-chosen key ids; extensions no wider than needed |
+| `sluisctl bao write -field=signed_key ssh/sign/user public_key=@key.pub` | `ssh/sign/user` | the named public key, for scp, git, CI and Ansible instead of a live session | the same role as above |
 | the same two shapes with `-role=admin` / `ssh/sign/admin` | `ssh/sign/admin` | the same | a second role for the account that administers a host, granted to a separate group |
-| `accessctl pg` / `accessctl psql` | `pki/sign/db-client` | a CSR for an **ECDSA P-384** key, common name = the subject | `key_type ec`, `key_bits 384`; the one allowed name is the caller's own alias name on `jwt-roster` (`allowed_domains` = `{{identity.entity.aliases.<accessor>.name}}`, templated, bare); `cn_validations email`; client auth only; `no_store` |
-| `accessctl bao write <pki mount>/sign/<role> csr=@your.csr` | `pki/sign/<role>` | a hand-made CSR (an `openssl req -new` recipe is in [access-roster's connect/openbao.md](https://github.com/truvity/access-roster/blob/master/docs/connect/openbao.md)), plus any URI SAN it carries | the installation's: client auth, the SAN its consumer matches on |
+| `sluisctl pg` / `sluisctl psql` | `pki/sign/db-client` | a CSR for an **ECDSA P-384** key, common name = the subject | `key_type ec`, `key_bits 384`; the one allowed name is the caller's own alias name on `jwt-roster` (`allowed_domains` = `{{identity.entity.aliases.<accessor>.name}}`, templated, bare); `cn_validations email`; client auth only; `no_store` |
+| `sluisctl bao write <pki mount>/sign/<role> csr=@your.csr` | `pki/sign/<role>` | a hand-made CSR (an `openssl req -new` recipe is in [access-roster's connect/openbao.md](https://github.com/truvity/access-roster/blob/master/docs/connect/openbao.md)), plus any URI SAN it carries | the installation's: client auth, the SAN its consumer matches on |
 
 `model.SSHRole` and `model.CredentialRole` are exactly the roles above,
 with everything they do not allow spelled out by the apply; the example
@@ -283,7 +283,7 @@ has actually moved its hosts over**: this library keeps modelling them
 them, host by host, once its people sign in through opkssh instead, is
 the installation's own call to make and its own pace to make it at --
 neither this library nor access-roster puts a schedule on it.
-`accessctl bao ssh`/`accessctl bao write .../sign/<role>` stay the
+`sluisctl bao ssh`/`sluisctl bao write .../sign/<role>` stay the
 supported path for **machines** regardless of that cutover: a CI job or
 an in-cluster controller has no equivalent of opkssh's interactive or
 GitHub Actions provider model.
@@ -293,9 +293,9 @@ GitHub Actions provider model.
   against the issuer's audit trail by it.
 - **Where.** The namespace comes from `bao`'s own `-ns`/`-namespace` --
   read out of the command being run, then `BAO_NAMESPACE`, then
-  `VAULT_NAMESPACE` -- never a separate flag of accessctl's own.
+  `VAULT_NAMESPACE` -- never a separate flag of sluisctl's own.
   `--address` or `BAO_ADDR` (then `VAULT_ADDR`) names the server;
-  `--mount`, `--login-role` and `--audience` (accessctl's own flags, which
+  `--mount`, `--login-role` and `--audience` (sluisctl's own flags, which
   go BEFORE the `bao` subcommand) override `jwt-roster`, `roster` and
   `openbao`.
 - **A private root.** `--ca-cert <bundle>` or `BAO_CACERT` (then
@@ -303,9 +303,9 @@ GitHub Actions provider model.
   connection alone.
 - **The policy is `update` on the sign path and nothing else**: no `read`
   or `list` on a role or configuration path.
-- **The login is cached**, `0600`, under accessctl's own config
+- **The login is cached**, `0600`, under sluisctl's own config
   directory -- never `~/.vault-token`, never `bao`'s own token helper
-  file. `accessctl bao --forget` revokes it and clears the cache entry.
+  file. `sluisctl bao --forget` revokes it and clears the cache entry.
 - **Lifetimes** are capped by `Desired.CredentialMaxTTL`: the model
   refuses an SSH or credential role above it.
 
@@ -319,25 +319,25 @@ exchanged; nothing is stored in the repository or the runner.
 2. It exchanges that token at the issuer for audience `openbao`. The
    issuer's `ci` rules (repository, ref, event, workflow) put the job in
    its groups, and the `openbao` client's `requires` admits it or not.
-   `accessctl token --audience openbao` does both steps in a job;
+   `sluisctl token --audience openbao` does both steps in a job;
    access-roster's GitHub Action writes only `k8s:` and `aws:` audiences,
-   so for OpenBAO the job runs `accessctl`.
+   so for OpenBAO the job runs `sluisctl`.
 3. `auth/jwt-roster/login` with `role=roster` in the namespace, the one
-   read (or one `sign`: `accessctl bao write -field=signed_key
+   read (or one `sign`: `sluisctl bao write -field=signed_key
    ssh/sign/<role> public_key=@key.pub > key-cert.pub`, or
-   `accessctl pg`/`accessctl psql`, run the same way in a job, since a job
+   `sluisctl pg`/`sluisctl psql`, run the same way in a job, since a job
    has no agent).
 
 A job that logs in by hand, as the `curl` example below does, should
 revoke with `auth/token/revoke-self` explicitly on the way out, since
-nothing does it automatically: `accessctl bao`/`pg`/`psql` cache the
+nothing does it automatically: `sluisctl bao`/`pg`/`psql` cache the
 OpenBAO login instead of revoking it, and would keep it for the rest of
 that same job run rather than logging in again per call, but a runner
 that is destroyed after the job either way makes an explicit `--forget`
 a tidiness choice, not a requirement.
 
 ```sh
-token=$(accessctl token --issuer "$ISSUER" --audience openbao)
+token=$(sluisctl token --issuer "$ISSUER" --audience openbao)
 login=$(jq -n --arg jwt "$token" '{role: "roster", jwt: $jwt}' |
   curl -fsS -H "X-Vault-Namespace: dev" -X POST --data @- "$BAO_ADDR/v1/auth/jwt-roster/login")
 ```
@@ -351,25 +351,25 @@ step outputs. The job's group is a `JobGrant`: `read` on
 
 How each failure shows up, and where. The rows marked tested are
 reproduced by the conformance test, which pins the status; the messages
-are OpenBAO 2.6's. `accessctl` maps statuses to exit codes: `4` for a
+are OpenBAO 2.6's. `sluisctl` maps statuses to exit codes: `4` for a
 refusal (the issuer's, or OpenBAO's 403), `5` for unreachable or a 5xx,
 `1` otherwise, with OpenBAO's own sentence.
 
 | Symptom | Where | Cause | Fix | Tested |
 |---|---|---|---|---|
-| `accessctl` exit `4`, "that audience is not granted to you", before OpenBAO | the issuer's exchange | the caller holds none of the `openbao` client's `requires` | grant the group in the issuer's policy, or add it to `requires` | — |
+| `sluisctl` exit `4`, "that audience is not granted to you", before OpenBAO | the issuer's exchange | the caller holds none of the `openbao` client's `requires` | grant the group in the issuer's policy, or add it to `requires` | — |
 | the UI's sign-in ends on the issuer's refusal page | the issuer's sign-in | none of `openbao-ui`'s `requires`: the two lists drifted | make them equal again | — |
 | login `400` "error validating token: invalid audience (aud) claim" | `auth/jwt-roster/login` | a token for another client — the UI's, or one exchanged with the wrong `--audience` | exchange for `openbao` | yes |
 | login `400` "invalid issuer (iss) claim" | the login | `iss` differs from the bound issuer: a trailing slash, another host name | set the discovery URL to the issuer's `iss` exactly | yes |
 | login `400` "error verifying token signature" | the login | a token from another issuer, or keys OpenBAO has not fetched | check the discovery URL; OpenBAO must reach the key set | yes |
-| login `400` "token is expired" | the login | the exchanged token outlived its cap, or clock skew | exchange afresh; `accessctl` does on every run | yes |
+| login `400` "token is expired" | the login | the exchanged token outlived its cap, or clock skew | exchange afresh; `sluisctl` does on every run | yes |
 | the apply fails writing `auth/<mount>/config` with `400` | the apply | OpenBAO cannot fetch the discovery document | network path from OpenBAO to the issuer, and its TLS trust | — |
-| login succeeds, then every call is `403` "permission denied" (`accessctl` exit `4`) | the sign or read | the group is not in the token, or OpenBAO holds no identity group for it (a group it does not know is ignored), or it is admitted through the other door only | grant the group; `Roster.Grant` admits it through both doors | yes |
+| login succeeds, then every call is `403` "permission denied" (`sluisctl` exit `4`) | the sign or read | the group is not in the token, or OpenBAO holds no identity group for it (a group it does not know is ignored), or it is admitted through the other door only | grant the group; `Roster.Grant` admits it through both doors | yes |
 | `400` "common name … not allowed by this role" | `pki/sign/db-client` | a common name that is not the caller's own subject | ask for your own; the role signs nobody else | yes |
-| `400` "role requires a minimum of a 384-bit key" | `pki/sign/<role>` | a key the role does not sign | `accessctl` sends P-384; a hand-made CSR must too | yes |
+| `400` "role requires a minimum of a 384-bit key" | `pki/sign/<role>` | a key the role does not sign | `sluisctl` sends P-384; a hand-made CSR must too | yes |
 | `400` "… is not a valid value for valid_principals" | `ssh/sign/<role>` | an account the role does not list | the role's `allowed_users` is the list; use the other role for the other account | yes |
-| `404` (`accessctl`: "does not exist: the mount or the role has not been created in this namespace") | the sign | the wrong namespace (`bao`'s own `-ns`/`-namespace`), or a role the installation does not have | check the namespace; the apply creates the roles | — |
+| `404` (`sluisctl`: "does not exist: the mount or the role has not been created in this namespace") | the sign | the wrong namespace (`bao`'s own `-ns`/`-namespace`), or a role the installation does not have | check the namespace; the apply creates the roles | — |
 | the UI's sign-in button does nothing (an empty `auth_url`) | `auth/oidc/oidc/auth_url` | the callback is not an allowed redirect: the address in the model is not the one the browser uses | `model.UICallback` with the address browsers reach | yes |
 | the UI's callback fails with `invalid_client` at the issuer | the code redemption | the `oidc` mount holds a stale client secret | re-apply with the issuer's current secret | — |
-| `accessctl` exit `5` with "a private root? pass --ca-cert" | the TLS handshake | OpenBAO's certificate chains to a root the system does not know | `--ca-cert` or `BAO_CACERT` | — |
+| `sluisctl` exit `5` with "a private root? pass --ca-cert" | the TLS handshake | OpenBAO's certificate chains to a root the system does not know | `--ca-cert` or `BAO_CACERT` | — |
 | the apply cannot log in | the operators' door | the bootstrap was never created, or the caller is not in the operators' group | run the initialisation; grant the group | — |

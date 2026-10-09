@@ -318,7 +318,7 @@ the client-CA file, guarded by the tested CN invariant.
 | PostgreSQL 18 OAuth | native token check | device-flow grant is not implemented by the issuer; business apps must not take an OIDC dependency for the database |
 | shared passwords | trivial | none of the properties above |
 
-**Consequences.** [databases.md](databases.md#people). `accessctl` gains `--as` and `--target`.
+**Consequences.** [databases.md](databases.md#people). `sluisctl` gains `--as` and `--target`.
 
 ---
 
@@ -326,7 +326,7 @@ the client-CA file, guarded by the tested CN invariant.
 
 **Date:** 2026-09-29. **Status:** accepted.
 
-**Choice.** `accessctl` does not run a local proxy. libpq connects directly; reach is a
+**Choice.** `sluisctl` does not run a local proxy. libpq connects directly; reach is a
 `hostaddr`.
 
 | Alternative | Pros | Cons |

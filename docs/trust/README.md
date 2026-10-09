@@ -19,7 +19,7 @@ mechanism is already described elsewhere it is linked, not repeated.
 | [servers-and-edge.md](servers-and-edge.md) | server names, Envoy Gateway, Cloudflare, how trust flows edge, origin, service |
 | [workload-identity.md](workload-identity.md) | SPIFFE identity for workloads: what it is for, what it is not, the peer rules |
 | [databases.md](databases.md) | PostgreSQL: server, applications, replication, people, the plan and its phases |
-| [people.md](people.md) | sign-in, token exchange, `accessctl`, SSH (a CA and opkssh), network reach |
+| [people.md](people.md) | sign-in, token exchange, `sluisctl`, SSH (a CA and opkssh), network reach |
 | [decisions.md](decisions.md) | the decision log: choice, alternatives with pros and cons, consequences |
 | [status.md](status.md) | the living page: what is LIVE, IN PROGRESS, PLANNED, and a dated change list |
 
@@ -77,12 +77,12 @@ constraint and no DNS one.
 | an application to reach its PostgreSQL | verify the server with the private root; authenticate with a client certificate from **that database's own CA** | [databases](databases.md) |
 | a migration job to change a schema | the database's owner certificate, from the same per-database CA | [databases](databases.md#applications-owner-migrations-runtime) |
 | a database replica to stream | the replication certificate from the per-database CA | [databases](databases.md#the-per-database-ca) |
-| a person to open a SQL session | `accessctl psql`: an OpenBAO `db-client` certificate, e-mail common name, mapped to a role | [databases](databases.md#people), [people](people.md) |
+| a person to open a SQL session | `sluisctl psql`: an OpenBAO `db-client` certificate, e-mail common name, mapped to a role | [databases](databases.md#people), [people](people.md) |
 | a third-party tool that cannot present a client certificate to a database | an explicit **password** role, off by default | [databases](databases.md#the-password-fallback) |
 | a person to log in to a host | **opkssh** (no CA) or the SSH user CA, over the tailnet | [people](people.md#ssh) |
 | a machine (a CI job, a controller) to log in to a host | an OpenBAO-signed SSH user certificate, with a forced command where the account is restricted | [people](people.md#ssh) |
 | a client to trust a host it SSHes to | a host certificate from the SSH host CA, one `@cert-authority` line on the client | [people](people.md#ssh) |
-| a person to use Kubernetes, AWS, or OpenBAO's own API | `accessctl kube-token`, `accessctl aws`, `accessctl bao`: a token exchange, nothing stored | [people](people.md#accessctl) |
+| a person to use Kubernetes, AWS, or OpenBAO's own API | `sluisctl kube-token`, `sluisctl aws`, `sluisctl bao`: a token exchange, nothing stored | [people](people.md#sluisctl) |
 | a controller to read a secret | a projected ServiceAccount token, an OpenBAO JWT login, no stored credential | [issuance](issuance.md#how-issuers-log-in) |
 | a certificate for a name the private chain must not sign (the tunnel origin) | the **origin chain**, whose roles are limited to an explicit host list | [hierarchy](hierarchy.md#the-domain-intermediates) |
 

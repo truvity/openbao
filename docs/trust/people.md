@@ -3,7 +3,7 @@
 A person proves who they are **once**, to one issuer, and everything else is
 derived from that proof: short-lived credentials for the systems they may use,
 minted on demand, with nothing stored. This page covers that sign-in, the
-`accessctl` client, the two SSH mechanisms (a CA in OpenBAO, and opkssh), and
+`sluisctl` client, the two SSH mechanisms (a CA in OpenBAO, and opkssh), and
 how a laptop reaches the network.
 
 The issuer is [access-roster](https://github.com/truvity/access-roster): an OIDC
@@ -54,22 +54,22 @@ Never flip the default before the pins for those audiences are in. Key rotation
 keeps a retired key in the JWKS **longer than the longest credential** minted from
 it: a 25-hour overlap for a 24-hour SSH provider entry.
 
-## `accessctl`
+## `sluisctl`
 
-`accessctl` is the client. Every command signs in (or reuses a cached, 0600
+`sluisctl` is the client. Every command signs in (or reuses a cached, 0600
 session), exchanges, and then either calls the system directly or runs the real
 tool with credentials in its environment. Nothing is stored beyond a cache and no
 long-lived key exists on a laptop.
 
 | Command | What it does | Result |
 |---|---|---|
-| `accessctl login` | signs in; also fetches every SSH host CA it is configured to trust into a file it owns | a cached session |
-| `accessctl bao <args>` | logs in to OpenBAO's JWT mount at the target namespace, then runs the real `bao` with your arguments | OpenBAO's own CLI, unchanged |
-| `accessctl psql` / `accessctl pg -- <cmd>` | mints a `db-client` certificate, runs `psql` (or a command) with libpq's environment | a database session ([databases.md](databases.md#people)) |
-| `accessctl kube-token` | exchanges for a Kubernetes API audience | a token for `kubectl` |
-| `accessctl aws` | exchanges for an AWS federation audience | temporary AWS credentials |
-| `accessctl r2` | wraps the storage broker CLI | a temporary, bucket-scoped storage credential |
-| `accessctl ssh known-hosts` | writes the host CAs it trusts as `@cert-authority` lines | a known-hosts file it owns |
+| `sluisctl login` | signs in; also fetches every SSH host CA it is configured to trust into a file it owns | a cached session |
+| `sluisctl bao <args>` | logs in to OpenBAO's JWT mount at the target namespace, then runs the real `bao` with your arguments | OpenBAO's own CLI, unchanged |
+| `sluisctl psql` / `sluisctl pg -- <cmd>` | mints a `db-client` certificate, runs `psql` (or a command) with libpq's environment | a database session ([databases.md](databases.md#people)) |
+| `sluisctl kube-token` | exchanges for a Kubernetes API audience | a token for `kubectl` |
+| `sluisctl aws` | exchanges for an AWS federation audience | temporary AWS credentials |
+| `sluisctl r2` | wraps the storage broker CLI | a temporary, bucket-scoped storage credential |
+| `sluisctl ssh known-hosts` | writes the host CAs it trusts as `@cert-authority` lines | a known-hosts file it owns |
 
 `--as <role>` and `--target <address>` for `pg`/`psql` are **PLANNED**
 ([databases.md](databases.md#people)). A machine has the same commands with a
@@ -199,7 +199,7 @@ trail by it.
 
 A host's certificate lets a client trust it with **one** `@cert-authority
 <domains> <key>` line instead of pinning each host's key and updating that pin every
-time a host is replaced. `accessctl ssh known-hosts` writes those lines, one per
+time a host is replaced. `sluisctl ssh known-hosts` writes those lines, one per
 environment, each scoped to that environment's host pattern, to a file the client
 owns (never the user's own `known_hosts`).
 
@@ -247,7 +247,7 @@ cannot resolve it dials an address and verifies the name separately:
 host=<svc>.<ns>.svc.<cluster-domain> hostaddr=<ClusterIP or router-reachable IP>
 ```
 
-`accessctl pg --target` will do this (**PLANNED**). It is `verify-full`, not
+`sluisctl pg --target` will do this (**PLANNED**). It is `verify-full`, not
 `require`, and not a weaker mode "because it is a tunnel".
 
 ## Where this page ends

@@ -7,7 +7,7 @@ import (
 )
 
 // The names an access-roster installation and its clients agree on unless
-// told otherwise: accessctl logs in on RosterMount as RosterRole with a
+// told otherwise: sluisctl logs in on RosterMount as RosterRole with a
 // token exchanged for RosterAudience, and the web UI signs in on
 // RosterUIMount as RosterUIClient. docs/integrations/access-roster.md is
 // the whole contract.
