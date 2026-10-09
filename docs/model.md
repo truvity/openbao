@@ -313,7 +313,7 @@ caller's, and it stores nothing: its revocation model is its short life.
 Trust for SSH has three parts, and this model covers two of them. People
 sign in through opkssh, straight against an OIDC issuer, with no CA and no
 part in this model at all
-([integrations/access-roster.md](integrations/access-roster.md#5-openbao-through-accessctl-bao-accessctl-pgpsql-and-opkssh-for-people)).
+([integrations/access-roster.md](integrations/access-roster.md#5-openbao-through-sluisctl-bao-sluisctl-pgpsql-and-opkssh-for-people)).
 **Machines** — CI jobs, controllers, anything that is not a person at a
 keyboard — get user certificates from `ssh[]`. **Hosts** get host
 certificates from `sshHost[]`, so a client trusts one

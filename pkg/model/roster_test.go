@@ -22,7 +22,7 @@ func roster() model.Roster {
 
 // The defaults are the names access-roster's clients use unless told
 // otherwise: a door built from nothing but an issuer and a lifetime is the
-// one accessctl logs in on.
+// one sluisctl logs in on.
 func TestRosterDoorDefaults(t *testing.T) {
 	door := roster().Door()
 

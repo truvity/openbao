@@ -7,6 +7,10 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+### Changed
+
+- **`pkg/apply`: `RosterToken` (and `RosterLogin`) now run `sluisctl token`, not `accessctl token`.** The flags are the same (`--issuer`, `--audience`); the CLI is sluis's `sluisctl` (v1.74.0 or later), so an operator or job running a stack that signs in to the roster door needs `sluisctl` on `PATH` (`accessctl` is a deprecated alias that this library no longer calls). The docs and examples name `sluisctl` throughout.
+
 ## v0.38.0
 
 ### Added

@@ -45,7 +45,7 @@ What the rename changed, and what it did not:
 | `cmd/approvercheck`, `pkg/approvercheck` (Go) | Proves the cert-manager approver layer for OpenBAO-issued certificates: an offline port of approver-policy's evaluator that says whether a policy approves every certificate request, and that the blanket approver is off ([docs/approver.md](docs/approver.md)); `charts/openbao-consumers` renders the policies it checks, optionally |
 | `openbaoctl` | The CLI over the ceremony, from a hierarchy file; linux and darwin binaries on every release |
 | `cmd/openbao-hostcert` | A standalone EC2 host-certificate renewer: signs an STS `GetCallerIdentity` request with the instance's own AWS credentials, logs in to an `AWSAuthMount`, and renews the host's SSH certificate from a `SSHHostMount` role; runs unattended as root under a systemd timer |
-| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `accessctl bao`/`accessctl pg` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` |
+| access-roster integration | The contract with an access-roster issuer -- people, CI jobs and operators signing in by their groups, SSH and database certificates for `sluisctl bao`/`sluisctl pg` -- as a `pkg/model` preset (`model.Roster`), a neutral example (`examples/roster`) and a conformance test against a real `bao server -dev` |
 
 Charts publish to `oci://ghcr.io/truvity/charts/<chart>` on every tag,
 from v0.1.0 on; from v0.2.0 on the same tag is also the Go module

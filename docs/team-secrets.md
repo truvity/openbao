@@ -171,9 +171,9 @@ entire repository straight into a dotenv file with no renaming step: see
 ## 5. How a person reads
 
 Nothing is stored beyond the login itself: no client secret, no
-long-lived key, and no OpenBAO token accessctl does not already manage
+long-lived key, and no OpenBAO token sluisctl does not already manage
 `0600` on its own
-([access-roster.md §5](integrations/access-roster.md#5-openbao-through-accessctl-bao-accessctl-pgpsql-and-opkssh-for-people)
+([access-roster.md §5](integrations/access-roster.md#5-openbao-through-sluisctl-bao-sluisctl-pgpsql-and-opkssh-for-people)
 is the same shape for certificates).
 
 1. **Exchange** the issuer's session for a token whose audience is
@@ -185,14 +185,14 @@ is the same shape for certificates).
 3. **Read** `kv/data/{project}/{purpose}/{repository}` — the repository's
    whole secret, every variable a field of it, in one call.
 4. Nothing revokes the login by default: it is cached and reused until it
-   nears its own expiry, the same as any other accessctl login.
+   nears its own expiry, the same as any other sluisctl login.
    `--forget` revokes it early; whether that is worth doing is below.
 
-`accessctl bao` makes steps 1 and 2 for you, then runs the real `bao`
+`sluisctl bao` makes steps 1 and 2 for you, then runs the real `bao`
 unchanged for step 3:
 
 ```sh
-accessctl bao kv get -ns=dev -mount=kv -format=env orders/local-dev/checkout > .env
+sluisctl bao kv get -ns=dev -mount=kv -format=env orders/local-dev/checkout > .env
 chmod 0600 .env
 ```
 
@@ -240,13 +240,13 @@ exchanges its own token afresh every run and keeps no login cache to
 ## 6. How the owner writes and rotates
 
 A deployer or an approver writes directly — the web UI in the right
-namespace, or `accessctl bao`, which authenticates and hands the call to
+namespace, or `sluisctl bao`, which authenticates and hands the call to
 the real `bao` unchanged.
 
 **The first write, creating the repository's secret**, is `kv put`:
 
 ```sh
-accessctl bao kv put -ns=dev -mount=kv orders/local-dev/checkout API_TOKEN=... DB_URL=...
+sluisctl bao kv put -ns=dev -mount=kv orders/local-dev/checkout API_TOKEN=... DB_URL=...
 ```
 
 **`kv put` REPLACES every field of the path with exactly what this call
@@ -258,7 +258,7 @@ there. Every write after the first is `kv patch` instead, which merges
 one field into whatever the secret already holds:
 
 ```sh
-accessctl bao kv patch -ns=dev -mount=kv orders/local-dev/checkout API_TOKEN=...
+sluisctl bao kv patch -ns=dev -mount=kv orders/local-dev/checkout API_TOKEN=...
 ```
 
 **Adding a new variable to an existing repository is the same `kv
@@ -280,7 +280,7 @@ says plainly what happened, and stays correct the day the repository
 holds a third variable neither call should touch:
 
 ```sh
-accessctl bao kv patch -ns=dev -mount=kv -remove-data=API_TOKEN orders/local-dev/checkout
+sluisctl bao kv patch -ns=dev -mount=kv -remove-data=API_TOKEN orders/local-dev/checkout
 ```
 
 Rotating is writing again: KV version 2 keeps the previous version, every

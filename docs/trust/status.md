@@ -76,9 +76,9 @@ Last reviewed: 2026-09-30.
 | Java client key format (DER PKCS#8) via cert-manager `additionalOutputFormats` | PLANNED | to be verified |
 | per-database CA, owner and runtime client certificates | PLANNED | phase 3 |
 | chart renders client CA, replication certificate, `pg_ident`, people line | PLANNED | phase 2 |
-| `accessctl psql` client half (`db-client`, 1 hour, key on the laptop) | LIVE | |
+| `sluisctl psql` client half (`db-client`, 1 hour, key on the laptop) | LIVE | |
 | server half for people: private root in the client-CA file, map and rows | PLANNED | |
-| `accessctl psql --as` and `--target` | PLANNED | |
+| `sluisctl psql --as` and `--target` | PLANNED | |
 | tested invariant: no issuer under the root signs a bare CN | PLANNED | today by role shape |
 | password fallback toggle | LIVE | per role |
 | owner certificate before migration hooks | PLANNED | with phase 3 |
@@ -87,7 +87,7 @@ Last reviewed: 2026-09-30.
 
 | Capability | State | Notes |
 |---|---|---|
-| sign-in, token exchange, `accessctl` | LIVE | |
+| sign-in, token exchange, `sluisctl` | LIVE | |
 | OpenBAO JWT login, groups to policies | LIVE | |
 | opkssh for people | LIVE | on the instance-based routers of the environments that use it |
 | opkssh dot-delimiter shim | LIVE | temporary; remove after the upstream fix |

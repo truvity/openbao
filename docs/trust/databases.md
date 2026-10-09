@@ -200,7 +200,7 @@ is a per-application follow-up, not a prerequisite.
 
 ## People
 
-A person connects with `accessctl psql` (or `accessctl pg -- <command>`): it signs
+A person connects with `sluisctl psql` (or `sluisctl pg -- <command>`): it signs
 in, logs in to OpenBAO, and asks the `db-client` credential role to sign a CSR for
 a P-384 key **generated on the laptop**; the private key never crosses the wire.
 The certificate's CN is the person's e-mail (the role accepts only the caller's own
@@ -212,12 +212,12 @@ only and stores nothing. The command then runs with libpq's environment set:
 sequenceDiagram
   autonumber
   participant P as Person on a laptop
-  participant A as accessctl
+  participant A as sluisctl
   participant I as Access issuer
   participant O as OpenBAO
   participant D as PostgreSQL
 
-  P->>A: accessctl psql --target ... -- -d app
+  P->>A: sluisctl psql --target ... -- -d app
   A->>I: exchange the sign-in for the OpenBAO audience
   I-->>A: token, groups claim
   A->>O: JWT login, groups become policies
@@ -251,7 +251,7 @@ What the server needs (**PLANNED**; only the client half exists today):
    and a read-only auditor role. Project viewers and deployers get no database
    access by default.
 
-**`accessctl` needs two more flags (PLANNED):**
+**`sluisctl` needs two more flags (PLANNED):**
 
 - `--as <role>`: the role to connect as. Today `PGUSER` defaults to the certificate
   CN (the e-mail), which is not a role name; with a map it must be the *role*.
@@ -263,7 +263,7 @@ What the server needs (**PLANNED**; only the client half exists today):
 Until they ship, the same result is `PGUSER=<role> ... host=<fqdn>
 hostaddr=<ip>` set by hand.
 
-**No local database proxy.** A design where `accessctl` runs a loopback proxy that
+**No local database proxy.** A design where `sluisctl` runs a loopback proxy that
 holds the certificate and forwards to the database was considered and rejected
 ([T-15](decisions.md#t-15-no-local-database-proxy)): libpq already does everything the
 proxy would, `hostaddr` covers reach, and a proxy is a long-running local process
@@ -364,7 +364,7 @@ The database secrets engine's two real wins, and their answers:
 | 1 | server certificate from the private chain; clients `verify-full` | IN PROGRESS |
 | 2 | the chart renders `clientCASecret`, `replicationTLSSecret`, `pg_ident` and `pg_hba` with the people line, all off by default | PLANNED |
 | 3 | per-database CA, owner and runtime certificates (soft mode, then cert-only) | PLANNED |
-| 4 | `accessctl psql --as` and `--target`; people rows rendered | PLANNED |
+| 4 | `sluisctl psql --as` and `--target`; people rows rendered | PLANNED |
 | 5 | the invariant test in `pkg/pki` | PLANNED |
 | 6 | ratchet: nothing but `cert` remains; the state cannot regress | PLANNED |
 
