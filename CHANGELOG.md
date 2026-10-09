@@ -7,6 +7,8 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+## v0.40.0
+
 - **`pkg/pki`, `pkg/model`, `pkg/estate`, `pkg/apply`: a credential role can pin a subject OU.** `credentialRoles[].organizationalUnit` (model and estate: `ou`) sets the role's `ou`: every certificate the role signs carries it, and a CSR cannot choose or change it (OpenBAO's sign endpoint takes only the common name from a CSR; checked on 2.7.0 with a CSR that asks for another OU). A relying party can therefore read the OU as an attribute of the role, for example a database that maps `OU=dms_admin` to the role of that name. A lowercase identifier of at most 63 characters; optional, and a role without it renders exactly as before.
 
 ## v0.39.0
