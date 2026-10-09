@@ -30,7 +30,7 @@ lint:
       echo "$chart: schema and $(ls tests/invalid/"$chart"/*.yaml | wc -l | tr -d ' ') negative fixtures OK"
     done
     golangci-lint config verify
-    golangci-lint run ./...
+    GOTOOLCHAIN=local golangci-lint run ./...
 
 # Golden renders (every chart test case against tests/golden) and the Go
 # tests, which run every ceremony against a KMS double and every apply
