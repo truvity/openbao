@@ -7,9 +7,15 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 
 ## Unreleased
 
+## v0.39.0
+
 ### Changed
 
 - **`pkg/apply`: `RosterToken` (and `RosterLogin`) now run `sluisctl token`, not `accessctl token`.** The flags are the same (`--issuer`, `--audience`); the CLI is sluis's `sluisctl` (v1.74.0 or later), so an operator or job running a stack that signs in to the roster door needs `sluisctl` on `PATH` (`accessctl` is a deprecated alias that this library no longer calls). The docs and examples name `sluisctl` throughout.
+
+### Fixed
+
+- **`golang.org/x/net` v0.58.0 -> v0.60.0, `golang.org/x/crypto` v0.56.0 -> v0.57.0 and the toolchain go1.27.1 -> go1.27.2**, closing GO-2026-6617 and GO-2026-6613 (HTTP/2 in `golang.org/x/net` and in the standard library's `net/http`). No API change.
 
 ## v0.38.0
 
