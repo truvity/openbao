@@ -8,6 +8,7 @@ from v0.2.0 on the Go module and `openbaoctl` with them.
 ## v0.41.0
 
 - **`pkg/estate`: the database level groups no longer depend on the DBA group, and the client and DBA groups are granted only where they hold a policy.** Until now a project's level groups (`Groups.DBLevels`) were granted inside the loop over projects whose DBA group holds a policy, so an estate that retired the DBA group lost its level grants with it. The levels are now granted on their own, and the environment's database client group and each project's DBA group get their sign grant only when `Groups.Holds` says they hold a policy (every existing estate says yes, so nothing changes for it). The `PKI.DBClientRole` credential role must still be declared.
+- **`pkg/model`, `pkg/pki`: a role's subject OU may contain `-`.** A project named with a hyphen has a database role that carries it (`my-app_admin`), and the OU a role pins must equal that role exactly. The identifier is still lowercase, starts with a letter and has at most 63 characters; `-` is as free of escaping in a distinguished name as `_`.
 
 ## v0.40.0
 
