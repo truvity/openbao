@@ -1100,6 +1100,10 @@ func validateCredentialRoles(path string, roles []CredentialRole, leafRoles []Le
 			}
 		}
 
+		if err := model.ValidateOrganizationalUnit(role.OrganizationalUnit); err != nil {
+			return fmt.Errorf("pki: %s.organizationalUnit: %w", rolePath, err)
+		}
+
 		if !global.leafKeyCurveAllowed(role.KeyCurve) {
 			return fmt.Errorf("pki: %s.keyCurve %q is neither global.keyCurve %q nor one of global.additionalLeafKeyCurves", rolePath, role.KeyCurve, global.KeyCurve)
 		}
