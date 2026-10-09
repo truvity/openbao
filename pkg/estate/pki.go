@@ -122,11 +122,13 @@ type (
 		CommonName    string   `yaml:"commonName"`
 		SubjectMount  string   `yaml:"subjectMount"`
 		CNValidations []string `yaml:"cnValidations"`
-		Server        bool     `yaml:"server"`
-		Client        bool     `yaml:"client"`
-		KeyCurve      string   `yaml:"keyCurve"`
-		TTL           string   `yaml:"ttl"`
-		MaxTTL        string   `yaml:"maxTtl"`
+		// OU is the subject OU the role pins (empty = none).
+		OU       string `yaml:"ou,omitempty"`
+		Server   bool   `yaml:"server"`
+		Client   bool   `yaml:"client"`
+		KeyCurve string `yaml:"keyCurve"`
+		TTL      string `yaml:"ttl"`
+		MaxTTL   string `yaml:"maxTtl"`
 	}
 )
 
@@ -348,6 +350,7 @@ func configureIssuingCA(inputs *Inputs, namespace *Namespace, authority *pki.Aut
 			CommonName:    credentialCommonName,
 			SubjectMount:  role.SubjectMount,
 			CNValidations: slices.Clone(role.CNValidations),
+			OU:            role.OU,
 			Server:        role.Server,
 			Client:        role.Client,
 			KeyCurve:      role.KeyCurve,

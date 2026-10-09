@@ -205,7 +205,10 @@ are its `names` resolved for the environment.
 CA that sign a caller's own CSR -- a person's database client certificate,
 never a workload's: `name`, `subjectMount` (the auth mount in the same
 namespace whose alias name the common name must equal), `cnValidations`
-(`email` or `hostname`), `usage`, `keyCurve`, and `lifetimes` (`default` and
+(`email` or `hostname`), `organizationalUnit` (optional: the subject OU the
+role pins on every certificate, a lowercase identifier; a CSR cannot choose
+or change it, so a relying party can read it as an attribute of the role),
+`usage`, `keyCurve`, and `lifetimes` (`default` and
 `maximum`; `renewBefore` is refused, a credential is minted for one use and
 must sit inside the domain's own leaf lifetimes). Nothing grants them: which
 groups may sign with one is the consumer's policy.

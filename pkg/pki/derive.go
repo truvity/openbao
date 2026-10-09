@@ -354,6 +354,7 @@ func (c *Contract) dnsIssuingAuthority(domain *DNSTrustDomain, generation *RootG
 			Issuer:        issuer,
 			SubjectMount:  authored.SubjectMount,
 			CNValidations: slices.Clone(authored.CNValidations),
+			OU:            authored.OrganizationalUnit,
 			Server:        authored.Usage.Server,
 			Client:        authored.Usage.Client,
 			KeyCurve:      authored.KeyCurve,

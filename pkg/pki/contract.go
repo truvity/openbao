@@ -314,8 +314,14 @@ type (
 		// CNValidations is how the common name must read: "email" or
 		// "hostname".
 		CNValidations []string `yaml:"cnValidations,omitempty"`
-		Usage         Usage    `yaml:"usage"`
-		KeyCurve      string   `yaml:"keyCurve"`
+		// OrganizationalUnit is the subject OU every certificate of this
+		// role carries, pinned by the role: a CSR cannot choose or change it
+		// (OpenBAO's sign endpoint takes only the common name from a CSR).
+		// A relying party reads it as an attribute of the role, e.g. a
+		// database mapping OU=dms_admin to the role of that name. Optional.
+		OrganizationalUnit string `yaml:"organizationalUnit,omitempty"`
+		Usage              Usage  `yaml:"usage"`
+		KeyCurve           string `yaml:"keyCurve"`
 		// Lifetimes bound the leaf; RenewBefore is not allowed: a
 		// credential is minted for one use, never renewed.
 		Lifetimes LeafLifetimes `yaml:"lifetimes"`

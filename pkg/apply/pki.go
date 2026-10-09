@@ -512,6 +512,11 @@ func (a *applier) credentialRoles(s *scope, mount *model.PKIMount, accessors map
 			GenerateLease:                 pulumi.Bool(false),
 		}
 
+		// Left unset without an OU, so a role that has none renders as before.
+		if role.OU != "" {
+			args.OrganizationUnit = pulumi.StringArray{pulumi.String(role.OU)}
+		}
+
 		// Protected: a credential role that disappears in a replace is a
 		// window in which nobody can sign.
 		if _, err := pkisecret.NewSecretBackendRole(a.c, a.name(PKICredentialRoleResourceName(role.Issuer, role.Name)), args,
