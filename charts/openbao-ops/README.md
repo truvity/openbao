@@ -15,8 +15,9 @@ These two rules make that loud.
 
 The object is a `VMRule` of LogsQL rules (`type: vlogs`) that a log ruler
 (vmalert against VictoriaLogs) reads. It carries the label
-`observability.rule-type: vlogs` by default, which is what routes it to the
-log ruler and away from the metrics ruler; change `labels` if your rulers
+`observability.rule-type: vlogs` and `observability.truvity.io/evaluator: logs`
+by default, which is what routes it to the log ruler and away from the metrics
+ruler (the first is the old marker, kept until every consumer reads the second); change `labels` if your rulers
 select differently. It needs the log fields `kubernetes.pod_namespace`,
 `kubernetes.container_name` and `_msg`.
 

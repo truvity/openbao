@@ -1041,6 +1041,7 @@ serverAlerts:
     # Labels on the OBJECT. The default routes it to the LogsQL ruler.
     labels:
       observability.rule-type: vlogs
+      observability.truvity.io/evaluator: logs
     annotations: {}
     # Labels added to EVERY rule; a rule's own `labels` are merged over them.
     ruleLabels: {}

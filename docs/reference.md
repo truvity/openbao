@@ -179,7 +179,7 @@ giving up. Off by default. The prose is in the
 |---|---|---|
 | `enabled` | `false` | Render the object. |
 | `plugin` | `""` | Required: the plugin whose download is watched (`auth/aws`), named in the text. |
-| `name`, `namespace`, `labels`, `annotations`, `ruleLabels`, `groupName` | `<release>-plugin-download`, release namespace, `observability.rule-type: vlogs`, | The object, and the labels added to every rule. |
+| `name`, `namespace`, `labels`, `annotations`, `ruleLabels`, `groupName` | `<release>-plugin-download`, release namespace, `observability.rule-type: vlogs` and `observability.truvity.io/evaluator: logs`, | The object, and the labels added to every rule. |
 | `interval` | `15m` | Whole minutes: the group interval, which is also the lookback of both rules. |
 | `clusterName` | `""` | The `k8s_cluster_name` label of every rule. |
 | `decision`, `runbook` | `""` | A reference rendered after "permanently" in the first description, and the `runbook` annotation. |
