@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: openbao-plugin-download-alerts
     app.kubernetes.io/part-of: openbao
     observability.rule-type: vlogs
+    observability.truvity.io/evaluator: logs
   annotations:
     example.com/sync-wave: "95"
 spec:
